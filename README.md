@@ -1,445 +1,129 @@
-# agents-radar
+# PaperHub
 
 English | [中文](./README.zh.md)
 
-A GitHub Actions workflow that runs every morning at 08:00 CST. It aggregates AI ecosystem signals from 10 data sources, then publishes bilingual (Chinese + English) daily digests as GitHub Issues and committed Markdown files. Weekly and monthly rollup reports are also generated automatically.
+PaperHub is a local-first paper and AI blog intelligence desk. It collects papers and official blog content, stores them in a local SQLite archive, generates summaries and tags, and exposes search, recommendations, and a desktop reading workflow.
 
-## PaperHub Phase 6
+## Current Status
 
-The PaperHub desktop release track now has a dedicated phase-6 runbook and acceptance set:
+- The project is now centered on the `PaperHub` desktop app rather than the old `agents-radar` positioning.
+- Phase 6 code-side review and fixes are complete.
+- The current release verification chain is green in this repo:
+  - `pnpm typecheck`
+  - `pnpm test`
+  - `pnpm ui:build`
+  - `pnpm test:e2e`
+- The remaining release step is Windows packaging and final manual acceptance on a real `Windows + Node 20.x` machine.
 
-- `docs/phase6-runbook.md` — release commands, verification gates, and current blocker status
-- `docs/phase6-manual-checklist.md` — desktop GUI manual acceptance checklist
-- `docs/phase6-baseline.md` — performance and cost baseline notes for the first release candidate
+## Core Capabilities
 
-### Data Sources
+- Collect and normalize paper and blog documents into a local archive
+- Store summaries, tags, browsing history, favorites, and profile preferences in SQLite
+- Support keyword, semantic, and hybrid search
+- Provide hot recommendations and personalized recommendations
+- Provide document detail, tag browsing, and profile pages
+- Run as a local desktop application through Electron
 
-| Source | Type | Data |
-|--------|------|------|
-| [GitHub Repos](https://github.com) | API | Issues, PRs, releases from 17+ tracked AI tool repos |
-| [Claude Code Skills](https://github.com/anthropics/skills) | API | Trending skills sorted by community engagement |
-| [GitHub Trending](https://github.com/trending) | HTML + API | Daily trending repos + AI topic search (7-day window) |
-| [Hacker News](https://news.ycombinator.com) | [Algolia API](https://hn.algolia.com/api) | Top 30 AI stories from last 24h, 6 parallel queries |
-| [Product Hunt](https://www.producthunt.com) | GraphQL API | Yesterday's top AI products by votes |
-| [ArXiv](https://arxiv.org) | [ArXiv API](https://export.arxiv.org/api/query) | Latest papers from cs.AI, cs.CL, cs.LG (last 48h) |
-| [Hugging Face](https://huggingface.co) | [Hub API](https://huggingface.co/api/models) | 30 trending models sorted by weekly likes |
-| [Dev.to](https://dev.to) | [Forem API](https://dev.to/api) | Top AI/LLM articles from 5 tags |
-| [Lobste.rs](https://lobste.rs) | JSON API | AI/ML tagged stories from last 7 days |
-| [Anthropic](https://anthropic.com) + [OpenAI](https://openai.com) | Sitemap | New articles detected via `lastmod` diff |
+## Stack
 
-## Web UI
+- Backend: Node.js, TypeScript, Express
+- Frontend: React, Vite, React Query, React Router
+- Storage: SQLite, `better-sqlite3`, `sqlite-vec`
+- Desktop: Electron
 
-**[https://duanyytop.github.io/agents-radar](https://duanyytop.github.io/agents-radar)**
+## Quick Start
 
-Browse all historical digests in a clean, dark-themed interface — no login required. Reports are rendered from the Markdown files in this repo via GitHub Pages.
+### Prerequisites
 
-![Web UI](assets/web-en.png)
+- Node.js 20.x recommended
+- `pnpm`
 
-## Telegram Channel & Feishu Group
-
-Subscribe to get daily digest notifications pushed directly to your preferred platform. Each message links to all reports for that day (ZH and EN variants) plus the Web UI and RSS feed.
-
-<table>
-  <tr>
-    <td align="center"><b><a href="https://t.me/agents_radar">Join Telegram Channel</a></b></td>
-    <td align="center"><b><a href="https://applink.feishu.cn/client/chat/chatter/add_by_link?link_token=b56v3be8-b027-4ee6-abc4-65bf1f80bccd">Join Feishu Group</a></b></td>
-  </tr>
-  <tr>
-    <td><img src="assets/telegram.jpg" width="300" alt="Telegram notification"></td>
-    <td><img src="assets/feishu.jpg" width="300" alt="Feishu notification"></td>
-  </tr>
-</table>
-
-## RSS Feed
-
-**[https://duanyytop.github.io/agents-radar/feed.xml](https://duanyytop.github.io/agents-radar/feed.xml)**
-
-Subscribe in any RSS reader (Feedly, Reeder, NewsBlur, etc.) to receive new digests automatically. The feed includes the latest 30 reports across all report types, updated daily alongside `manifest.json`.
-
-## MCP Server
-
-**`https://agents-radar-mcp.duanyytop.workers.dev`**
-
-A hosted [Model Context Protocol](https://modelcontextprotocol.io) server that exposes agents-radar data as tools. Any MCP-compatible client (Claude Desktop, OpenClaw, etc.) can query the latest AI ecosystem reports directly.
-
-**Available tools:**
-
-| Tool | Description |
-|------|-------------|
-| `list_reports` | List available dates and report types (last N days) |
-| `get_latest` | Fetch the most recent report of a given type |
-| `get_report` | Fetch a specific report by date and type |
-| `search` | Keyword search across recent reports |
-
-**Claude Desktop setup** — add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
-
-```json
-{
-  "mcpServers": {
-    "agents-radar": {
-      "url": "https://agents-radar-mcp.duanyytop.workers.dev"
-    }
-  }
-}
-```
-
-Restart Claude Desktop after saving. You can then ask Claude things like:
-- *"What's the latest in AI CLI tools?"* → calls `get_latest`
-- *"Search for Claude Code mentions this week"* → calls `search`
-- *"Show me the AI trending report for 2026-03-05"* → calls `get_report`
-
-**OpenClaw setup** — run the following command:
-
-```bash
-openclaw mcp add --transport http agents-radar https://agents-radar-mcp.duanyytop.workers.dev
-```
-
-Or add it manually to `~/.openclaw/openclaw.json`:
-
-```json
-{
-  "mcpServers": {
-    "agents-radar": {
-      "type": "http",
-      "url": "https://agents-radar-mcp.duanyytop.workers.dev"
-    }
-  }
-}
-```
-
-You can then ask OpenClaw things like:
-- *"What's the latest in AI CLI tools?"* → calls `get_latest`
-- *"Search for Claude Code mentions this week"* → calls `search`
-- *"Show me the AI trending report for 2026-03-05"* → calls `get_report`
-
-**Self-hosting** — deploy your own instance from the `mcp/` directory:
-
-```bash
-cd mcp
-pnpm install
-wrangler deploy
-```
-
-## Tracked sources
-
-### AI CLI tools (GitHub)
-
-| Tool | Repository |
-|------|-----------|
-| Claude Code | [anthropics/claude-code](https://github.com/anthropics/claude-code) |
-| OpenAI Codex | [openai/codex](https://github.com/openai/codex) |
-| Gemini CLI | [google-gemini/gemini-cli](https://github.com/google-gemini/gemini-cli) |
-| GitHub Copilot CLI | [github/copilot-cli](https://github.com/github/copilot-cli) |
-| Kimi Code CLI | [MoonshotAI/kimi-cli](https://github.com/MoonshotAI/kimi-cli) |
-| OpenCode | [anomalyco/opencode](https://github.com/anomalyco/opencode) |
-| Pi | [badlogic/pi-mono](https://github.com/badlogic/pi-mono) |
-| Qwen Code | [QwenLM/qwen-code](https://github.com/QwenLM/qwen-code) |
-| DeepSeek TUI | [Hmbown/DeepSeek-TUI](https://github.com/Hmbown/DeepSeek-TUI) |
-
-### Claude Code Skills (GitHub)
-
-| Source | Repository |
-|--------|-----------|
-| Claude Code Skills | [anthropics/skills](https://github.com/anthropics/skills) |
-
-PRs and issues are fetched without a date filter and sorted by popularity (comment count), so the report always reflects the most actively discussed skills — not just the newest.
-
-### OpenClaw + AI agent ecosystem (GitHub)
-
-OpenClaw is tracked as the primary reference project, alongside several peer projects in the personal AI assistant / autonomous agent space for cross-ecosystem comparison.
-
-| Project | Repository | Stars |
-|---------|-----------|-------|
-| OpenClaw | [openclaw/openclaw](https://github.com/openclaw/openclaw) | 348.1k |
-| NanoBot | [HKUDS/nanobot](https://github.com/HKUDS/nanobot) | 37.9k |
-| Hermes Agent | [nousresearch/hermes-agent](https://github.com/nousresearch/hermes-agent) | 32.3k |
-| PicoClaw | [sipeed/picoclaw](https://github.com/sipeed/picoclaw) | 27.5k |
-| NanoClaw | [qwibitai/nanoclaw](https://github.com/qwibitai/nanoclaw) | 26.5k |
-| ZeroClaw | [zeroclaw-labs/zeroclaw](https://github.com/zeroclaw-labs/zeroclaw) | 30.1k |
-| CoPaw | [agentscope-ai/CoPaw](https://github.com/agentscope-ai/CoPaw) | 14.4k |
-| IronClaw | [nearai/ironclaw](https://github.com/nearai/ironclaw) | 11.4k |
-| NullClaw | [nullclaw/nullclaw](https://github.com/nullclaw/nullclaw) | 7.0k |
-| LobsterAI | [netease-youdao/LobsterAI](https://github.com/netease-youdao/LobsterAI) | 4.8k |
-| TinyClaw | [TinyAGI/tinyagi](https://github.com/TinyAGI/tinyagi) | 3.5k |
-| Moltis | [moltis-org/moltis](https://github.com/moltis-org/moltis) | 2.5k |
-| ZeptoClaw | [qhkm/zeptoclaw](https://github.com/qhkm/zeptoclaw) | 567 |
-
-### GitHub AI Trending
-
-Two data sources are fetched in parallel every day:
-
-| Source | Details |
-|--------|---------|
-| [github.com/trending](https://github.com/trending?since=daily) | Today's trending repos — parsed from HTML; includes today's new star count |
-| GitHub Search API | Repos active in the last 7 days matching 6 AI topics: `llm`, `ai-agent`, `rag`, `vector-database`, `large-language-model`, `machine-learning` |
-
-The LLM filters out non-AI repos from the trending list, classifies the rest by dimension (AI infrastructure / agents / applications / models / RAG), and extracts trend signals.
-
-### Hacker News
-
-Top AI stories from the last 24 hours, fetched via the [Algolia HN Search API](https://hn.algolia.com/api). Six queries run in parallel (`AI`, `LLM`, `Claude`, `OpenAI`, `Anthropic`, `machine learning`), results are deduplicated and ranked by points. The top 30 stories are passed to the LLM for analysis.
-
-### Official web content (sitemap-based)
-
-| Organization | Site | Tracked sections |
-|---|---|---|
-| Anthropic | [anthropic.com](https://www.anthropic.com) | `/news/`, `/research/`, `/engineering/`, `/learn/` |
-| OpenAI | [openai.com](https://openai.com) | research, publication, release, company, engineering, milestone, learn-guides, safety, product |
-
-New articles are detected by comparing sitemap `lastmod` timestamps against a persisted state file (`digests/web-state.json`). On the **first run**, up to 25 recent articles per site are fetched and a comprehensive overview report is generated. On subsequent runs, only new or updated URLs trigger a report; if nothing changed, the web report step is skipped entirely.
-
-## Features
-
-- Fetches issues, pull requests, and releases updated in the last 24 hours across all tracked repos
-- Tracks trending Claude Code Skills — sorted by community engagement, not recency
-- Generates a per-tool summary for each CLI repository and a cross-tool comparative analysis
-- Generates a deep OpenClaw project report plus a cross-ecosystem comparison against 11 peer projects
-- Scrapes official Anthropic and OpenAI web content via sitemaps; detects new articles incrementally
-- Monitors GitHub Trending daily + searches 6 AI topic tags; classifies repos by dimension and extracts trend signals
-- Fetches top-30 AI stories from Hacker News (last 24h, ranked by points); generates community sentiment report
-- Publishes GitHub Issues for each report type; commits Markdown files to `digests/YYYY-MM-DD/`
-- Runs on a daily schedule via GitHub Actions; supports manual triggering
-- All tracked repositories are configurable via `config.yml` — no code changes needed
-
-## Setup
-
-### 1. Fork this repository
-
-### 2. Customize `config.yml` (optional)
-
-Edit `config.yml` in the repo root to add, remove, or replace the tracked repositories. The file is fully commented. No code changes are needed — the pipeline reads it on every run and falls back to built-in defaults if the file is absent.
-
-```yaml
-# Add a new CLI tool
-cli_repos:
-  - id: my-tool
-    repo: owner/my-ai-cli
-    name: My AI Tool
-
-# Add a new peer project to the OpenClaw ecosystem comparison
-openclaw_peers:
-  - id: my-agent
-    repo: owner/my-agent
-    name: My Agent
-```
-
-### 3. Add Secrets
-
-Go to **Settings → Secrets and variables → Actions** and add:
-
-| Secret | Required | Description |
-|--------|----------|-------------|
-| `LLM_PROVIDER` | optional | `anthropic` (default), `openai`, `github-copilot`, or `openrouter` |
-| `ANTHROPIC_API_KEY` | if Anthropic | API key — works with both Anthropic and Kimi Code |
-| `ANTHROPIC_BASE_URL` | optional | API endpoint override. Set to `https://api.kimi.com/coding/` for Kimi Code; leave unset for Anthropic |
-| `OPENAI_API_KEY` | if OpenAI | OpenAI API key |
-| `OPENAI_BASE_URL` | optional | OpenAI endpoint override |
-| `OPENROUTER_API_KEY` | if OpenRouter | OpenRouter API key |
-| `TELEGRAM_BOT_TOKEN` | optional | Telegram bot token from [@BotFather](https://t.me/BotFather). If set, a message is sent after each digest run |
-| `TELEGRAM_CHAT_ID` | optional | Telegram chat/channel/group ID to send notifications to |
-| `FEISHU_WEBHOOK_URLS` | optional | Comma-separated Feishu custom bot webhook URLs. If set, a card message is sent to each group after each digest run |
-
-> `GITHUB_TOKEN` is provided automatically by GitHub Actions. When using `github-copilot` as the provider, the same `GITHUB_TOKEN` is used for LLM calls.
-
-**Setting up Telegram notifications** (optional):
-1. Message [@BotFather](https://t.me/BotFather) on Telegram, create a bot, and copy the token
-2. Add the bot to your channel/group, or start a DM with it
-3. Get the chat ID via [@userinfobot](https://t.me/userinfobot) or the [getUpdates](https://core.telegram.org/bots/api#getupdates) API
-4. Add `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` as repository secrets
-
-> If neither secret is set, the notification step is silently skipped.
-
-### 3. Enable the workflow
-
-Confirm the workflow is enabled in the **Actions** tab.
-
-To test immediately, go to **Actions → Daily Agents Radar → Run workflow**.
-
-> **First run note**: The web content step will fetch up to 50 articles (25 per site) and may take a few extra minutes. Subsequent runs are fast — only new articles are processed.
-
-## LLM providers
-
-Set `LLM_PROVIDER` to choose which model backend powers the digest generation. Defaults to `anthropic`.
-
-| Provider | `LLM_PROVIDER` | Required env vars | Default model |
-|----------|---------------|-------------------|---------------|
-| Anthropic | `anthropic` | `ANTHROPIC_API_KEY` | `claude-sonnet-4-6` |
-| OpenAI | `openai` | `OPENAI_API_KEY` | `gpt-4o` |
-| GitHub Copilot | `github-copilot` | `GITHUB_TOKEN` | `gpt-4o` |
-| OpenRouter | `openrouter` | `OPENROUTER_API_KEY` | `anthropic/claude-sonnet-4` |
-
-Override the model name with `ANTHROPIC_MODEL`, `OPENAI_MODEL`, `GITHUB_COPILOT_MODEL`, or `OPENROUTER_MODEL` respectively.
-
-The provider abstraction lives in `src/providers/` — each provider is a separate file implementing the `LlmProvider` interface. Adding a new provider only requires creating a new file and registering it in the factory.
-
-## Running locally
+### Install
 
 ```bash
 pnpm install
-
-export GITHUB_TOKEN=ghp_xxxxx
-
-# Option A: Anthropic (default)
-export ANTHROPIC_API_KEY=sk-ant-xxxxxxxx
-
-# Option B: OpenAI
-# export LLM_PROVIDER=openai
-# export OPENAI_API_KEY=sk-xxxxxxxx
-
-# Option C: GitHub Copilot (uses GITHUB_TOKEN)
-# export LLM_PROVIDER=github-copilot
-
-# Option D: OpenRouter
-# export LLM_PROVIDER=openrouter
-# export OPENROUTER_API_KEY=sk-or-xxxxxxxx
-
-export DIGEST_REPO=your-username/agents-radar  # optional; omit to only write files
-
-pnpm start
 ```
 
-## Output format
+### Run the web app in development
 
-Files are written to `digests/YYYY-MM-DD/`:
+Start the local API:
 
-| File | Content | GitHub Issue label |
-|------|---------|-------------------|
-| `ai-cli.md` | CLI digest — cross-tool comparison + per-tool details | `digest` |
-| `ai-agents.md` | OpenClaw deep report + cross-ecosystem comparison + 11 peer details | `openclaw` |
-| `ai-web.md` | Official web content report (only written when new content exists) | `web` |
-| `ai-trending.md` | GitHub AI trending report — repos classified by dimension + trend signals (only written when data is available) | `trending` |
-| `ai-hn.md` | Hacker News AI community digest — top stories + sentiment analysis (only written when fetch succeeds) | `hn` |
-| `ai-ph.md` | Product Hunt AI products digest (only written when `PRODUCTHUNT_TOKEN` is set and data is available) | `ph` |
-| `ai-arxiv.md` | ArXiv AI research digest — key papers from cs.AI/cs.CL/cs.LG | `arxiv` |
-| `ai-hf.md` | Hugging Face trending models digest — sorted by weekly likes | `hf` |
-| `ai-community.md` | Tech community AI digest — Dev.to articles + Lobste.rs stories combined | `community` |
-
-A shared state file `digests/web-state.json` tracks which web URLs have been seen; it is committed alongside the daily digests.
-
-Each report is generated in both Chinese (`ai-cli.md`) and English (`ai-cli-en.md`). The Web UI sidebar shows ZH / EN toggle buttons for reports that have both variants.
-
----
-
-`ai-cli.md` / `ai-cli-en.md` structure:
-```
-## Cross-Tool Comparison
-  Ecosystem overview / Activity comparison table / Shared themes / Differentiation / Trend signals
-
-## Per-Tool Reports
-  <details> Claude Code    — [Claude Code Skills Highlights]
-                             Top skills / Community demand trends / High-potential pending skills
-                             ---
-                             Today's summary / Hot issues / PR progress / Trends
-  <details> OpenAI Codex   — Today's summary / Hot issues / PR progress / Trends
-  <details> Gemini CLI     — ...
-  <details> GitHub Copilot CLI — ...
-  <details> Kimi Code CLI  — ...
-  <details> OpenCode       — ...
-  <details> Qwen Code      — ...
-  <details> DeepSeek TUI   — ...
+```bash
+pnpm api:dev
 ```
 
-`ai-agents.md` / `ai-agents-en.md` structure:
-```
-Issues: N | PRs: N | Projects covered: 10
+Start the UI:
 
-## OpenClaw Deep Dive
-  Today's summary / Releases / Project progress / Community highlights /
-  Bug stability / Feature requests / User feedback / Backlog
-
-## Cross-Ecosystem Comparison
-  Ecosystem overview / Activity table / OpenClaw positioning /
-  Shared technical directions / Differentiation / Community maturity / Trend signals
-
-## Peer Project Reports
-  <details> Zeroclaw   — Today's summary / Releases / Progress / ... (8 sections)
-  <details> EasyClaw   — ...
-  <details> LobsterAI  — ...
-  <details> ZeptoClaw  — ...
-  <details> NanoBot      — ...
-  <details> Hermes Agent — ...
-  <details> PicoClaw     — ...
-  <details> NanoClaw   — ...
-  <details> IronClaw   — ...
-  <details> TinyClaw   — ...
-  <details> CoPaw      — ...
+```bash
+pnpm ui:dev
 ```
 
-`ai-web.md` / `ai-web-en.md` structure:
-```
-Sources: anthropic.com (N articles) + openai.com (N articles)
+### Run the desktop app in development
 
-Today's summary
-Anthropic / Claude highlights  (news / research / engineering / learn)
-OpenAI highlights              (research / release / company / safety / ...)
-Strategic signals
-Notable details
-[First full crawl also includes: Content landscape overview]
+```bash
+pnpm desktop:dev
 ```
 
-`ai-trending.md` / `ai-trending-en.md` structure:
-```
-Sources: GitHub Trending + GitHub Search API
+### Seed a deterministic release fixture set
 
-Today's summary
-Top repos by dimension
-  🔧 AI Infrastructure  — frameworks / SDKs / inference engines / CLIs
-  🤖 AI Agents          — agent frameworks / multi-agent / automation
-  📦 AI Applications    — vertical products / solutions
-  🧠 Models & Training  — model weights / training frameworks / fine-tuning
-  🔍 RAG & Knowledge    — vector databases / retrieval augmentation
-Trend signal analysis
-Community focus
+```bash
+pnpm phase6:seed
 ```
 
-`ai-hn.md` / `ai-hn-en.md` structure:
-```
-Sources: Hacker News (top-30 AI stories, last 24h)
+This seeds a stable local dataset for release-style verification of:
 
-Today's summary
-Top stories & discussions
-  🔬 Models & Research  — new model releases / papers / benchmarks
-  🛠️ Tools & Engineering — open-source projects / frameworks / engineering practice
-  🏢 Industry news      — company news / funding / product launches
-  💬 Opinions & debate  — Ask HN / Show HN / hot threads
-Community sentiment signals
-Worth reading
-```
+- home recommendations
+- search
+- document detail actions
+- tags browsing and pagination
+- history and favorites
 
-`ai-weekly.md` / `ai-weekly-en.md` structure (generated every Monday):
-```
-Coverage: YYYY-MM-DD ~ YYYY-MM-DD  (last 7 daily digests)
+## Verification
 
-Weekly highlights
-Key trends & developments
-Notable releases
-Community momentum
-Outlook
+Run the core checks:
+
+```bash
+pnpm typecheck
+pnpm test
+pnpm ui:build
+pnpm test:e2e
 ```
 
-`ai-monthly.md` / `ai-monthly-en.md` structure (generated on the 1st of each month):
+`pnpm test:e2e` currently runs the phase-6 release smoke chain:
+
+- build the UI
+- seed deterministic fixtures
+- run the release smoke tests against the real local API logic
+
+## Windows Packaging
+
+Windows packaging is intentionally restricted to a real Windows release host.
+
+Requirements:
+
+- Windows x64
+- Node.js 20.x
+
+Commands:
+
+```bash
+pnpm desktop:build:dir
+pnpm desktop:build
 ```
-Sources: N weekly reports  (or sampled daily reports if fewer than 2 weeklies available)
 
-Month in review
-Major themes
-Ecosystem shifts
-Top projects & releases
-Looking ahead
-```
+The first command builds the unpacked app directory. The second builds Windows installer artifacts.
 
-Historical digests are stored in [`digests/`](./digests/). Published issues are tagged by type: [`digest`](../../issues?label=digest) · [`openclaw`](../../issues?label=openclaw) · [`web`](../../issues?label=web) · [`trending`](../../issues?label=trending) · [`hn`](../../issues?label=hn) · [`ph`](../../issues?label=ph) · [`arxiv`](../../issues?label=arxiv) · [`hf`](../../issues?label=hf) · [`community`](../../issues?label=community) · [`weekly`](../../issues?label=weekly) · [`monthly`](../../issues?label=monthly).
+## Release Documents
 
-## Schedule
+- [Phase 6 Runbook](./docs/phase6-runbook.md)
+- [Phase 6 Manual Checklist](./docs/phase6-manual-checklist.md)
+- [Phase 6 Baseline](./docs/phase6-baseline.md)
+- [Phase 6 Review Report](./第六阶段审查报告.md)
+- [Windows Packaging Task List](./第六阶段Windows打包与发布任务清单.md)
+- [Windows On-Machine Checklist](./第六阶段Windows实机执行清单.md)
 
-| Workflow | Cron | UTC | CST |
-|----------|------|-----|-----|
-| Daily digest | `0 0 * * *` | 00:00 daily | 08:00 daily |
-| Weekly rollup | `0 1 * * 1` | 01:00 Monday | 09:00 Monday |
-| Monthly rollup | `0 2 1 * *` | 02:00 on the 1st | 10:00 on the 1st |
+## Repository Notes
 
-To change the schedule, edit the cron expressions in the corresponding workflow files under `.github/workflows/`.
-
-## Star History
-
-[![Star History Chart](https://api.star-history.com/svg?repos=duanyytop/agents-radar&type=Date)](https://star-history.com/#duanyytop/agents-radar&Date)
+- Historical digest data is still present under `digests/`
+- Some package metadata still carries the legacy `agents-radar` name internally
+- The repository has already been migrated to a standalone `PaperHub` GitHub project, but code-level naming cleanup can continue incrementally
