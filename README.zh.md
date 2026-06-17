@@ -2,51 +2,79 @@
 
 [English](./README.md) | 中文
 
-PaperHub 是一个本地优先的论文与 AI 官方博客情报桌面应用。它会抓取论文和博客内容，写入本地 SQLite 档案库，生成摘要与标签，并提供搜索、推荐、标签浏览、阅读历史和收藏等能力。
+PaperHub 是一个本地优先的桌面应用，用来采集、整理和阅读论文与 AI 官方技术博客内容。它把数据采集、摘要生成、标签整理、搜索和推荐放进同一套桌面工作流里，帮助用户持续跟踪研究进展和产品动态，而不必依赖云端知识库。
 
-## 当前状态
+## 项目目标
 
-- 项目现在已经以 `PaperHub` 桌面应用为主，不再是早期的日报聚合仓库定位
-- 第六阶段代码侧审查与修复已完成
-- 当前仓库内的核心验证链路已通过：
-  - `pnpm typecheck`
-  - `pnpm test`
-  - `pnpm ui:build`
-  - `pnpm test:e2e`
-- 当前剩余发布工作主要是：在真实 `Windows + Node 20.x` 机器上完成打包与最终人工验收
+PaperHub 面向需要持续获取论文和技术情报的用户，核心目标是：
+
+- 将论文与官方博客更新集中到一个本地情报台
+- 用本地档案替代零散标签页、收藏夹和临时笔记
+- 通过摘要与标签降低信息筛选成本
+- 支持关键词搜索和语义搜索
+- 基于本地使用数据提供热点推荐与个性化推荐
 
 ## 核心能力
 
-- 抓取并标准化论文和博客文档
-- 使用本地 SQLite 存储摘要、标签、历史、收藏和用户偏好
-- 支持关键词、语义和混合搜索
+- 本地归档论文和博客文档
+- 生成中英文摘要
+- 自动打主题标签、来源标签、类型标签和模型标签
+- 支持全文搜索、语义搜索和混合搜索
 - 提供热点推荐和个性化推荐
-- 提供详情页、标签页、用户中心等主链路页面
-- 通过 Electron 作为本地桌面应用运行
+- 提供阅读历史、收藏和用户偏好管理
+- 通过 Electron 提供桌面端使用体验
+
+## 数据来源
+
+PaperHub 当前聚焦于结构稳定、适合长期采集的来源：
+
+- arXiv
+- OpenAI GPT Blog
+- Anthropic Claude Blog
 
 ## 技术栈
 
-- 后端：Node.js、TypeScript、Express
-- 前端：React、Vite、React Query、React Router
-- 存储：SQLite、`better-sqlite3`、`sqlite-vec`
 - 桌面端：Electron
+- 前端：React、Vite、React Router、React Query
+- 后端：Node.js、TypeScript、Express
+- 存储：SQLite、`better-sqlite3`、`sqlite-vec`
+- AI 集成：兼容 Anthropic、OpenAI、OpenRouter、DeepSeek、GitHub Copilot 的 Provider 抽象层
 
-## 快速开始
+## 环境要求
 
-### 前置要求
+- Node.js 20.x
+- `pnpm` 9+
 
-- 推荐使用 Node.js 20.x
-- `pnpm`
-
-### 安装依赖
+## 安装
 
 ```bash
 pnpm install
 ```
 
-### 本地开发运行 Web 版本
+## 环境变量
 
-启动本地 API：
+PaperHub 通过环境变量读取运行配置。最小本地配置通常为：
+
+```bash
+export LLM_PROVIDER=anthropic
+export ANTHROPIC_API_KEY=your_key_here
+```
+
+可选示例：
+
+```bash
+export OPENAI_API_KEY=your_key_here
+export OPENROUTER_API_KEY=your_key_here
+export DEEPSEEK_API_KEY=your_key_here
+export GITHUB_TOKEN=your_token_here
+export PAPERHUB_PORT=3000
+```
+
+如果需要真实语义向量检索，请提供 `OPENAI_API_KEY` 或 `EMBEDDING_API_KEY`。
+
+## 本地开发
+
+启动 API 服务：
 
 ```bash
 pnpm api:dev
@@ -58,72 +86,45 @@ pnpm api:dev
 pnpm ui:dev
 ```
 
-### 本地开发运行桌面版
+启动桌面应用：
 
 ```bash
 pnpm desktop:dev
 ```
 
-### 写入一套固定验证数据
-
-```bash
-pnpm phase6:seed
-```
-
-这套固定数据主要用于验证：
-
-- 首页推荐
-- 搜索
-- 详情页动作
-- 标签页分页与排序
-- 历史与收藏
-
-## 验证命令
-
-执行当前核心校验：
+## 常用命令
 
 ```bash
 pnpm typecheck
 pnpm test
-pnpm ui:build
 pnpm test:e2e
+pnpm ui:build
+pnpm desktop:start
 ```
 
-其中 `pnpm test:e2e` 当前实际执行的是第六阶段 release smoke：
+## 桌面打包
 
-- 先构建 UI
-- 再注入固定夹具数据
-- 再对真实本地 API 逻辑执行回归测试
-
-## Windows 打包
-
-Windows 打包现在被明确限制在真实 Windows 发布主机上执行。
-
-要求：
-
-- Windows x64
-- Node.js 20.x
-
-命令：
+生成 unpacked 桌面目录：
 
 ```bash
 pnpm desktop:build:dir
+```
+
+生成桌面发布产物：
+
+```bash
 pnpm desktop:build
 ```
 
-前者生成 unpacked 目录版本，后者生成 Windows 安装包产物。
+## 本地数据
 
-## 发布文档
+PaperHub 默认把应用数据存到用户主目录下的 `PaperHub` 目录中，也可以通过环境变量覆盖：
 
-- [第六阶段运行手册](./docs/phase6-runbook.md)
-- [第六阶段人工验收清单](./docs/phase6-manual-checklist.md)
-- [第六阶段基线记录](./docs/phase6-baseline.md)
-- [第六阶段审查报告](./第六阶段审查报告.md)
-- [第六阶段 Windows 打包与发布任务清单](./第六阶段Windows打包与发布任务清单.md)
-- [第六阶段 Windows 实机执行清单](./第六阶段Windows实机执行清单.md)
+- `PAPERHUB_DATA_DIR`
+- `PAPERHUB_DB_PATH`
+- `PAPERHUB_CACHE_DIR`
+- `PAPERHUB_LOGS_DIR`
 
-## 仓库说明
+## 许可证
 
-- 历史 digest 数据仍保留在 `digests/` 下
-- 少量历史兼容说明仍会体现出早期项目沿革
-- 当前仓库已经独立迁移到 `PaperHub` 项目名下，后续可继续逐步清理内部遗留命名
+MIT
