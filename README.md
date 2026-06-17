@@ -125,5 +125,5 @@ The first command builds the unpacked app directory. The second builds Windows i
 ## Repository Notes
 
 - Historical digest data is still present under `digests/`
-- Some package metadata still carries the legacy `agents-radar` name internally
+- Some internal integrations and historical modules still carry legacy `agents-radar` naming
 - The repository has already been migrated to a standalone `PaperHub` GitHub project, but code-level naming cleanup can continue incrementally

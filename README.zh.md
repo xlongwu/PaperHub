@@ -125,5 +125,5 @@ pnpm desktop:build
 ## 仓库说明
 
 - 历史 digest 数据仍保留在 `digests/` 下
-- 部分包名和内部元数据仍保留早期 `agents-radar` 命名
+- 部分内部集成和历史模块仍保留早期 `agents-radar` 命名
 - 当前仓库已经独立迁移到 `PaperHub` 项目名下，后续可继续逐步清理内部遗留命名

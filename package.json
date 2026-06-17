@@ -1,5 +1,5 @@
 {
-  "name": "agents-radar",
+  "name": "paperhub",
   "version": "0.1.0",
   "productName": "PaperHub",
   "main": "desktop/main.cjs",
