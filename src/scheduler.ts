@@ -9,13 +9,12 @@ import { arxivCollector } from "@/collectors/arxiv";
 import { gptBlogCollector } from "@/collectors/gpt-blog";
 import { claudeBlogCollector } from "@/collectors/claude-blog";
 import { rawToDocument } from "@/collectors/transformer";
-import { insertDocument, documentExists, updateDocument, getAllDocuments } from "@/db/documents";
+import { insertDocument, documentExists, getPendingSummaryDocuments } from "@/db/documents";
+import { updateTagStatsForDocument } from "@/db/tags";
 import { withRetry, logError } from "@/utils/retry";
-import { mapArxivCategories } from "@/tagger/arxiv-mapping";
-import { extractModelTags } from "@/tagger/model-extract";
-import { classifyBlogTags } from "@/tagger/llm-classify";
+import { findDuplicateByTitle } from "@/utils/dedup";
+import { applyDocumentTags } from "@/tagger/apply";
 import { summarizeBatch } from "@/summarizer";
-import type { Document } from "@/types";
 import fs from "node:fs";
 import path from "node:path";
 import { rebuildUserMemoryFromDigests, refreshHotRecommendations } from "@/recommendation";
@@ -26,6 +25,15 @@ import { rebuildUserMemoryFromDigests, refreshHotRecommendations } from "@/recom
 
 const tasks: cron.ScheduledTask[] = [];
 const config = loadPaperHubConfig();
+
+/** Track in-flight async work so stopScheduler can await completion. */
+const runningPromises = new Set<Promise<unknown>>();
+
+function track<T>(promise: Promise<T>): Promise<T> {
+  runningPromises.add(promise);
+  void promise.finally(() => runningPromises.delete(promise));
+  return promise;
+}
 
 // ---------------------------------------------------------------------------
 // Logging
@@ -42,28 +50,6 @@ function logScheduler(message: string): void {
   } catch {
     // Ignore
   }
-}
-
-// ---------------------------------------------------------------------------
-// Tag application
-// ---------------------------------------------------------------------------
-
-async function applyTags(doc: Document, raw: { metadata?: Record<string, unknown> }): Promise<void> {
-  // arXiv: use category mapping
-  if (doc.source === "arxiv" && raw.metadata?.categories) {
-    const cats = raw.metadata.categories as string[];
-    doc.domainTags = mapArxivCategories(cats);
-  }
-
-  // Blogs: use LLM classification
-  if (doc.source === "gpt_blog" || doc.source === "claude_blog") {
-    const tags = await classifyBlogTags(doc.title, doc.abstract);
-    doc.domainTags = tags;
-  }
-
-  // Extract model tags from title + abstract for all sources
-  const text = `${doc.title} ${doc.abstract}`;
-  doc.modelTags = extractModelTags(text);
 }
 
 // ---------------------------------------------------------------------------
@@ -85,11 +71,14 @@ async function runCollector(collector: typeof arxivCollector): Promise<{ inserte
     let inserted = 0;
     for (const raw of rawDocs) {
       const doc = rawToDocument(raw);
-      if (!documentExists(doc.url)) {
-        await applyTags(doc, raw);
-        insertDocument(doc);
-        inserted++;
+      if (documentExists(doc.url) || findDuplicateByTitle(doc.title)) {
+        continue;
       }
+
+      await applyDocumentTags(doc, raw);
+      insertDocument(doc);
+      updateTagStatsForDocument(doc);
+      inserted++;
     }
 
     logScheduler(`[scheduler] ${collector.id} done: ${inserted} new items inserted.`);
@@ -109,8 +98,7 @@ async function runSummarization(): Promise<void> {
   logScheduler("[scheduler] Running summarization...");
 
   try {
-    const docs = getAllDocuments({ limit: 100 });
-    const pending = docs.filter((d) => !d.isSummarized);
+    const pending = getPendingSummaryDocuments(100);
 
     if (pending.length === 0) {
       logScheduler("[scheduler] No pending documents to summarize.");
@@ -168,7 +156,7 @@ export function startScheduler(runImmediately = true): void {
   logScheduler("[scheduler] Starting scheduler...");
 
   // arXiv: every 6 hours
-  const arxivTask = cron.schedule(config.intervals.arxiv, () => runCollector(arxivCollector), {
+  const arxivTask = cron.schedule(config.intervals.arxiv, () => track(runCollector(arxivCollector)), {
     scheduled: true,
     timezone: "UTC",
   });
@@ -176,7 +164,7 @@ export function startScheduler(runImmediately = true): void {
   logScheduler(`[scheduler] arXiv scheduled: ${config.intervals.arxiv}`);
 
   // GPT Blog: every 30 minutes
-  const gptTask = cron.schedule(config.intervals.gptBlog, () => runCollector(gptBlogCollector), {
+  const gptTask = cron.schedule(config.intervals.gptBlog, () => track(runCollector(gptBlogCollector)), {
     scheduled: true,
     timezone: "UTC",
   });
@@ -184,7 +172,7 @@ export function startScheduler(runImmediately = true): void {
   logScheduler(`[scheduler] GPT Blog scheduled: ${config.intervals.gptBlog}`);
 
   // Claude Blog: every 30 minutes
-  const claudeTask = cron.schedule(config.intervals.claudeBlog, () => runCollector(claudeBlogCollector), {
+  const claudeTask = cron.schedule(config.intervals.claudeBlog, () => track(runCollector(claudeBlogCollector)), {
     scheduled: true,
     timezone: "UTC",
   });
@@ -192,21 +180,21 @@ export function startScheduler(runImmediately = true): void {
   logScheduler(`[scheduler] Claude Blog scheduled: ${config.intervals.claudeBlog}`);
 
   // Summarization: every 30 minutes
-  const summaryTask = cron.schedule("0 */30 * * * *", runSummarization, {
+  const summaryTask = cron.schedule("0 */30 * * * *", () => track(runSummarization()), {
     scheduled: true,
     timezone: "UTC",
   });
   tasks.push(summaryTask);
   logScheduler("[scheduler] Summarization scheduled: 0 */30 * * * *");
 
-  const hotTask = cron.schedule("0 10 0 * * *", rebuildDailyHotRecommendations, {
+  const hotTask = cron.schedule("0 10 0 * * *", () => track(rebuildDailyHotRecommendations()), {
     scheduled: true,
     timezone: "UTC",
   });
   tasks.push(hotTask);
   logScheduler("[scheduler] Hot recommendations scheduled: 0 10 0 * * *");
 
-  const memoryTask = cron.schedule("0 20 0 * * *", rebuildDailyUserMemory, {
+  const memoryTask = cron.schedule("0 20 0 * * *", () => track(rebuildDailyUserMemory()), {
     scheduled: true,
     timezone: "UTC",
   });
@@ -214,18 +202,23 @@ export function startScheduler(runImmediately = true): void {
   logScheduler("[scheduler] User memory scheduled: 0 20 0 * * *");
 
   // Run immediately on startup (for dev/test convenience)
+  // Stagger collectors by 2 s each to avoid thundering-herd API calls
   if (runImmediately) {
-    Promise.all([
-      runCollector(arxivCollector),
-      runCollector(gptBlogCollector),
-      runCollector(claudeBlogCollector),
-    ])
-      .then(async () => {
-        await runSummarization().catch((e) => logError("scheduler/immediate-summarize", e));
-        await rebuildDailyUserMemory().catch((e) => logError("scheduler/immediate-memory", e));
-        await rebuildDailyHotRecommendations().catch((e) => logError("scheduler/immediate-hot", e));
-      })
-      .catch((e) => logError("scheduler/immediate", e));
+    const startup = async () => {
+      for (const collector of [arxivCollector, gptBlogCollector, claudeBlogCollector]) {
+        await track(runCollector(collector));
+        await new Promise((resolve) => setTimeout(resolve, 2_000));
+      }
+      await track(runSummarization());
+      await track(rebuildDailyUserMemory());
+      await track(rebuildDailyHotRecommendations());
+    };
+
+    track(
+      startup().catch((e) => {
+        logError("scheduler/immediate", e);
+      }),
+    );
   }
 }
 
@@ -235,6 +228,29 @@ export function stopScheduler(): void {
     task.stop();
   }
   tasks.length = 0;
+
+  // Fire-and-forget: resolve any in-flight work with a 30 s deadline so
+  // the process can exit cleanly without torn writes.
+  if (runningPromises.size > 0) {
+    logScheduler(`[scheduler] Waiting for ${runningPromises.size} in-flight task(s)...`);
+    Promise.race([
+      Promise.allSettled([...runningPromises]),
+      new Promise((resolve) => setTimeout(resolve, 30_000)),
+    ]).finally(() => {
+      logScheduler("[scheduler] All in-flight tasks resolved (or timed out).");
+    });
+  }
+}
+
+/**
+ * Wait for all in-flight scheduler work to settle (used by graceful shutdown).
+ */
+export function waitForRunningTasks(): Promise<void> {
+  if (runningPromises.size === 0) return Promise.resolve();
+  return Promise.race([
+    Promise.allSettled([...runningPromises]).then(() => {}),
+    new Promise<void>((resolve) => setTimeout(resolve, 30_000)),
+  ]);
 }
 
 // ---------------------------------------------------------------------------

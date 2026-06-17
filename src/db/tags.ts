@@ -100,75 +100,79 @@ export function countDocumentsByTag(tag: string): number {
 export function refreshTagStats(): void {
   const db = getDb();
 
-  db.prepare("DELETE FROM tag_stats").run();
+  const refreshAll = db.transaction(() => {
+    db.prepare("DELETE FROM tag_stats").run();
 
-  // Domain tags
-  const domainRows = db.prepare(
-    "SELECT domain_tags FROM documents WHERE domain_tags IS NOT NULL AND domain_tags != '[]'"
-  ).all() as { domain_tags: string }[];
+    // Domain tags
+    const domainRows = db.prepare(
+      "SELECT domain_tags FROM documents WHERE domain_tags IS NOT NULL AND domain_tags != '[]'"
+    ).all() as { domain_tags: string }[];
 
-  const domainCounts = new Map<string, number>();
-  for (const row of domainRows) {
-    try {
-      const tags = JSON.parse(row.domain_tags) as string[];
-      for (const tag of tags) {
-        domainCounts.set(tag, (domainCounts.get(tag) ?? 0) + 1);
+    const domainCounts = new Map<string, number>();
+    for (const row of domainRows) {
+      try {
+        const tags = JSON.parse(row.domain_tags) as string[];
+        for (const tag of tags) {
+          domainCounts.set(tag, (domainCounts.get(tag) ?? 0) + 1);
+        }
+      } catch {
+        // ignore
       }
-    } catch {
-      // ignore
     }
-  }
 
-  const insert = db.prepare("INSERT INTO tag_stats(tag, category, count) VALUES (?, ?, ?)");
-  for (const [tag, count] of domainCounts) {
-    insert.run(tag, "domain", count);
-  }
+    const insert = db.prepare("INSERT INTO tag_stats(tag, category, count) VALUES (?, ?, ?)");
+    for (const [tag, count] of domainCounts) {
+      insert.run(tag, "domain", count);
+    }
 
-  // Model tags
-  const modelRows = db.prepare(
-    "SELECT model_tags FROM documents WHERE model_tags IS NOT NULL AND model_tags != '[]'"
-  ).all() as { model_tags: string }[];
+    // Model tags
+    const modelRows = db.prepare(
+      "SELECT model_tags FROM documents WHERE model_tags IS NOT NULL AND model_tags != '[]'"
+    ).all() as { model_tags: string }[];
 
-  const modelCounts = new Map<string, number>();
-  for (const row of modelRows) {
-    try {
-      const tags = JSON.parse(row.model_tags) as string[];
-      for (const tag of tags) {
-        modelCounts.set(tag, (modelCounts.get(tag) ?? 0) + 1);
+    const modelCounts = new Map<string, number>();
+    for (const row of modelRows) {
+      try {
+        const tags = JSON.parse(row.model_tags) as string[];
+        for (const tag of tags) {
+          modelCounts.set(tag, (modelCounts.get(tag) ?? 0) + 1);
+        }
+      } catch {
+        // ignore
       }
-    } catch {
-      // ignore
     }
-  }
-  for (const [tag, count] of modelCounts) {
-    insert.run(tag, "model", count);
-  }
+    for (const [tag, count] of modelCounts) {
+      insert.run(tag, "model", count);
+    }
 
-  // Source tags
-  const sourceRows = db.prepare(
-    "SELECT source_tag, COUNT(*) as count FROM documents GROUP BY source_tag"
-  ).all() as { source_tag: string; count: number }[];
-  for (const row of sourceRows) {
-    insert.run(row.source_tag, "source", row.count);
-  }
+    // Source tags
+    const sourceRows = db.prepare(
+      "SELECT source_tag, COUNT(*) as count FROM documents GROUP BY source_tag"
+    ).all() as { source_tag: string; count: number }[];
+    for (const row of sourceRows) {
+      insert.run(row.source_tag, "source", row.count);
+    }
 
-  // Type tags
-  const typeRows = db.prepare(
-    "SELECT type_tag, COUNT(*) as count FROM documents GROUP BY type_tag"
-  ).all() as { type_tag: string; count: number }[];
-  for (const row of typeRows) {
-    insert.run(row.type_tag, "type", row.count);
-  }
+    // Type tags
+    const typeRows = db.prepare(
+      "SELECT type_tag, COUNT(*) as count FROM documents GROUP BY type_tag"
+    ).all() as { type_tag: string; count: number }[];
+    for (const row of typeRows) {
+      insert.run(row.type_tag, "type", row.count);
+    }
 
-  // Year tags
-  const yearRows = db.prepare(
-    "SELECT year_tag, COUNT(*) as count FROM documents GROUP BY year_tag"
-  ).all() as { year_tag: number; count: number }[];
-  for (const row of yearRows) {
-    insert.run(String(row.year_tag), "year", row.count);
-  }
+    // Year tags
+    const yearRows = db.prepare(
+      "SELECT year_tag, COUNT(*) as count FROM documents GROUP BY year_tag"
+    ).all() as { year_tag: number; count: number }[];
+    for (const row of yearRows) {
+      insert.run(String(row.year_tag), "year", row.count);
+    }
 
-  console.log(`[tags] Refreshed stats: ${domainCounts.size} domain, ${modelCounts.size} model tags`);
+    console.log(`[tags] Refreshed stats: ${domainCounts.size} domain, ${modelCounts.size} model tags`);
+  });
+
+  refreshAll();
 }
 
 // ---------------------------------------------------------------------------
@@ -196,6 +200,15 @@ export function updateTagStatsForDocument(doc: Document): void {
 // Helpers
 // ---------------------------------------------------------------------------
 
+function safeJsonParse<T>(raw: unknown, fallback: T): T {
+  try {
+    const parsed = JSON.parse(String(raw ?? ""));
+    return parsed as T;
+  } catch {
+    return fallback;
+  }
+}
+
 function documentFromRow(row: Record<string, unknown>): Document {
   return {
     id: String(row.id),
@@ -203,15 +216,15 @@ function documentFromRow(row: Record<string, unknown>): Document {
     source: String(row.source) as Document["source"],
     url: String(row.url),
     publishedAt: String(row.published_at),
-    authors: JSON.parse(String(row.authors ?? "[]")),
+    authors: safeJsonParse<string[]>(row.authors, []),
     abstract: String(row.abstract ?? ""),
     fullTextPath: row.full_text_path ? String(row.full_text_path) : undefined,
     language: String(row.language) as "zh" | "en",
-    domainTags: JSON.parse(String(row.domain_tags ?? "[]")),
+    domainTags: safeJsonParse<string[]>(row.domain_tags, []),
     sourceTag: String(row.source_tag),
     typeTag: String(row.type_tag) as Document["typeTag"],
     yearTag: Number(row.year_tag),
-    modelTags: JSON.parse(String(row.model_tags ?? "[]")),
+    modelTags: safeJsonParse<string[]>(row.model_tags, []),
     summaryZh: row.summary_zh ? String(row.summary_zh) : undefined,
     summaryEn: row.summary_en ? String(row.summary_en) : undefined,
     createdAt: String(row.created_at),

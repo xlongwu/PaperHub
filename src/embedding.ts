@@ -4,7 +4,6 @@
  * Fallback: local mock for testing.
  */
 
-import { createProvider } from "@/providers";
 import { getCacheDir } from "@/config";
 import fs from "node:fs";
 import path from "node:path";
@@ -21,10 +20,9 @@ const EMBEDDING_MODEL = "text-embedding-3-small";
 // Cache
 // ---------------------------------------------------------------------------
 
-const embeddingCacheDir = path.join(getCacheDir(), "embeddings");
-
 function ensureEmbeddingCacheDir(): string | null {
   try {
+    const embeddingCacheDir = path.join(getCacheDir(), "embeddings");
     fs.mkdirSync(embeddingCacheDir, { recursive: true });
     return embeddingCacheDir;
   } catch {
@@ -67,7 +65,7 @@ function setCachedEmbedding(text: string, embedding: number[]): void {
 // ---------------------------------------------------------------------------
 
 async function generateOpenAIEmbedding(text: string): Promise<number[]> {
-  const apiKey = process.env["OPENAI_API_KEY"] || process.env["EMBEDDING_API_KEY"];
+  const apiKey = getEmbeddingApiKey();
   if (!apiKey) {
     throw new Error("OPENAI_API_KEY or EMBEDDING_API_KEY env var required for embeddings");
   }
@@ -124,10 +122,10 @@ export async function generateEmbedding(text: string): Promise<number[]> {
   const cached = getCachedEmbedding(text);
   if (cached) return cached;
 
-  const useMock = process.env["EMBEDDING_MOCK"] === "1" || !process.env["OPENAI_API_KEY"];
+  const provider = resolveEmbeddingProvider();
 
   let embedding: number[];
-  if (useMock) {
+  if (provider === "local") {
     embedding = generateMockEmbedding(text);
   } else {
     embedding = await generateOpenAIEmbedding(text);
@@ -138,3 +136,24 @@ export async function generateEmbedding(text: string): Promise<number[]> {
 }
 
 export { EMBEDDING_DIMENSION };
+
+function getEmbeddingApiKey(): string | undefined {
+  return process.env["EMBEDDING_API_KEY"] || process.env["OPENAI_API_KEY"];
+}
+
+function resolveEmbeddingProvider(): "openai" | "local" {
+  if (process.env["EMBEDDING_MOCK"] === "1") {
+    return "local";
+  }
+
+  const configured = process.env["EMBEDDING_PROVIDER"]?.trim().toLowerCase();
+  if (configured === "local" || configured === "openai") {
+    return configured;
+  }
+
+  if (configured) {
+    throw new Error(`Invalid EMBEDDING_PROVIDER: ${configured}. Use "openai" or "local".`);
+  }
+
+  return getEmbeddingApiKey() ? "openai" : "local";
+}

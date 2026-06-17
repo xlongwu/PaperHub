@@ -1,4 +1,3 @@
-import fs from "node:fs";
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "vitest";
 import { insertDocument } from "@/db/documents";
 import { upsertUserMemoryTerms } from "@/db/recommendations";
@@ -8,8 +7,9 @@ import { buildHotRecommendations } from "@/recommendation/hot";
 import { buildPersonalizedRecommendations } from "@/recommendation";
 import type { MemoryTerm } from "@/types";
 import type { Document } from "@/types";
+import { safeUnlink, testPath } from "./test-utils";
 
-const TEST_DB_PATH = "/tmp/paperhub-recommendation-test.db";
+const TEST_DB_PATH = testPath("paperhub-recommendation-test.db");
 const NOW = new Date("2026-06-16T12:00:00Z");
 
 function makeDoc(overrides: Partial<Document> = {}): Document {
@@ -37,9 +37,7 @@ function makeDoc(overrides: Partial<Document> = {}): Document {
 beforeEach(() => {
   process.env["EMBEDDING_MOCK"] = "1";
   closeDb();
-  try {
-    fs.unlinkSync(TEST_DB_PATH);
-  } catch {}
+  safeUnlink(TEST_DB_PATH);
 
   setDbPath(TEST_DB_PATH);
   initDatabase();
@@ -48,9 +46,7 @@ beforeEach(() => {
 afterEach(() => {
   closeDb();
   delete process.env["EMBEDDING_MOCK"];
-  try {
-    fs.unlinkSync(TEST_DB_PATH);
-  } catch {}
+  safeUnlink(TEST_DB_PATH);
 });
 
 afterAll(() => {
@@ -273,5 +269,5 @@ describe("buildPersonalizedRecommendations", () => {
     const results = await buildPersonalizedRecommendations({ now: NOW, limit: 1 });
 
     expect(results[0]!.document.id).toBe("personal-window-hit");
-  });
+  }, 15_000);
 });

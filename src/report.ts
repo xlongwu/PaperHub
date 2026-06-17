@@ -17,7 +17,17 @@ export const LLM_TOKENS_WEB = 8192;
 export const LLM_TOKENS_ROLLUP = 8192;
 import { type LlmProvider, createProvider } from "./providers/index";
 
-const provider: LlmProvider = createProvider();
+let provider: LlmProvider | null = null;
+
+/** Lazy-initialize the LLM provider.  Deferred from module load so the key
+ *  check in validateLlmProvider() runs first and warns the user before any
+ *  actual LLM call is attempted. */
+function getProvider(): LlmProvider {
+  if (!provider) {
+    provider = createProvider();
+  }
+  return provider;
+}
 
 // ---------------------------------------------------------------------------
 // Concurrency limiter — prevents rate-limit (429) errors when many LLM calls
@@ -62,7 +72,7 @@ export async function callLlm(prompt: string, maxTokens = LLM_TOKENS_DEFAULT): P
     await acquireSlot();
     let released = false;
     try {
-      return await provider.call(prompt, maxTokens);
+      return await getProvider().call(prompt, maxTokens);
     } catch (err) {
       if (attempt < MAX_RETRIES && is429(err)) {
         releaseSlot();

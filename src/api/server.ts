@@ -18,6 +18,7 @@ import { claudeBlogCollector } from "@/collectors/claude-blog";
 import { rawToDocument } from "@/collectors/transformer";
 import { insertDocument } from "@/db/documents";
 import { documentExists } from "@/db/documents";
+import { getPendingSummaryDocuments } from "@/db/documents";
 import { withRetry, logError } from "@/utils/retry";
 import type { ApiResponse } from "@/types";
 import {
@@ -31,13 +32,18 @@ import {
   countHistory,
   countFavorites,
 } from "@/db/user";
-import { mapArxivCategories } from "@/tagger/arxiv-mapping";
-import { extractModelTags } from "@/tagger/model-extract";
-import type { Document } from "@/types";
+import { applyDocumentTags } from "@/tagger/apply";
+import { findDuplicateByTitle } from "@/utils/dedup";
 import { summarizeBatch } from "@/summarizer";
 import { hybridSearch } from "@/search";
 import { indexDocumentVector } from "@/db/search";
-import { getTagCloud, getDocumentsByTag, countDocumentsByTag, refreshTagStats } from "@/db/tags";
+import {
+  getTagCloud,
+  getDocumentsByTag,
+  countDocumentsByTag,
+  refreshTagStats,
+  updateTagStatsForDocument,
+} from "@/db/tags";
 import {
   buildPersonalizedRecommendations,
   getCurrentMemory,
@@ -46,6 +52,7 @@ import {
   refreshHotRecommendations,
 } from "@/recommendation";
 import type { MemoryTerm, RecommendationEntry } from "@/types";
+import { corsMiddleware, createRateLimiter } from "./security";
 
 // ---------------------------------------------------------------------------
 // Setup
@@ -53,7 +60,47 @@ import type { MemoryTerm, RecommendationEntry } from "@/types";
 
 const config = loadPaperHubConfig();
 const app = express();
-app.use(express.json());
+
+// --- Security middleware ---
+app.use(corsMiddleware);                          // CORS: localhost only
+app.use(express.json({ limit: "1mb" }));          // Request body size cap
+
+// Rate limiters: different limits per endpoint sensitivity
+const generalLimiter = createRateLimiter({ windowMs: 60_000, max: 120 });
+const writeLimiter = createRateLimiter({ windowMs: 60_000, max: 20 });
+const collectLimiter = createRateLimiter({ windowMs: 300_000, max: 5 });    // 5 per 5 min
+const llmLimiter = createRateLimiter({ windowMs: 300_000, max: 10 });       // 10 per 5 min
+const searchLimiter = createRateLimiter({ windowMs: 60_000, max: 30 });     // 30 per min
+
+/**
+ * Whitelist of allowed user-preference keys.  Any key not in this set is
+ * rejected at the API boundary to prevent attackers from writing internal
+ * config keys (e.g. DB path, log path) via the preferences endpoint.
+ */
+const ALLOWED_PREFERENCE_KEYS = new Set([
+  "language",
+  "theme",
+  "sources",
+  "interests",
+  "readingHours",
+  "emailNotifications",
+  "weeklyDigest",
+  "monthlyDigest",
+  "defaultDateRange",
+]);
+
+function sanitizePreferences(body: unknown): Record<string, string> {
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return {};
+  }
+  const sanitized: Record<string, string> = {};
+  for (const [key, value] of Object.entries(body as Record<string, unknown>)) {
+    if (ALLOWED_PREFERENCE_KEYS.has(key) && typeof value === "string") {
+      sanitized[key] = value;
+    }
+  }
+  return sanitized;
+}
 
 const frontendDistDir = path.resolve(process.cwd(), "dist-ui");
 const frontendIndexHtml = path.join(frontendDistDir, "index.html");
@@ -61,6 +108,15 @@ const frontendIndexHtml = path.join(frontendDistDir, "index.html");
 // ---------------------------------------------------------------------------
 // Response helpers
 // ---------------------------------------------------------------------------
+
+/** Safely parse an integer query parameter. Returns `fallback` for NaN or
+ *  non-numeric strings. Unlike `parseInt() || fallback`, this correctly
+ *  handles `0` and negative values. */
+function safeParseInt(raw: unknown, fallback: number): number {
+  if (raw === undefined || raw === null) return fallback;
+  const n = Number(raw);
+  return Number.isFinite(n) ? Math.floor(n) : fallback;
+}
 
 function ok<T>(res: Response, data: T, meta?: ApiResponse<T>["meta"]): void {
   const payload: ApiResponse<T> = { success: true, data, meta };
@@ -271,8 +327,8 @@ app.get("/api/documents", (req, res) => {
   try {
     const result = listDocumentsResponse({
       source: req.query.source as string | undefined,
-      limit: parseInt(req.query.limit as string) || 20,
-      offset: parseInt(req.query.offset as string) || 0,
+      limit: safeParseInt(req.query.limit, 20),
+      offset: safeParseInt(req.query.offset, 0),
       from: req.query.from as string | undefined,
       to: req.query.to as string | undefined,
     });
@@ -299,7 +355,7 @@ app.get("/api/documents/:id", (req, res) => {
 });
 
 // Trigger collection manually
-app.post("/api/collect", async (req, res) => {
+app.post("/api/collect", collectLimiter, async (req, res) => {
   try {
     const source = req.body.source as string | undefined;
     const validSources = ["all", "arxiv", "gpt_blog", "claude_blog"];
@@ -329,12 +385,14 @@ app.post("/api/collect", async (req, res) => {
         let inserted = 0;
         for (const raw of rawDocs) {
           const doc = rawToDocument(raw);
-          if (!documentExists(doc.url)) {
-            // Apply tags before insert
-            applyTags(doc, raw);
-            insertDocument(doc);
-            inserted++;
+          if (documentExists(doc.url) || findDuplicateByTitle(doc.title)) {
+            continue;
           }
+
+          await applyDocumentTags(doc, raw);
+          insertDocument(doc);
+          updateTagStatsForDocument(doc);
+          inserted++;
         }
 
         results[id] = { collected: inserted };
@@ -351,19 +409,6 @@ app.post("/api/collect", async (req, res) => {
     err(res, 500, "Collection failed");
   }
 });
-
-// Tag application helper
-function applyTags(doc: Document, raw: { metadata?: Record<string, unknown> }): void {
-  // arXiv: use category mapping
-  if (doc.source === "arxiv" && raw.metadata?.categories) {
-    const cats = raw.metadata.categories as string[];
-    doc.domainTags = mapArxivCategories(cats);
-  }
-
-  // Extract model tags from title + abstract for all sources
-  const text = `${doc.title} ${doc.abstract}`;
-  doc.modelTags = extractModelTags(text);
-}
 
 // Stats
 app.get("/api/stats", (_req, res) => {
@@ -398,11 +443,11 @@ app.get("/api/user/preferences", (_req, res) => {
   }
 });
 
-app.post("/api/user/preferences", (req, res) => {
+app.post("/api/user/preferences", writeLimiter, (req, res) => {
   try {
-    const prefs = req.body as Record<string, string>;
-    if (!prefs || typeof prefs !== "object") {
-      err(res, 400, "Invalid preferences body");
+    const prefs = sanitizePreferences(req.body);
+    if (Object.keys(prefs).length === 0) {
+      err(res, 400, "No valid preferences provided. Allowed keys: " + [...ALLOWED_PREFERENCE_KEYS].join(", "));
       return;
     }
 
@@ -420,7 +465,7 @@ app.post("/api/user/preferences", (req, res) => {
 app.get("/api/user/memory", (req, res) => {
   try {
     const result = userMemoryResponse({
-      limit: parseInt(req.query.limit as string) || 20,
+      limit: safeParseInt(req.query.limit, 20),
       source: "digest",
     });
     ok(res, result.data, result.meta);
@@ -430,7 +475,7 @@ app.get("/api/user/memory", (req, res) => {
   }
 });
 
-app.post("/api/user/memory/rebuild", (req, res) => {
+app.post("/api/user/memory/rebuild", writeLimiter, (req, res) => {
   try {
     ok(res, rebuildUserMemoryResponse(parseUserMemoryRebuildBody(req.body ?? {})));
   } catch (e) {
@@ -445,8 +490,8 @@ app.post("/api/user/memory/rebuild", (req, res) => {
 
 app.get("/api/user/history", (req, res) => {
   try {
-    const limit = Math.min(parseInt(req.query.limit as string) || 20, 100);
-    const offset = parseInt(req.query.offset as string) || 0;
+    const limit = Math.min(safeParseInt(req.query.limit, 20), 100);
+    const offset = safeParseInt(req.query.offset, 0);
     const history = getHistory({ limit, offset });
     const total = countHistory();
     ok(res, history, { page: Math.floor(offset / limit) + 1, limit, total });
@@ -456,7 +501,7 @@ app.get("/api/user/history", (req, res) => {
   }
 });
 
-app.post("/api/user/history", (req, res) => {
+app.post("/api/user/history", writeLimiter, (req, res) => {
   try {
     const { document_id } = req.body as { document_id?: string };
     if (!document_id) {
@@ -477,8 +522,8 @@ app.post("/api/user/history", (req, res) => {
 
 app.get("/api/user/favorites", (req, res) => {
   try {
-    const limit = Math.min(parseInt(req.query.limit as string) || 20, 100);
-    const offset = parseInt(req.query.offset as string) || 0;
+    const limit = Math.min(safeParseInt(req.query.limit, 20), 100);
+    const offset = safeParseInt(req.query.offset, 0);
     const favorites = getFavorites({ limit, offset });
     const total = countFavorites();
     ok(res, favorites, { page: Math.floor(offset / limit) + 1, limit, total });
@@ -488,7 +533,7 @@ app.get("/api/user/favorites", (req, res) => {
   }
 });
 
-app.post("/api/user/favorites", (req, res) => {
+app.post("/api/user/favorites", writeLimiter, (req, res) => {
   try {
     const { document_id } = req.body as { document_id?: string };
     if (!document_id) {
@@ -517,7 +562,7 @@ app.delete("/api/user/favorites/:id", (req, res) => {
 // Summarization trigger
 // ---------------------------------------------------------------------------
 
-app.post("/api/summarize", async (req, res) => {
+app.post("/api/summarize", llmLimiter, async (req, res) => {
   try {
     const { document_id, lang } = req.body as { document_id?: string; lang?: "zh" | "en" };
 
@@ -527,14 +572,13 @@ app.post("/api/summarize", async (req, res) => {
         err(res, 404, "Document not found");
         return;
       }
-      const summary = await summarizeBatch([doc], lang || "zh");
+      await summarizeBatch([doc], lang || "zh");
       ok(res, { document_id, summarized: true });
       return;
     }
 
     // Summarize all pending documents
-    const docs = getAllDocuments({ limit: 100 });
-    const pending = docs.filter((d) => !d.isSummarized);
+    const pending = getPendingSummaryDocuments(100);
     await summarizeBatch(pending, lang || "zh");
     ok(res, { pending: pending.length, summarized: true });
   } catch (e) {
@@ -547,7 +591,7 @@ app.post("/api/summarize", async (req, res) => {
 // Search
 // ---------------------------------------------------------------------------
 
-app.get("/api/search", async (req, res) => {
+app.get("/api/search", searchLimiter, async (req, res) => {
   try {
     const q = req.query.q as string;
     if (!q || q.trim().length === 0) {
@@ -555,11 +599,19 @@ app.get("/api/search", async (req, res) => {
       return;
     }
 
+    const modeRaw = String(req.query.mode ?? "hybrid").toLowerCase();
+    const VALID_SEARCH_MODES = ["keyword", "semantic", "hybrid"];
+    if (!VALID_SEARCH_MODES.includes(modeRaw)) {
+      err(res, 400, `Invalid search mode "${modeRaw}". Use: ${VALID_SEARCH_MODES.join(", ")}`);
+      return;
+    }
+    const mode = modeRaw as "keyword" | "semantic" | "hybrid";
+
     const result = await searchResponse({
       query: q,
-      mode: (req.query.mode as "keyword" | "semantic" | "hybrid") || "hybrid",
-      limit: parseInt(req.query.limit as string) || 20,
-      offset: parseInt(req.query.offset as string) || 0,
+      mode,
+      limit: safeParseInt(req.query.limit, 20),
+      offset: safeParseInt(req.query.offset, 0),
       sources: req.query.sources ? String(req.query.sources).split(",") : undefined,
       tags: req.query.tags ? String(req.query.tags).split(",") : undefined,
       from: req.query.from as string | undefined,
@@ -580,7 +632,7 @@ app.get("/api/search", async (req, res) => {
 app.get("/api/tags", (req, res) => {
   try {
     const category = req.query.category as string | undefined;
-    const limit = Math.min(parseInt(req.query.limit as string) || 50, 200);
+    const limit = Math.min(safeParseInt(req.query.limit, 50), 200);
     const tags = getTagCloud({ category, limit });
     ok(res, tags);
   } catch (e) {
@@ -592,8 +644,8 @@ app.get("/api/tags", (req, res) => {
 app.get("/api/tags/:tag/documents", (req, res) => {
   try {
     const tag = req.params.tag;
-    const limit = Math.min(parseInt(req.query.limit as string) || 20, 100);
-    const offset = parseInt(req.query.offset as string) || 0;
+    const limit = Math.min(safeParseInt(req.query.limit, 20), 100);
+    const offset = safeParseInt(req.query.offset, 0);
     const sortBy = (req.query.sortBy as "time" | "relevance") || "time";
 
     const docs = getDocumentsByTag(tag, { limit, offset, sortBy });
@@ -605,7 +657,7 @@ app.get("/api/tags/:tag/documents", (req, res) => {
   }
 });
 
-app.post("/api/tags/refresh", (_req, res) => {
+app.post("/api/tags/refresh", writeLimiter, (_req, res) => {
   try {
     refreshTagStats();
     ok(res, { refreshed: true });
@@ -622,8 +674,8 @@ app.post("/api/tags/refresh", (_req, res) => {
 app.get("/api/recommendations/hot", (req, res) => {
   try {
     const result = hotRecommendationsResponse({
-      limit: parseInt(req.query.limit as string) || 10,
-      windowDays: parseInt(req.query.windowDays as string) || undefined,
+      limit: safeParseInt(req.query.limit, 10),
+      windowDays: safeParseInt(req.query.windowDays, 0) || undefined,
       includeRead: parseBooleanQuery(req.query.includeRead),
     });
     ok(res, result.data, result.meta);
@@ -633,13 +685,13 @@ app.get("/api/recommendations/hot", (req, res) => {
   }
 });
 
-app.post("/api/recommendations/refresh-hot", (req, res) => {
+app.post("/api/recommendations/refresh-hot", writeLimiter, (req, res) => {
   try {
     ok(
       res,
       refreshHotRecommendationsResponse({
-        limit: parseInt(req.body?.limit as string) || undefined,
-        windowDays: parseInt(req.body?.windowDays as string) || undefined,
+        limit: safeParseInt(req.body?.limit, 0) || undefined,
+        windowDays: safeParseInt(req.body?.windowDays, 0) || undefined,
         includeRead: parseBooleanQuery(req.body?.includeRead),
       }),
     );
@@ -663,7 +715,7 @@ app.get("/api/recommendations/personalized", async (req, res) => {
 // Vector indexing
 // ---------------------------------------------------------------------------
 
-app.post("/api/index-vectors", async (_req, res) => {
+app.post("/api/index-vectors", writeLimiter, async (_req, res) => {
   try {
     ok(res, await indexAllVectors());
   } catch (e) {

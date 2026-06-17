@@ -7,7 +7,7 @@ import fs from "node:fs";
 import path from "node:path";
 import Database from "better-sqlite3";
 import * as sqliteVec from "sqlite-vec";
-import { getDbPath, getDataDir } from "@/config";
+import { getDbPath } from "@/config";
 
 // ---------------------------------------------------------------------------
 // Migration tracking
@@ -131,24 +131,7 @@ const MIGRATIONS: Migration[] = [
       CREATE INDEX IF NOT EXISTS idx_tag_stats_category ON tag_stats(category);
       CREATE INDEX IF NOT EXISTS idx_tag_stats_count ON tag_stats(count);
     `,
-    postMigrate: (db) => {
-      // Load sqlite-vec extension
-      try {
-        db.loadExtension(sqliteVec.getLoadablePath());
-        console.log("[db] sqlite-vec extension loaded");
-
-        // Create vec0 virtual table
-        db.exec(`
-          CREATE VIRTUAL TABLE IF NOT EXISTS document_vectors USING vec0(
-            document_id TEXT PRIMARY KEY,
-            embedding float[1536]
-          );
-        `);
-        console.log("[db] document_vectors table created");
-      } catch (e) {
-        console.error("[db] Failed to load sqlite-vec:", e);
-      }
-    },
+    postMigrate: ensureVectorSchema,
   },
   {
     version: 3,
@@ -219,6 +202,7 @@ const MIGRATIONS: Migration[] = [
 
 let dbInstance: Database.Database | null = null;
 let customDbPath: string | null = null;
+const vectorReadyConnections = new WeakSet<Database.Database>();
 
 /** For testing: override the database file path. */
 export function setDbPath(p: string): void {
@@ -239,12 +223,6 @@ export function getDb(): Database.Database {
     dbInstance = new Database(dbPath);
     dbInstance.pragma(customDbPath ? "journal_mode = DELETE" : "journal_mode = WAL");
     dbInstance.pragma("foreign_keys = ON");
-    // Ensure sqlite-vec extension is loaded for every new connection
-    try {
-      dbInstance.loadExtension(sqliteVec.getLoadablePath());
-    } catch {
-      // may already be loaded
-    }
   }
   return dbInstance;
 }
@@ -284,8 +262,8 @@ export function runMigrations(): void {
     if (migration.version > current) {
       console.log(`[db] Applying migration v${migration.version}: ${migration.name}`);
       db.exec(migration.sql);
-      db.prepare("INSERT INTO schema_version (version) VALUES (?)").run(migration.version);
       migration.postMigrate?.(db);
+      db.prepare("INSERT INTO schema_version (version) VALUES (?)").run(migration.version);
     }
   }
 
@@ -297,6 +275,23 @@ export function runMigrations(): void {
 // ---------------------------------------------------------------------------
 
 export function initDatabase(): void {
-  getDb();
+  const db = getDb();
   runMigrations();
+  if (getCurrentVersion(db) >= 2) {
+    ensureVectorSchema(db);
+  }
+}
+
+function ensureVectorSchema(db: Database.Database): void {
+  if (!vectorReadyConnections.has(db)) {
+    db.loadExtension(sqliteVec.getLoadablePath());
+    vectorReadyConnections.add(db);
+  }
+  db.exec(`
+    CREATE VIRTUAL TABLE IF NOT EXISTS document_vectors USING vec0(
+      document_id TEXT PRIMARY KEY,
+      embedding float[1536]
+    );
+  `);
+  console.log("[db] sqlite-vec schema ready");
 }

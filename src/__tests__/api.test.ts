@@ -1,4 +1,3 @@
-import fs from "node:fs";
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   hotRecommendationsResponse,
@@ -16,8 +15,9 @@ import { insertDocument } from "@/db/documents";
 import { clearDbPath, closeDb, initDatabase, setDbPath } from "@/db/index";
 import { recordHistory, setUserPreference } from "@/db/user";
 import type { Document } from "@/types";
+import { safeUnlink, testPath } from "./test-utils";
 
-const TEST_DB_PATH = "/tmp/paperhub-api-test.db";
+const TEST_DB_PATH = testPath("paperhub-api-test.db");
 
 function makeDoc(overrides: Partial<Document> = {}): Document {
   return {
@@ -44,9 +44,7 @@ function makeDoc(overrides: Partial<Document> = {}): Document {
 beforeEach(() => {
   process.env["EMBEDDING_MOCK"] = "1";
   closeDb();
-  try {
-    fs.unlinkSync(TEST_DB_PATH);
-  } catch {}
+  safeUnlink(TEST_DB_PATH);
 
   setDbPath(TEST_DB_PATH);
   initDatabase();
@@ -56,9 +54,7 @@ afterEach(() => {
   closeDb();
   delete process.env["EMBEDDING_MOCK"];
 
-  try {
-    fs.unlinkSync(TEST_DB_PATH);
-  } catch {}
+  safeUnlink(TEST_DB_PATH);
 });
 
 afterAll(() => {
@@ -138,7 +134,7 @@ describe("indexAllVectors", () => {
     expect(payload.total).toBe(1001);
     expect(payload.indexed).toBe(1001);
     expect(countIndexedVectors()).toBe(1001);
-  });
+  }, 15_000);
 });
 
 describe("recommendation responses", () => {

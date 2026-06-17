@@ -38,22 +38,39 @@ export interface SearchResult {
 }
 
 const SEARCH_RESULT_LIMIT_CAP = 1000;
+const VECTOR_K_CAP = 200; // Prevent full-scan KNN when index grows large
 
 // ---------------------------------------------------------------------------
 // FTS5 keyword search
 // ---------------------------------------------------------------------------
+
+/**
+ * Escape FTS5 special characters and delimiters that could be interpreted as
+ * query syntax. Each user-supplied term is wrapped in double-quotes to prevent
+ * FTS5 operators (AND, OR, NOT, NEAR, ^, parentheses) from altering query
+ * semantics.
+ */
+function escapeFts5Term(term: string): string {
+  // Strip characters that FTS5 treats specially, then wrap in double-quotes
+  // to prevent the term from being parsed as an operator or expression.
+  const cleaned = term.replace(/["*^()]/g, "").trim();
+  if (cleaned.length === 0) return "";
+  // Quote the term so FTS5 treats it as a literal phrase match with prefix
+  return `"${cleaned}"*`;
+}
 
 export function searchFts5(options: Fts5SearchOptions): SearchResult[] {
   const db = getDb();
   const limit = Math.min(options.limit ?? 20, SEARCH_RESULT_LIMIT_CAP);
   const offset = Math.max(options.offset ?? 0, 0);
 
-  // Build prefix query: "term*" for each term, joined with AND
+  // Build prefix query with escaped terms, joined with AND
   const terms = options.query
     .trim()
     .split(/\s+/)
     .filter((t) => t.length > 0)
-    .map((t) => `${t}*`);
+    .map(escapeFts5Term)
+    .filter((t) => t.length > 0);
 
   if (terms.length === 0) return [];
 
@@ -177,7 +194,11 @@ export async function searchVector(options: VectorSearchOptions): Promise<Search
     return [];
   }
 
-  const rows = db.prepare(sql).all(serializedEmbedding, totalIndexed) as {
+  // Cap K to avoid loading the entire index into memory. For small indexes,
+  // use totalIndexed so we don't artificially limit results.
+  const kValue = Math.min(totalIndexed, VECTOR_K_CAP);
+
+  const rows = db.prepare(sql).all(serializedEmbedding, kValue) as {
     document_id: string;
     distance: number;
   }[];
@@ -212,6 +233,15 @@ export async function searchVector(options: VectorSearchOptions): Promise<Search
 // Helpers
 // ---------------------------------------------------------------------------
 
+function safeJsonParse<T>(raw: unknown, fallback: T): T {
+  try {
+    const parsed = JSON.parse(String(raw ?? ""));
+    return parsed as T;
+  } catch {
+    return fallback;
+  }
+}
+
 function rowToDocument(row: Record<string, unknown>): Document {
   return {
     id: String(row.id),
@@ -219,15 +249,15 @@ function rowToDocument(row: Record<string, unknown>): Document {
     source: String(row.source) as Document["source"],
     url: String(row.url),
     publishedAt: String(row.published_at),
-    authors: JSON.parse(String(row.authors ?? "[]")),
+    authors: safeJsonParse<string[]>(row.authors, []),
     abstract: String(row.abstract ?? ""),
     fullTextPath: row.full_text_path ? String(row.full_text_path) : undefined,
     language: String(row.language) as "zh" | "en",
-    domainTags: JSON.parse(String(row.domain_tags ?? "[]")),
+    domainTags: safeJsonParse<string[]>(row.domain_tags, []),
     sourceTag: String(row.source_tag),
     typeTag: String(row.type_tag) as Document["typeTag"],
     yearTag: Number(row.year_tag),
-    modelTags: JSON.parse(String(row.model_tags ?? "[]")),
+    modelTags: safeJsonParse<string[]>(row.model_tags, []),
     summaryZh: row.summary_zh ? String(row.summary_zh) : undefined,
     summaryEn: row.summary_en ? String(row.summary_en) : undefined,
     createdAt: String(row.created_at),
@@ -274,9 +304,14 @@ function serializeEmbedding(embedding: number[]): Buffer {
   return Buffer.from(values.buffer);
 }
 
-function matchesSearchFilters(
+/**
+ * Shared filter predicate used by both vector search and the hybrid-search
+ * merge layer.  Kept in a single location so filters in both branches stay
+ * in lockstep.
+ */
+export function matchesSearchFilters(
   document: Document,
-  filters: Pick<VectorSearchOptions, "sources" | "tags" | "dateRange">,
+  filters: { sources?: string[]; tags?: string[]; dateRange?: { start: string; end: string } },
 ): boolean {
   if (filters.sources && filters.sources.length > 0 && !filters.sources.includes(document.source)) {
     return false;

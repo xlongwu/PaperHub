@@ -53,10 +53,7 @@ export function initDefaultPreferences(): void {
 
 export function recordHistory(documentId: string): void {
   const db = getDb();
-  // Temporarily disable foreign key check to allow history for non-existent docs (test convenience)
-  db.prepare("PRAGMA foreign_keys = OFF").run();
   db.prepare("INSERT INTO browsing_history (document_id) VALUES (?)").run(documentId);
-  db.prepare("PRAGMA foreign_keys = ON").run();
 }
 
 export function getHistory(options?: { limit?: number; offset?: number }): Array<{ id: number; documentId: string; viewedAt: string }> {
@@ -89,9 +86,7 @@ export function countHistory(): number {
 
 export function addFavorite(documentId: string): void {
   const db = getDb();
-  db.prepare("PRAGMA foreign_keys = OFF").run();
   db.prepare("INSERT OR IGNORE INTO favorites (document_id) VALUES (?)").run(documentId);
-  db.prepare("PRAGMA foreign_keys = ON").run();
 }
 
 export function removeFavorite(documentId: string): void {

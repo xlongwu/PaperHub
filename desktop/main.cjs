@@ -40,13 +40,40 @@ function ensureBackendProcess() {
     return;
   }
 
-  backendProcess = spawn(process.execPath, ["--import", "tsx", path.join(getRootDir(), "src/index.ts")], {
-    cwd: getRootDir(),
-    stdio: "inherit",
-    env: {
-      ...process.env,
-      ELECTRON_RUN_AS_NODE: "1",
-    },
+  const nodeExe = process.execPath;
+  const rootDir = getRootDir();
+  const scriptPath = path.join(rootDir, "src/index.ts");
+
+  console.log("[desktop] Spawning backend:", nodeExe, scriptPath);
+
+  // Build a clean env for the child process.  `NODE_OPTIONS` may contain
+  // flags (e.g. `--use-system-ca`) that Electron-in-Node mode forbids.
+  const backendEnv = { ...process.env };
+  delete backendEnv.NODE_OPTIONS;
+  backendEnv.ELECTRON_RUN_AS_NODE = "1";
+
+  try {
+    backendProcess = spawn(nodeExe, ["--import", "tsx", scriptPath], {
+      cwd: rootDir,
+      stdio: "inherit",
+      env: backendEnv,
+    });
+  } catch (error) {
+    void dialog.showErrorBox(
+      "Failed to start backend",
+      `Could not launch the API server: ${error instanceof Error ? error.message : String(error)}\n\nExe: ${nodeExe}\nScript: ${scriptPath}`,
+    );
+    app.quit();
+    return;
+  }
+
+  backendProcess.on("error", (error) => {
+    console.error("[desktop] Backend spawn error:", error);
+    void dialog.showErrorBox(
+      "Backend process error",
+      `The API process encountered an error: ${error.message}\n\nExe: ${nodeExe}`,
+    );
+    app.quit();
   });
 
   backendProcess.on("exit", (code) => {

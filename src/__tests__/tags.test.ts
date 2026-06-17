@@ -7,9 +7,9 @@ import { initDatabase, closeDb, setDbPath, clearDbPath } from "@/db/index";
 import { insertDocument } from "@/db/documents";
 import { getTagCloud, getDocumentsByTag, countDocumentsByTag, refreshTagStats, updateTagStatsForDocument } from "@/db/tags";
 import type { Document } from "@/types";
-import fs from "node:fs";
+import { safeUnlink, testPath } from "./test-utils";
 
-const TEST_DB_PATH = "/tmp/paperhub-tags-test.db";
+const TEST_DB_PATH = testPath("paperhub-tags-test.db");
 
 function makeDoc(overrides: Partial<Document> = {}): Document {
   return {
@@ -35,7 +35,7 @@ function makeDoc(overrides: Partial<Document> = {}): Document {
 
 beforeEach(() => {
   closeDb();
-  try { fs.unlinkSync(TEST_DB_PATH); } catch {}
+  safeUnlink(TEST_DB_PATH);
   setDbPath(TEST_DB_PATH);
   initDatabase();
 });
@@ -43,7 +43,7 @@ beforeEach(() => {
 afterAll(() => {
   closeDb();
   clearDbPath();
-  try { fs.unlinkSync(TEST_DB_PATH); } catch {}
+  safeUnlink(TEST_DB_PATH);
 });
 
 describe("refreshTagStats", () => {

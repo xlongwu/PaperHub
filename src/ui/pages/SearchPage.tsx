@@ -26,7 +26,7 @@ export function SearchPage(): JSX.Element {
   const [query, setQuery] = useState(appliedState.query);
   const [mode, setMode] = useState(appliedState.mode);
   const [sources, setSources] = useState<string[]>(appliedState.sources);
-  const [tags, setTags] = useState<string[]>(appliedState.tags);
+  const [, setTags] = useState<string[]>(appliedState.tags);
   const [tagDraft, setTagDraft] = useState(appliedState.tags.join(", "));
   const [timeRange, setTimeRange] = useState<TimeRangePreset>(appliedState.timeRange);
   const [, startTransition] = useTransition();

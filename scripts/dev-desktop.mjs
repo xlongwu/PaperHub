@@ -1,9 +1,6 @@
-import { spawn } from "node:child_process";
+import { spawnNode, spawnPnpm } from "./pnpm-runner.mjs";
 
-const isWindows = process.platform === "win32";
-const bin = isWindows ? "pnpm.cmd" : "pnpm";
-
-const api = spawn(bin, ["api:dev"], {
+const api = spawnPnpm(["api:dev"], {
   stdio: "inherit",
   env: {
     ...process.env,
@@ -11,13 +8,13 @@ const api = spawn(bin, ["api:dev"], {
   },
 });
 
-const ui = spawn(bin, ["ui:dev"], {
+const ui = spawnPnpm(["ui:dev"], {
   stdio: "inherit",
   env: process.env,
 });
 
 setTimeout(() => {
-  spawn(bin, ["exec", "electron", "desktop/main.cjs"], {
+  spawnNode(["node_modules/electron/cli.js", "desktop/main.cjs"], {
     stdio: "inherit",
     env: {
       ...process.env,

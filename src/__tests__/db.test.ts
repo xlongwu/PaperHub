@@ -17,13 +17,13 @@ import {
   deleteDocument,
 } from "@/db/documents";
 import type { Document } from "@/types";
-import fs from "node:fs";
+import { safeUnlink, testPath } from "./test-utils";
 
-const TEST_DB_PATH = "/tmp/paperhub-test.db";
+const TEST_DB_PATH = testPath("paperhub-test.db");
 
 beforeEach(() => {
   closeDb();
-  try { fs.unlinkSync(TEST_DB_PATH); } catch {}
+  safeUnlink(TEST_DB_PATH);
   setDbPath(TEST_DB_PATH);
   initDatabase();
 });
@@ -31,7 +31,7 @@ beforeEach(() => {
 afterAll(() => {
   closeDb();
   clearDbPath();
-  try { fs.unlinkSync(TEST_DB_PATH); } catch {}
+  safeUnlink(TEST_DB_PATH);
 });
 
 // ---------------------------------------------------------------------------

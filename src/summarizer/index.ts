@@ -57,11 +57,21 @@ export async function summarizeBatch(
   const concurrency = 3;
   const queue = [...pending];
 
+  // Per-document timeout to prevent a hanging LLM call from starving the
+  // worker pool.  If summarizeDocument hangs (network partition, unresponsive
+  // endpoint), the worker progresses to the next document after 90 s.
+  const DOCUMENT_TIMEOUT_MS = 90_000;
+
   async function worker(): Promise<void> {
     while (queue.length > 0) {
       const doc = queue.shift()!;
       try {
-        await summarizeDocument(doc, lang);
+        await Promise.race([
+          summarizeDocument(doc, lang),
+          new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error(`Timeout: ${doc.id}`)), DOCUMENT_TIMEOUT_MS),
+          ),
+        ]);
         done++;
         onProgress?.(done, total);
       } catch (err) {

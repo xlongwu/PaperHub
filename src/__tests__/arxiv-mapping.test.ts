@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { mapArxivCategories, ARXIV_DOMAIN_MAP } from "@/tagger/arxiv-mapping";
+import { mapArxivCategories } from "@/tagger/arxiv-mapping";
 
 describe("mapArxivCategories", () => {
   it("maps cs.AI to AI and Foundation Models", () => {
@@ -26,7 +26,7 @@ describe("mapArxivCategories", () => {
   });
 
   it("returns empty for unknown categories", () => {
-    const tags = mapArxivCategories(["cs.XX", "unknown"])
+    const tags = mapArxivCategories(["cs.XX", "unknown"]);
     expect(tags.length).toBe(0);
   });
 

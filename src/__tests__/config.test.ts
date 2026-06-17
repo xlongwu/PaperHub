@@ -9,6 +9,7 @@ import {
   loadPaperHubConfig,
   toRepoConfig,
 } from "../config";
+import { resetDir, testPath } from "./test-utils";
 
 // ---------------------------------------------------------------------------
 // toRepoConfig
@@ -104,18 +105,24 @@ openclaw:
 describe("PaperHub path overrides", () => {
   afterEach(() => {
     vi.unstubAllEnvs();
+    resetDir(testPath("config-overrides"));
   });
 
   it("prefers environment overrides for data directories and db file", () => {
-    vi.stubEnv("PAPERHUB_DATA_DIR", "/tmp/paperhub-custom-data");
-    vi.stubEnv("PAPERHUB_DB_PATH", "/tmp/paperhub-custom-db/paperhub.db");
-    vi.stubEnv("PAPERHUB_LOGS_DIR", "/tmp/paperhub-custom-logs");
-    vi.stubEnv("PAPERHUB_CACHE_DIR", "/tmp/paperhub-custom-cache");
+    const dataDir = testPath("config-overrides", "data");
+    const dbPath = testPath("config-overrides", "db", "paperhub.db");
+    const logsDir = testPath("config-overrides", "logs");
+    const cacheDir = testPath("config-overrides", "cache");
 
-    expect(getDataDir()).toBe("/tmp/paperhub-custom-data");
-    expect(getDbPath()).toBe("/tmp/paperhub-custom-db/paperhub.db");
-    expect(getLogsDir()).toBe("/tmp/paperhub-custom-logs");
-    expect(getCacheDir()).toBe("/tmp/paperhub-custom-cache");
+    vi.stubEnv("PAPERHUB_DATA_DIR", dataDir);
+    vi.stubEnv("PAPERHUB_DB_PATH", dbPath);
+    vi.stubEnv("PAPERHUB_LOGS_DIR", logsDir);
+    vi.stubEnv("PAPERHUB_CACHE_DIR", cacheDir);
+
+    expect(getDataDir()).toBe(dataDir);
+    expect(getDbPath()).toBe(dbPath);
+    expect(getLogsDir()).toBe(logsDir);
+    expect(getCacheDir()).toBe(cacheDir);
   });
 });
 

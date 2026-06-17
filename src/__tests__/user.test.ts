@@ -18,13 +18,15 @@ import {
   getFavorites,
   countFavorites,
 } from "@/db/user";
-import fs from "node:fs";
+import { insertDocument } from "@/db/documents";
+import type { Document } from "@/types";
+import { safeUnlink, testPath } from "./test-utils";
 
-const TEST_DB_PATH = "/tmp/paperhub-user-test.db";
+const TEST_DB_PATH = testPath("paperhub-user-test.db");
 
 beforeEach(() => {
   closeDb();
-  try { fs.unlinkSync(TEST_DB_PATH); } catch {}
+  safeUnlink(TEST_DB_PATH);
   setDbPath(TEST_DB_PATH);
   initDatabase();
 });
@@ -32,8 +34,29 @@ beforeEach(() => {
 afterAll(() => {
   closeDb();
   clearDbPath();
-  try { fs.unlinkSync(TEST_DB_PATH); } catch {}
+  safeUnlink(TEST_DB_PATH);
 });
+
+function makeDoc(id: string): Document {
+  return {
+    id,
+    title: `User Test ${id}`,
+    source: "arxiv",
+    url: `https://example.com/${id}`,
+    publishedAt: "2026-06-15T00:00:00Z",
+    authors: [],
+    abstract: "User test document",
+    language: "en",
+    domainTags: [],
+    sourceTag: "arXiv",
+    typeTag: "paper",
+    yearTag: 2026,
+    modelTags: [],
+    createdAt: "2026-06-16T00:00:00Z",
+    updatedAt: "2026-06-16T00:00:00Z",
+    isSummarized: false,
+  };
+}
 
 describe("User preferences", () => {
   it("sets and gets a preference", () => {
@@ -77,6 +100,8 @@ describe("User preferences", () => {
 
 describe("Browsing history", () => {
   it("records and retrieves history", () => {
+    insertDocument(makeDoc("doc-1"));
+    insertDocument(makeDoc("doc-2"));
     recordHistory("doc-1");
     recordHistory("doc-2");
     const history = getHistory();
@@ -85,12 +110,16 @@ describe("Browsing history", () => {
   });
 
   it("supports pagination", () => {
-    for (let i = 0; i < 5; i++) recordHistory(`doc-${i}`);
+    for (let i = 0; i < 5; i++) {
+      insertDocument(makeDoc(`doc-${i}`));
+      recordHistory(`doc-${i}`);
+    }
     const page = getHistory({ limit: 2, offset: 0 });
     expect(page.length).toBe(2);
   });
 
   it("counts history", () => {
+    insertDocument(makeDoc("doc-1"));
     recordHistory("doc-1");
     expect(countHistory()).toBe(1);
   });
@@ -98,6 +127,8 @@ describe("Browsing history", () => {
 
 describe("Favorites", () => {
   it("adds and retrieves favorites", () => {
+    insertDocument(makeDoc("doc-1"));
+    insertDocument(makeDoc("doc-2"));
     addFavorite("doc-1");
     addFavorite("doc-2");
     const favs = getFavorites();
@@ -106,6 +137,7 @@ describe("Favorites", () => {
   });
 
   it("removes favorites", () => {
+    insertDocument(makeDoc("doc-1"));
     addFavorite("doc-1");
     removeFavorite("doc-1");
     expect(isFavorite("doc-1")).toBe(false);
@@ -113,6 +145,7 @@ describe("Favorites", () => {
   });
 
   it("handles duplicate adds gracefully", () => {
+    insertDocument(makeDoc("doc-1"));
     addFavorite("doc-1");
     addFavorite("doc-1");
     expect(countFavorites()).toBe(1);

@@ -1,11 +1,9 @@
 import path from "node:path";
-import { spawn } from "node:child_process";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { runNode, runPnpm } from "./pnpm-runner.mjs";
 
-const rootDir = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..");
+const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const dataDir = path.join(rootDir, ".tmp", "phase6-e2e");
-const isWindows = process.platform === "win32";
-const pnpmBin = isWindows ? "pnpm.cmd" : "pnpm";
 
 const sharedEnv = {
   ...process.env,
@@ -13,30 +11,11 @@ const sharedEnv = {
   PAPERHUB_PORT: "4310",
 };
 
-await run(pnpmBin, ["ui:build"], sharedEnv);
-await run("node", ["--import", "tsx", "scripts/seed-phase6-fixtures.ts", "--reset"], sharedEnv);
+await runPnpm(["ui:build"], { cwd: rootDir, env: sharedEnv });
+await runNode(["--import", "tsx", "scripts/seed-phase6-fixtures.ts", "--reset"], { cwd: rootDir, env: sharedEnv });
 Object.assign(process.env, sharedEnv, {
   PAPERHUB_DISABLE_SCHEDULER: "1",
 });
 
 await import(pathToFileURL(path.join(rootDir, "src/index.ts")).href);
 setInterval(() => {}, 60_000);
-
-function run(command, args, env) {
-  return new Promise((resolve, reject) => {
-    const child = spawn(command, args, {
-      cwd: rootDir,
-      stdio: "inherit",
-      env,
-    });
-
-    child.on("exit", (code) => {
-      if (code === 0) {
-        resolve();
-        return;
-      }
-
-      reject(new Error(`${command} ${args.join(" ")} exited with code ${code ?? "unknown"}`));
-    });
-  });
-}

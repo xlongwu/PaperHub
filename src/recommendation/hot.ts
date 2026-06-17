@@ -132,7 +132,7 @@ function buildHotReason(document: Document, now: Date): RecommendationEntry["rea
 }
 
 function diversifyBySource(entries: RecommendationEntry[], limit: number): RecommendationEntry[] {
-  const maxPerSource = Math.max(1, Math.ceil(limit / 2));
+  const maxPerSource = Math.max(1, Math.floor(limit / 2));
   const sourceCounts = new Map<string, number>();
   const selected: RecommendationEntry[] = [];
   const overflow: RecommendationEntry[] = [];

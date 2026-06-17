@@ -1,5 +1,6 @@
 import { Link } from "react-router-dom";
 import type { Document, RecommendationEntry } from "@/types";
+import type { ReactNode } from "react";
 
 export function SectionHeader(props: {
   kicker: string;
@@ -68,12 +69,11 @@ export function DocumentCard(props: {
       <Link className="paper-title-link" to={`/documents/${document.id}`}>
         <h3 className="paper-title">{document.title}</h3>
       </Link>
-      <p
-        className="paper-abstract"
-        dangerouslySetInnerHTML={{
-          __html: props.snippet ?? props.emphasis ?? document.summaryZh ?? document.abstract,
-        }}
-      />
+      <p className="paper-abstract">
+        {props.snippet
+          ? renderHighlightedSnippet(props.snippet)
+          : props.emphasis ?? document.summaryZh ?? document.abstract}
+      </p>
       <div className="chip-row">
         {document.domainTags.slice(0, 4).map((tag) => (
           <span className="chip" key={tag}>
@@ -157,4 +157,27 @@ export function formatDate(value: string): string {
     month: "short",
     day: "numeric",
   }).format(new Date(value));
+}
+
+function renderHighlightedSnippet(snippet: string): ReactNode[] {
+  const nodes: ReactNode[] = [];
+  const matcher = /<mark>([\s\S]*?)<\/mark>/gi;
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+  let key = 0;
+
+  while ((match = matcher.exec(snippet)) !== null) {
+    if (match.index > lastIndex) {
+      nodes.push(snippet.slice(lastIndex, match.index));
+    }
+
+    nodes.push(<mark key={`mark-${key++}`}>{match[1]}</mark>);
+    lastIndex = matcher.lastIndex;
+  }
+
+  if (lastIndex < snippet.length) {
+    nodes.push(snippet.slice(lastIndex));
+  }
+
+  return nodes;
 }

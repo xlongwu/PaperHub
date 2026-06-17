@@ -4,13 +4,13 @@
 
 import { describe, it, expect, beforeEach, afterAll } from "vitest";
 import { initDatabase, closeDb, setDbPath, clearDbPath } from "@/db/index";
-import { insertDocument, getAllDocuments } from "@/db/documents";
-import { searchFts5, searchVector, storeVector, indexDocumentVector } from "@/db/search";
+import { insertDocument } from "@/db/documents";
+import { searchFts5, searchVector, indexDocumentVector } from "@/db/search";
 import { hybridSearch } from "@/search";
 import type { Document } from "@/types";
-import fs from "node:fs";
+import { safeUnlink, testPath } from "./test-utils";
 
-const TEST_DB_PATH = "/tmp/paperhub-search-test.db";
+const TEST_DB_PATH = testPath("paperhub-search-test.db");
 
 function makeDoc(overrides: Partial<Document> = {}): Document {
   return {
@@ -36,7 +36,7 @@ function makeDoc(overrides: Partial<Document> = {}): Document {
 
 beforeEach(() => {
   closeDb();
-  try { fs.unlinkSync(TEST_DB_PATH); } catch {}
+  safeUnlink(TEST_DB_PATH);
   setDbPath(TEST_DB_PATH);
   initDatabase();
 });
@@ -44,7 +44,7 @@ beforeEach(() => {
 afterAll(() => {
   closeDb();
   clearDbPath();
-  try { fs.unlinkSync(TEST_DB_PATH); } catch {}
+  safeUnlink(TEST_DB_PATH);
 });
 
 describe("searchFts5", () => {

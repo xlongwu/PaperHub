@@ -4,19 +4,18 @@ import { afterAll, afterEach, beforeEach, describe, expect, it } from "vitest";
 import { clearDbPath, closeDb, initDatabase, setDbPath } from "@/db/index";
 import { getUserMemoryTerms } from "@/db/recommendations";
 import { extractMemoryFromDigests, rebuildUserMemoryFromDigests } from "@/recommendation/memory";
+import { resetDir, safeUnlink, testPath } from "./test-utils";
 
-const TEST_DB_PATH = "/tmp/paperhub-memory-test.db";
-const TEST_DIGEST_DIR = "/tmp/paperhub-digests-test";
-const SPARSE_DIGEST_DIR = "/tmp/paperhub-digests-sparse-test";
+const TEST_DB_PATH = testPath("paperhub-memory-test.db");
+const TEST_DIGEST_DIR = testPath("paperhub-digests-test");
+const SPARSE_DIGEST_DIR = testPath("paperhub-digests-sparse-test");
 const NOW = new Date("2026-06-30T00:00:00Z");
 
 beforeEach(() => {
   closeDb();
-  fs.rmSync(TEST_DIGEST_DIR, { recursive: true, force: true });
-  fs.rmSync(SPARSE_DIGEST_DIR, { recursive: true, force: true });
-  try {
-    fs.unlinkSync(TEST_DB_PATH);
-  } catch {}
+  resetDir(TEST_DIGEST_DIR);
+  resetDir(SPARSE_DIGEST_DIR);
+  safeUnlink(TEST_DB_PATH);
 
   setDbPath(TEST_DB_PATH);
   initDatabase();
@@ -38,11 +37,9 @@ beforeEach(() => {
 
 afterEach(() => {
   closeDb();
-  fs.rmSync(TEST_DIGEST_DIR, { recursive: true, force: true });
-  fs.rmSync(SPARSE_DIGEST_DIR, { recursive: true, force: true });
-  try {
-    fs.unlinkSync(TEST_DB_PATH);
-  } catch {}
+  resetDir(TEST_DIGEST_DIR);
+  resetDir(SPARSE_DIGEST_DIR);
+  safeUnlink(TEST_DB_PATH);
 });
 
 afterAll(() => {

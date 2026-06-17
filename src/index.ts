@@ -6,7 +6,8 @@
 import "dotenv/config";
 import { initDatabase, closeDb } from "@/db/index";
 import { startServer } from "@/api/server";
-import { startScheduler, stopScheduler } from "@/scheduler";
+import { startScheduler, stopScheduler, waitForRunningTasks } from "@/scheduler";
+import { createProvider, type ProviderName } from "@/providers/index";
 import { getLogsDir } from "@/config";
 import { initDefaultPreferences } from "@/db/user";
 import fs from "node:fs";
@@ -28,7 +29,9 @@ function setupLogging(): void {
     originalLog(...args);
     try {
       fs.appendFileSync(file, line, "utf-8");
-    } catch {}
+    } catch {
+      // Logging must never break the desktop app startup path.
+    }
   };
 
   console.error = (...args: unknown[]) => {
@@ -36,7 +39,9 @@ function setupLogging(): void {
     originalError(...args);
     try {
       fs.appendFileSync(file, line, "utf-8");
-    } catch {}
+    } catch {
+      // Logging must never break the desktop app startup path.
+    }
   };
 }
 
@@ -45,10 +50,11 @@ function setupLogging(): void {
 // ---------------------------------------------------------------------------
 
 function setupShutdownHandlers(server: ReturnType<typeof startServer>): void {
-  const shutdown = (signal: string) => {
+  const shutdown = async (signal: string) => {
     console.log(`[app] Received ${signal}, shutting down gracefully...`);
 
     stopScheduler();
+    await waitForRunningTasks();
     server.close(() => {
       console.log("[app] Server closed.");
       closeDb();
@@ -65,6 +71,60 @@ function setupShutdownHandlers(server: ReturnType<typeof startServer>): void {
 
   process.on("SIGINT", () => shutdown("SIGINT"));
   process.on("SIGTERM", () => shutdown("SIGTERM"));
+
+  // Catch unhandled rejections and exceptions — log, then exit gracefully
+  process.on("unhandledRejection", (reason) => {
+    console.error("[app] Unhandled rejection:", reason);
+    shutdown("unhandledRejection");
+  });
+
+  process.on("uncaughtException", (error) => {
+    console.error("[app] Uncaught exception:", error);
+    shutdown("uncaughtException");
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Startup validation
+// ---------------------------------------------------------------------------
+
+/**
+ * Fail fast if the configured LLM provider lacks an API key.
+ * The provider object may be created without a key (e.g., Anthropic SDK
+ * accepts undefined), but runtime calls would fail with confusing errors.
+ */
+function validateLlmProvider(): void {
+  const providerName = (process.env["LLM_PROVIDER"] ?? "deepseek") as ProviderName;
+
+  const keyEnvVars: Record<string, string> = {
+    anthropic: "ANTHROPIC_API_KEY",
+    openai: "OPENAI_API_KEY",
+    deepseek: "DEEPSEEK_API_KEY",
+    "github-copilot": "GITHUB_TOKEN",
+    openrouter: "OPENROUTER_API_KEY",
+  };
+
+  const keyVar = keyEnvVars[providerName];
+  if (keyVar && !process.env[keyVar]) {
+    console.warn(
+      `[app] WARNING: LLM provider "${providerName}" selected but ${keyVar} env var is not set. ` +
+        "LLM summarization and search reports will fail at runtime.",
+    );
+  } else {
+    console.log(`[app] LLM provider "${providerName}" validated.`);
+  }
+
+  // Also validate embedding provider
+  const embedProvider = process.env["EMBEDDING_PROVIDER"]?.trim().toLowerCase() ?? "openai";
+  if (embedProvider !== "local") {
+    const hasApiKey = process.env["EMBEDDING_API_KEY"] || process.env["OPENAI_API_KEY"];
+    if (!hasApiKey) {
+      console.warn(
+        "[app] WARNING: OpenAI embedding configured but no API key found. " +
+          "Semantic search will fail. Set EMBEDDING_API_KEY or OPENAI_API_KEY.",
+      );
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -83,6 +143,9 @@ async function main(): Promise<void> {
   // 1.5. Init default user preferences
   initDefaultPreferences();
   console.log("[app] User preferences initialized.");
+
+  // 1.6. Validate LLM provider is usable (fail fast if api key missing)
+  validateLlmProvider();
 
   // 2. Start API server
   const server = startServer();

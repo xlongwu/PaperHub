@@ -42,6 +42,15 @@ function toDb(doc: Document): Record<string, unknown> {
   };
 }
 
+function safeJsonParse<T>(raw: unknown, fallback: T): T {
+  try {
+    const parsed = JSON.parse(String(raw ?? ""));
+    return parsed as T;
+  } catch {
+    return fallback;
+  }
+}
+
 function fromDb(row: Record<string, unknown>): Document {
   return {
     id: String(row.id),
@@ -49,15 +58,15 @@ function fromDb(row: Record<string, unknown>): Document {
     source: String(row.source) as DocumentSource,
     url: String(row.url),
     publishedAt: String(row.published_at),
-    authors: JSON.parse(String(row.authors ?? "[]")),
+    authors: safeJsonParse<string[]>(row.authors, []),
     abstract: String(row.abstract ?? ""),
     fullTextPath: row.full_text_path ? String(row.full_text_path) : undefined,
     language: String(row.language) as "zh" | "en",
-    domainTags: JSON.parse(String(row.domain_tags ?? "[]")),
+    domainTags: safeJsonParse<string[]>(row.domain_tags, []),
     sourceTag: String(row.source_tag),
     typeTag: String(row.type_tag) as "paper" | "blog" | "tutorial" | "review",
     yearTag: Number(row.year_tag),
-    modelTags: JSON.parse(String(row.model_tags ?? "[]")),
+    modelTags: safeJsonParse<string[]>(row.model_tags, []),
     summaryZh: row.summary_zh ? String(row.summary_zh) : undefined,
     summaryEn: row.summary_en ? String(row.summary_en) : undefined,
     createdAt: String(row.created_at),
@@ -164,6 +173,16 @@ export function getAllDocuments(options?: DocumentQueryOptions): Document[] {
   }
 
   const rows = db.prepare(sql).all(...params) as Record<string, unknown>[];
+  return rows.map(fromDb);
+}
+
+export function getPendingSummaryDocuments(limit = 100): Document[] {
+  const db = getDb();
+  const rows = db
+    .prepare(
+      "SELECT * FROM documents WHERE is_summarized = 0 ORDER BY published_at DESC LIMIT ?",
+    )
+    .all(Math.max(1, limit)) as Record<string, unknown>[];
   return rows.map(fromDb);
 }
 

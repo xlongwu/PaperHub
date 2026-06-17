@@ -6,37 +6,37 @@
   "type": "module",
   "packageManager": "pnpm@9.15.9",
   "scripts": {
-    "start": "tsx src/index.ts",
-    "dev": "tsx watch src/index.ts",
-    "api:dev": "PAPERHUB_DISABLE_SCHEDULER=1 tsx watch src/index.ts",
-    "ui:dev": "vite --config vite.ui.config.ts",
-    "ui:build": "vite build --config vite.ui.config.ts",
-    "ui:preview": "vite preview --config vite.ui.config.ts",
+    "start": "node --import tsx src/index.ts",
+    "dev": "node --watch --import tsx src/index.ts",
+    "api:dev": "node scripts/dev-api.mjs",
+    "ui:dev": "node node_modules/vite/bin/vite.js --config vite.ui.config.ts",
+    "ui:build": "node node_modules/vite/bin/vite.js build --config vite.ui.config.ts",
+    "ui:preview": "node node_modules/vite/bin/vite.js preview --config vite.ui.config.ts",
     "desktop:dev": "node scripts/dev-desktop.mjs",
     "desktop:start": "node scripts/start-desktop.mjs",
     "desktop:build": "node scripts/build-desktop.mjs",
     "desktop:build:dir": "node scripts/build-desktop.mjs --dir",
-    "typecheck": "tsc --noEmit",
-    "lint": "eslint src",
-    "lint:fix": "eslint src --fix",
-    "format": "prettier --write src",
-    "format:check": "prettier --check src",
-    "manifest": "tsx src/generate-manifest.ts",
-    "weekly": "tsx src/weekly.ts",
-    "monthly": "tsx src/monthly.ts",
-    "notify": "tsx src/notify.ts",
-    "notify:feishu": "tsx src/feishu.ts",
-    "close-stale": "tsx src/close-stale-issues.ts",
-    "xiaohongshu": "tsx src/social.ts xiaohongshu",
-    "wechat": "tsx src/social.ts wechat",
-    "wechat:monthly": "tsx src/social.ts wechat:monthly",
+    "typecheck": "node node_modules/typescript/bin/tsc --noEmit",
+    "lint": "node node_modules/eslint/bin/eslint.js src",
+    "lint:fix": "node node_modules/eslint/bin/eslint.js src --fix",
+    "format": "node node_modules/prettier/bin/prettier.cjs --write src",
+    "format:check": "node node_modules/prettier/bin/prettier.cjs --check src",
+    "manifest": "node --import tsx src/generate-manifest.ts",
+    "weekly": "node --import tsx src/weekly.ts",
+    "monthly": "node --import tsx src/monthly.ts",
+    "notify": "node --import tsx src/notify.ts",
+    "notify:feishu": "node --import tsx src/feishu.ts",
+    "close-stale": "node --import tsx src/close-stale-issues.ts",
+    "xiaohongshu": "node --import tsx src/social.ts xiaohongshu",
+    "wechat": "node --import tsx src/social.ts wechat",
+    "wechat:monthly": "node --import tsx src/social.ts wechat:monthly",
     "phase6:seed": "node --import tsx scripts/seed-phase6-fixtures.ts --reset",
-    "test": "vitest run",
+    "test": "node node_modules/vitest/vitest.mjs run",
     "test:e2e": "node --import tsx scripts/run-phase6-e2e.mjs",
-    "test:watch": "vitest",
-    "test:coverage": "vitest run --coverage",
-    "release:verify": "pnpm typecheck && pnpm test && pnpm test:e2e",
-    "prepare": "husky"
+    "test:watch": "node node_modules/vitest/vitest.mjs",
+    "test:coverage": "node node_modules/vitest/vitest.mjs run --coverage",
+    "release:verify": "node node_modules/typescript/bin/tsc --noEmit && node node_modules/vitest/vitest.mjs run && node --import tsx scripts/run-phase6-e2e.mjs",
+    "prepare": "node node_modules/husky/bin.js"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.78.0",
@@ -100,7 +100,6 @@
       "node_modules/better-sqlite3/**/*",
       "node_modules/sqlite-vec/**/*"
     ],
-    "artifactName": "PaperHub-${version}-${os}-${arch}-${ext}",
     "win": {
       "target": [
         "nsis",
@@ -108,9 +107,13 @@
       ]
     },
     "nsis": {
+      "artifactName": "PaperHub-${version}-setup-${arch}.${ext}",
       "oneClick": false,
       "perMachine": false,
       "allowToChangeInstallationDirectory": true
+    },
+    "portable": {
+      "artifactName": "PaperHub-${version}-portable-${arch}.${ext}"
     }
   }
 }
