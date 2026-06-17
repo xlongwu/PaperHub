@@ -1,0 +1,22 @@
+{
+  "zh": {
+    "ai-weekly": [
+      "Kimi CLI v1.23.0首发后台Bash异步任务",
+      "OpenCode OAuth故障引爆社区信任危机",
+      "Qwen Code max_tokens跃升至32K",
+      "Claude Code速率限制可视化上线",
+      "Gemini CLI紧急修复1.7GB内存泄漏",
+      "Kimi 38 PR合并修复Windows体验"
+    ]
+  },
+  "en": {
+    "ai-weekly": [
+      "Kimi CLI merges 38 PRs in single day — largest batch this quarter",
+      "Qwen Code v0.13.0 ships emergency file-edit safety hardening",
+      "OpenAI Codex stacks 4 PRs for exec-server cloud architecture",
+      "Kimi CLI v1.23.0 launches first async background bash tasks",
+      "Gemini CLI fixes 1.7GB memory leak with P0 priority",
+      "Claude Code phone bug hits 458 comments — largest issue ever"
+    ]
+  }
+}

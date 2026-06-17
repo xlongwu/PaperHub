@@ -1,0 +1,116 @@
+{
+  "name": "agents-radar",
+  "version": "0.1.0",
+  "productName": "PaperHub",
+  "main": "desktop/main.cjs",
+  "type": "module",
+  "packageManager": "pnpm@9.15.9",
+  "scripts": {
+    "start": "tsx src/index.ts",
+    "dev": "tsx watch src/index.ts",
+    "api:dev": "PAPERHUB_DISABLE_SCHEDULER=1 tsx watch src/index.ts",
+    "ui:dev": "vite --config vite.ui.config.ts",
+    "ui:build": "vite build --config vite.ui.config.ts",
+    "ui:preview": "vite preview --config vite.ui.config.ts",
+    "desktop:dev": "node scripts/dev-desktop.mjs",
+    "desktop:start": "node scripts/start-desktop.mjs",
+    "desktop:build": "node scripts/build-desktop.mjs",
+    "desktop:build:dir": "node scripts/build-desktop.mjs --dir",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src",
+    "lint:fix": "eslint src --fix",
+    "format": "prettier --write src",
+    "format:check": "prettier --check src",
+    "manifest": "tsx src/generate-manifest.ts",
+    "weekly": "tsx src/weekly.ts",
+    "monthly": "tsx src/monthly.ts",
+    "notify": "tsx src/notify.ts",
+    "notify:feishu": "tsx src/feishu.ts",
+    "close-stale": "tsx src/close-stale-issues.ts",
+    "xiaohongshu": "tsx src/social.ts xiaohongshu",
+    "wechat": "tsx src/social.ts wechat",
+    "wechat:monthly": "tsx src/social.ts wechat:monthly",
+    "phase6:seed": "node --import tsx scripts/seed-phase6-fixtures.ts --reset",
+    "test": "vitest run",
+    "test:e2e": "node --import tsx scripts/run-phase6-e2e.mjs",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "release:verify": "pnpm typecheck && pnpm test && pnpm test:e2e",
+    "prepare": "husky"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.78.0",
+    "@tanstack/react-query": "^5.80.7",
+    "better-sqlite3": "^12.0.0",
+    "dotenv": "^17.3.1",
+    "express": "^5.1.0",
+    "js-yaml": "^4.1.1",
+    "marked": "^17.0.4",
+    "node-cron": "^3.0.3",
+    "openai": "^6.27.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^7.6.2",
+    "sqlite-vec": "^0.1.9",
+    "tsx": "^4.19.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9",
+    "@playwright/test": "^1.61.0",
+    "@testing-library/jest-dom": "^6.6.3",
+    "@testing-library/react": "^16.3.0",
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/express": "^5.0.2",
+    "@types/js-yaml": "^4.0.9",
+    "@types/marked": "^6.0.0",
+    "@types/node": "^25.3.5",
+    "@types/node-cron": "^3.0.11",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.4.1",
+    "@vitest/coverage-v8": "^4.0.18",
+    "electron": "^31.7.7",
+    "electron-builder": "^26.15.3",
+    "eslint": "^9",
+    "eslint-config-prettier": "^10",
+    "husky": "^9.1.7",
+    "jsdom": "^25.0.1",
+    "prettier": "^3",
+    "typescript": "^5.7.0",
+    "typescript-eslint": "^8",
+    "vite": "^5.4.19",
+    "vitest": "^4.0.18"
+  },
+  "build": {
+    "appId": "com.paperhub.desktop",
+    "productName": "PaperHub",
+    "directories": {
+      "output": "dist-desktop"
+    },
+    "files": [
+      "dist-ui/**/*",
+      "desktop/**/*",
+      "src/**/*",
+      "digests/**/*",
+      "scripts/seed-phase6-fixtures.ts",
+      "tsconfig.json",
+      "package.json"
+    ],
+    "asarUnpack": [
+      "node_modules/better-sqlite3/**/*",
+      "node_modules/sqlite-vec/**/*"
+    ],
+    "artifactName": "PaperHub-${version}-${os}-${arch}-${ext}",
+    "win": {
+      "target": [
+        "nsis",
+        "portable"
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true
+    }
+  }
+}

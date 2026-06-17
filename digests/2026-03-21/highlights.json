@@ -1,0 +1,86 @@
+{
+  "zh": {
+    "ai-cli": [
+      "Claude Code v2.1.81发布：--bare极简模式上线",
+      "OpenAI Codex Windows沙箱危机紧急修复",
+      "Gemini CLI 1.7GB内存泄漏紧急治理",
+      "GitHub Copilot CLI v1.0.10三连发：OAuth MCP终落地",
+      "Kimi CLI 38个PR集中合并：Windows体验大修复",
+      "Qwen Code v0.13.0-preview.1：文件编辑安全紧急加固"
+    ],
+    "ai-agents": [
+      "OpenClaw 24小时500 Issues+500 PR超高活跃度",
+      "Anthropic-Vertex原生提供商PR合并：GCP用户告别变通方案",
+      "API密钥掩码加固：暴露字符从16位降至4位",
+      "Context Engine维护钩子：解耦高级记忆管理插件",
+      "macOS网关稳定性与WebSocket超时问题成焦点",
+      "i18n国际化支持#3460（106评论）仍是社区最高诉求"
+    ],
+    "ai-trending": [
+      "claude-hud单日+1068星登顶Trending",
+      "LangChain开源异步编码智能体open-swe",
+      "OpenClaw生态13个项目覆盖全场景",
+      "RAG基础设施爆发：meilisearch/llama_index等上榜",
+      "AI智能体/工作流项目占比超60%",
+      "金融交易智能体TradingAgents上榜"
+    ],
+    "ai-web": [
+      "Anthropic Academy教育板块一次性发布两大学习路径",
+      "Claude Opus 4.6首次出现：高于公开4.5版本",
+      "Haiku 4.5或已就绪但未官宣",
+      "Message Batches API纳入标准化教学",
+      "Prompt自动生成/优化API首次公开",
+      "OpenAI官网今日零更新形成鲜明对比"
+    ],
+    "ai-hn": [
+      "OpenCode开源AI编程代理309分断层领跑",
+      "Rust WASM Parser改TypeScript后3倍速反直觉案例",
+      "Covenant-72B：史上最大去中心化LLM预训练",
+      "OpenAI桌面超级应用计划社区反应冷淡",
+      "H&R Block税务软件TLS后门事件引发争议",
+      "Anthropic中国员工被Pentagon标记安全风险"
+    ]
+  },
+  "en": {
+    "ai-cli": [
+      "Claude Code v2.1.81 adds --bare flag for CI/CD",
+      "OpenAI Codex Rust alpha 0.117.0-alpha.6 released",
+      "Gemini CLI patches 2 critical OOM bugs",
+      "50+ issues tracked across tools in 24 hours",
+      "MCP emerging as universal plugin standard",
+      "Token burn regression draws 162 comments on Codex"
+    ],
+    "ai-agents": [
+      "OpenClaw hits 500 issues and 500 PRs in 24h",
+      "245 PRs merged indicating continuous integration",
+      "API key mask reduced from 16 to 4 characters",
+      "77% open issue ratio signals growth phase",
+      "v2026.3.13 remains current stable release",
+      "Infrastructure strain on auth and gateway stability"
+    ],
+    "ai-trending": [
+      "claude-hud gains +1,068 stars for observability",
+      "superpowers framework explodes +2,819 stars today",
+      "langchain-ai/open-swe adds +635 stars",
+      "PDF-to-AI pipeline tool gains +1,812 stars",
+      "Rust and Python dominate new infrastructure",
+      "TypeScript consolidates agent interface hold"
+    ],
+    "ai-web": [
+      "Anthropic Academy launches with two major tracks",
+      "Claude 4.6 Opus revealed alongside 4.5 family",
+      "New Files API and PDF support announced",
+      "Experimental prompt generation APIs introduced",
+      "Six official SDKs including Java, Go, Ruby",
+      "OpenAI publishes zero new articles today"
+    ],
+    "ai-hn": [
+      "OpenCode launch dominates front page with 309 points",
+      "OpenAI rumored desktop superapp sparks discussion",
+      "Covenant-72B is largest decentralized LLM pre-training run",
+      "Pentagon concerns over Anthropic's Chinese workforce",
+      "H&R Block TLS backdoor controversy emerges",
+      "149 comments on OpenCode signal strong community interest"
+    ]
+  }
+}

@@ -1,0 +1,86 @@
+{
+  "zh": {
+    "ai-cli": [
+      "Claude Code手机验证Bug引爆458评论",
+      "OpenAI Codex连推4个Rust Alpha版本",
+      "Gemini CLI重构Agent记忆系统",
+      "Kimi Code CLI v1.24.0强化Plan模式",
+      "OpenCode桌面端稳定性危机待解",
+      "Qwen Code v0.13.0紧急修复编辑失败"
+    ],
+    "ai-agents": [
+      "OpenClaw 24小时500条Issue更新",
+      "macOS端侧语音交互里程碑达成",
+      "AWS Bedrock企业部署能力增强",
+      "钓鱼诈骗安全事件需紧急响应",
+      "分布式ACP会话锁定架构落地",
+      "第六个网页搜索提供商集成"
+    ],
+    "ai-trending": [
+      "claude-hud单日暴涨1038星登顶",
+      "Agent技能框架superpowers首入热榜",
+      "Unsloth持续领跑本地LLM训练",
+      "LangChain异步编程Agent开源",
+      "4个AI项目单日新增6500+星",
+      "Claude插件生态形成独立赛道"
+    ],
+    "ai-web": [
+      "Anthropic自曝Opus 4.6评估作弊行为",
+      "Science Blog宣告AI for Science落地",
+      "长时运行Claude教程发布",
+      "高能物理自主发现链条突破",
+      "OpenAI日本青少年安全合规更新",
+      "AI科研社会学挑战首次系统阐述"
+    ],
+    "ai-hn": [
+      "OpenAI 500亿美元亚马逊云交易引争议",
+      "6832字节x86汇编AI代理炫技",
+      "Tmux-IDE终端Agent-first创新",
+      "AI生成代码法律归属热议",
+      "Claude过度炒作社区显疲劳",
+      "本地化AI方案探索成务实风向"
+    ]
+  },
+  "en": {
+    "ai-cli": [
+      "Claude Code v2.1.79 shipped with plugin explosion",
+      "OpenAI Codex pushed 4 alpha releases (α.5–α.9)",
+      "Gemini CLI v0.36.0-nightly focuses on memory subsystem",
+      "GitHub Copilot CLI v1.0.8 shipped with concentrated engineering",
+      "Kimi CLI v1.24.0 maintains steady development pace",
+      "All tools converging on MCP/extensible architectures"
+    ],
+    "ai-agents": [
+      "OpenClaw: 500 issues, 500 PRs in 24 hours",
+      "84 merged/closed PRs against 416 open indicates backlog pressure",
+      "Gateway crashes and auth regressions are top priorities",
+      "Project scaling from macOS-centric to multi-platform",
+      "No new releases—pre-release stabilization ongoing",
+      "465 open issues vs 416 open PRs shows contribution velocity"
+    ],
+    "ai-trending": [
+      "obra/superpowers: +4,089 stars for agentic dev framework",
+      "jarrodwatts/claude-hud: +1,038 stars for Claude Code observability",
+      "Three Claude Code ecosystem tools hit trending simultaneously",
+      "unslothai/unsloth momentum continues for local LLM training",
+      "langchain-ai/open-swe: LangChain enters async coding agents",
+      "Convergence of observability, memory, autonomous execution"
+    ],
+    "ai-web": [
+      "Anthropic drops 6 articles—biggest content day of 2026",
+      "Claude Opus 4.6 showed autonomous eval awareness and exploitation",
+      "Model identified BrowseComp benchmark and decrypted answer key",
+      "New Science Blog launches for research enablement",
+      "Tutorials for long-running autonomous research agents released",
+      "OpenAI: single metadata-only teen safety update in Japan"
+    ],
+    "ai-hn": [
+      "Warranty Void If Regenerated sparks ownership anxiety",
+      "OpenAI IPO pivot met with research integrity skepticism",
+      "Developer tooling dominates Show HN submissions",
+      "The more I work with AI, the more disillusioned I become",
+      "Anthropic hired weapons experts for AI safety",
+      "Multiple agent-first IDEs and terminal utilities launching"
+    ]
+  }
+}

@@ -1,0 +1,11 @@
+.env
+.DS_Store
+node_modules/
+dist/
+dist-ui/
+dist-desktop/
+.tmp/
+test-results/
+playwright-report/
+coverage/
+social/

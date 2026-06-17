@@ -1,0 +1,86 @@
+{
+  "zh": {
+    "ai-cli": [
+      "Claude Code v2.1.80 发布速率限制可视化功能",
+      "OpenAI Codex rust-v0.116.0 上线设备码登录",
+      "Kimi CLI 插件系统正式上线 PR 密度最高",
+      "Gemini CLI v0.35.0-preview.2 重构 AgentSession 架构",
+      "Qwen Code v0.13.0-preview.0 编辑工具系统性失效待修复",
+      "OpenCode 遭遇 Anthropic OAuth 危机大规模迁移 Effect 架构"
+    ],
+    "ai-agents": [
+      "OpenClaw Linux GTK4 原生伴侣应用 PR #50532 推进中",
+      "OpenClaw 设备配对安全加固 PR #50695 修复中间人攻击",
+      "OpenClaw 346 个活跃 Issues 聚焦 WhatsApp 稳定性危机",
+      "OpenClaw 无新版本发布 v2026.3.13 仍为最新稳定版",
+      "OpenClaw 测试内存优化降低 CI 堆快照 5s 延迟",
+      "OpenClaw Perplexity 搜索 baseUrl 配置恢复 OpenRouter 兼容"
+    ],
+    "ai-trending": [
+      "claude-hud 新建即获 1851 星可视化 AI 编码黑盒",
+      "get-shit-done 新建 1491 星元提示工程系统",
+      "learn-claude-code 1448 日增星从零构建 Agent",
+      "open-swe LangChain 官方异步编码 Agent 发布",
+      "opendataloader-pdf 新建 1416 星 RAG 预处理基础设施",
+      "unsloth 1262 日增星本地模型训练推理统一 UI"
+    ],
+    "ai-web": [
+      "OpenAI 发布编码代理对齐监控技术内容",
+      "OpenAI 收购 Astral 意向首次官方披露",
+      "Anthropic 今日零更新进入内容静默期",
+      "OpenAI 两篇重复 URL 或为系统抓取异常",
+      "Anthropic 去年 2 月 Claude 3.7 后无重大发布",
+      "OpenAI 752 条 sitemap 内容库持续扩张"
+    ],
+    "ai-hn": [
+      "OpenAI 收购 Astral 1181 分 731 评论引社区分裂",
+      "Anthropic 8.1 万人 AI 需求研究 189 分热议",
+      "EsoLang-Bench 用深奥语言测 LLM 真实推理",
+      "Astral 收购引发 Python 生态开源悲观派担忧",
+      "llamafile 0.10.0 重构支持 Qwen3.5 和 Anthropic API",
+      "LiteParse 本地文档解析响应去云端化隐私诉求"
+    ]
+  },
+  "en": {
+    "ai-cli": [
+      "Gemini CLI hits 50 PRs in 24 hours with AgentSession refactor",
+      "Kimi CLI merges plugin system, community contributions surge",
+      "Claude Code releases v2.1.80 with hook system hardening",
+      "OpenAI Codex ships rust-v0.116.0 with V8 migration",
+      "Qwen Code and OpenCode lead open extensible platform trend",
+      "Copilot CLI stagnates at v1.0.9 with terminal UX debt"
+    ],
+    "ai-agents": [
+      "OpenClaw hits 500 issues and 500 PRs in 24 hours",
+      "Linux GTK4 companion app PR under active review",
+      "WhatsApp Web listener regressions being fixed post-2026.3.13",
+      "Active phishing scam exploiting OpenClaw name detected",
+      "Project in stabilization phase after major release",
+      "No new release today as maintainers prioritize quality"
+    ],
+    "ai-trending": [
+      "obra/superpowers gains +3,494 stars for agentic skills framework",
+      "jarrodwatts/claude-hud hits +1,851 stars for context visibility",
+      "gsd-build/get-shit-done rises +1,491 stars for meta-prompting",
+      "shareAI-lab/learn-claude-code gains +1,448 stars for education",
+      "opendataloader-pdf hits +1,416 stars solving PDF parsing pain",
+      "Three of top 11 trending projects extend Claude Code ecosystem"
+    ],
+    "ai-web": [
+      "OpenAI publishes three articles, most active content day tracked",
+      "OpenAI acquires Astral in continued M&A expansion",
+      "Two articles on monitoring coding agents for misalignment",
+      "Anthropic publishes zero content creating narrative asymmetry",
+      "Coding agent misalignment signals operational deployment at scale",
+      "Astral acquisition marks Python tooling consolidation move"
+    ],
+    "ai-hn": [
+      "OpenAI acquires Astral: 1,181 points, 731 comments",
+      "Anthropic sues OpenCode over unofficial Claude client",
+      "EsoLang-Bench tests if LLMs truly reason or pattern-match",
+      "81k user interviews show demand for reliability over capability",
+      "Community skeptical of centralized power moves in AI",
+      "Consolidation anxiety over corporate capture of open source"
+    ]
+  }
+}

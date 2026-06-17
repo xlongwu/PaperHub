@@ -1,0 +1,46 @@
+{
+  "zh": {
+    "ai-cli": [
+      "GitHub Copilot CLI v1.0.5 遭遇回归灾难",
+      "Claude Code Windows 平台 WebSocket 桥接危机",
+      "Qwen Code v0.12.3-nightly 发布本地模型支持"
+    ],
+    "ai-agents": [
+      "OpenClaw 24小时爆发 500 Issues/500 PRs",
+      "v2026.3.12 内存泄漏致 2GB VPS 崩溃",
+      "PR #46763 修复 onboarding OOM 致命问题"
+    ],
+    "ai-trending": [
+      "OpenViking 1870⭐登顶，字节开源 Agent 上下文数据库",
+      "MiroFish 2782⭐现象级爆发，群体智能引擎",
+      "lightpanda 1335⭐，Zig 高性能 AI 浏览器"
+    ],
+    "ai-hn": [
+      "Claude Code 谷歌搜索结果遭恶意劫持",
+      "Signet 卫星 AI 野火追踪获 103⭐29评",
+      "LLM Architecture Gallery 架构可视化图库"
+    ]
+  },
+  "en": {
+    "ai-cli": [
+      "Claude Code Skills launched for extensibility",
+      "OpenAI Codex migrates from TUI to app server",
+      "Windows compatibility remains universal blind spot"
+    ],
+    "ai-agents": [
+      "OpenClaw: 500 issues/PRs in 24 hours",
+      "Critical regressions block CLI, users roll back to v2026.3.8",
+      "No hotfix issued for 2026.3.12/2026.3.13 bugs"
+    ],
+    "ai-trending": [
+      "MiroFish gains 2,782 stars for swarm intelligence",
+      "Lightpanda browser +1,335 stars for AI automation",
+      "Claude ecosystem tools gain 2,300+ stars combined"
+    ],
+    "ai-hn": [
+      "60-year-old dev mourns lost coding passion, 153 comments",
+      "Malicious Claude Code search results reported",
+      "2015 visual ML guide tops leaderboard"
+    ]
+  }
+}

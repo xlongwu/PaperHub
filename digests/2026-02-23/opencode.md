@@ -1,0 +1,96 @@
+# OpenCode 社区日报 2026-02-23
+
+> 数据来源: [anomalyco/opencode](https://github.com/anomalyco/opencode) | 生成时间: 2026-02-23 12:46 UTC
+
+# OpenCode 社区动态日报 | 2026-02-23
+
+## 今日速览
+
+今日社区活跃度极高，**Windows TUI 输入问题**成为焦点，包括文本粘贴失败、`@`符号无法输入、CJK 字符乱码等。同时，**Claude Opus 4.6 模型支持**持续完善，多个 PR 针对其预填充消息、视觉能力等问题进行修复。桌面端功能迭代加速，文件上下文菜单、配置编辑等体验优化密集推进。
+
+---
+
+## 版本发布
+
+**无新版本发布**（最新版本仍为 v1.2.10）
+
+---
+
+## 社区热点 Issues
+
+| # | 标题 | 状态 | 核心看点 |
+|---|------|------|---------|
+| [#14785](https://github.com/anomalyco/opencode/issues/14785) | Windows 聊天输入框无法粘贴文本 | 🔴 OPEN | **高优先级回归 bug**：v1.2.10 中 Ctrl+V 完全失效，与 [#3081](https://github.com/anomalyco/opencode/issues/3081) 历史问题形成关联，影响基础交互体验 |
+| [#14775](https://github.com/anomalyco/opencode/issues/14775) | Windows TUI 无法输入 `@` 符号 | 🔴 OPEN | **符号输入阻断**：需通过复制粘贴 workaround，严重影响提及文件/用户功能的使用 |
+| [#14768](https://github.com/anomalyco/opencode/issues/14768) | Windows 非 UTF-8 环境下 CJK 字符乱码 | 🔴 OPEN | **国际化障碍**：中文/日文/韩文用户输入异常，已有 [PR #14766](https://github.com/anomalyco/opencode/pull/14766) 针对性修复 |
+| [#13768](https://github.com/anomalyco/opencode/issues/13768) | Claude Opus 4.6 不支持 assistant message prefill | 🔴 OPEN | **模型兼容性**：对话达到最大步数时崩溃，[PR #14772](https://github.com/anomalyco/opencode/pull/14772) 已提交修复 |
+| [#14776](https://github.com/anomalyco/opencode/issues/14776) | 运行 skill 时随机停止 | 🔴 OPEN | **可靠性问题**：Gemini 2.5 Pro 复杂任务中断，无错误提示，影响生产使用 |
+| [#14051](https://github.com/anomalyco/opencode/issues/14051) | "Gathered context" 隐藏 AI 实际操作信息 | 🔴 OPEN | **透明度争议**：Web UI 变更导致用户难以追踪 AI 访问的文件，UX 倒退 |
+| [#14769](https://github.com/anomalyco/opencode/issues/14769) | Session 间歇性挂起永不返回 | 🔴 OPEN | **稳定性隐患**：需手动 Esc 中断，复现困难但影响严重 |
+| [#14289](https://github.com/anomalyco/opencode/issues/14289) | Claude Opus 4.6 视觉能力未启用 | 🔴 OPEN | **功能缺失**：模型本身支持 vision，但 OpenCode 未正确暴露能力标志 |
+| [#14771](https://github.com/anomalyco/opencode/issues/14771) | MCP 服务器响应数据与 curl 不一致 | 🔴 OPEN | **工具链集成**：仅显示通用成功消息，丢失结构化返回数据 |
+| [#4997](https://github.com/anomalyco/opencode/issues/4997) | TUI 键位绑定问题汇总 | 🔴 OPEN | **长期痛点**：19 👍 高票 Issue，涵盖导航、删除、多行输入、自定义映射等 |
+
+---
+
+## 重要 PR 进展
+
+| # | 标题 | 类型 | 价值说明 |
+|---|------|------|---------|
+| [#14777](https://github.com/anomalyco/opencode/pull/14777) | 桌面端文件/文件夹路径上下文菜单 | ✨ Feature | 一键复制相对/绝对路径、在文件管理器中打开，解决 [#14784](https://github.com/anomalyco/opencode/issues/14784) 等 3 个 Issue |
+| [#14772](https://github.com/anomalyco/opencode/pull/14772) | 禁用 Claude 4.6 模型的 assistant prefill | 🐛 Fix | 根治 [#13768](https://github.com/anomalyco/opencode/issues/13768) 崩溃问题，针对 Anthropic 新模型行为变更适配 |
+| [#14783](https://github.com/anomalyco/opencode/pull/14783) | 阻止 GPT-5 的 reasoningSummary 错误转发 | 🐛 Fix | 修复 OpenAI 兼容适配器问题，避免非标准字段导致下游错误 |
+| [#14766](https://github.com/anomalyco/opencode/pull/14766) | Windows 控制台强制 UTF-8 编码 | 🐛 Fix | 解决 CJK 输入乱码，设置代码页为 65001，针对性修复 [#14768](https://github.com/anomalyco/opencode/issues/14768) |
+| [#14741](https://github.com/anomalyco/opencode/pull/14741) | 新增 stream.delta 和 stream.aborted 插件钩子 | ✨ Feature | 实时流观察能力，支持插件在文本/推理/工具增量时介入 |
+| [#14675](https://github.com/anomalyco/opencode/pull/14675) | 新增 /dump-context 调试命令 | ✨ Feature | 完整导出推理上下文（system prompt + messages），助力 prompt 工程调试 |
+| [#14393](https://github.com/anomalyco/opencode/pull/14393) | 保留 thinking block 签名并修复压缩不对称 | 🐛 Fix | 解决 session 崩溃的根本原因，关联多个历史 Issue |
+| [#13637](https://github.com/anomalyco/opencode/pull/13637) | 新增 "Ctrl+Enter 发送" 选项 | ✨ Feature | 解决 [#11898](https://github.com/anomalyco/opencode/issues/11898) 长期需求，Enter 换行 vs 发送的行为可配置 |
+| [#14677](https://github.com/anomalyco/opencode/pull/14677) | 实验性 hashline 编辑模式 | ✨ Feature | 双 schema 支持，逐步迁移到更可靠的行号定位编辑格式 |
+| [#7334](https://github.com/anomalyco/opencode/pull/7334) | MCP 服务器指令获取与集成 | ✨ Feature | 实现 [#7373](https://github.com/anomalyco/opencode/issues/7373)，LLM 可见服务器初始化指令 |
+
+---
+
+## 功能需求趋势
+
+基于今日 50 条 Issues 分析，社区关注焦点呈现以下分布：
+
+| 方向 | 热度 | 典型表现 |
+|------|------|---------|
+| **Windows TUI 稳定性** | 🔥🔥🔥🔥🔥 | 粘贴、符号输入、编码、IME 等问题集中爆发，成为 v1.2.10 最大痛点 |
+| **模型支持与新特性** | 🔥🔥🔥🔥 | Claude Opus 4.6 全面适配（prefill、vision、Copilot 渠道）、GPT-5 兼容、GLM-5 稳定性 |
+| **桌面端体验优化** | 🔥🔥🔥🔥 | 上下文菜单、配置编辑、键位自定义、无障碍访问（屏幕阅读器、色盲模式） |
+| **MCP 生态完善** | 🔥🔥🔥 | 指令暴露、响应数据完整性、服务器发现机制 |
+| **透明度与可控性** | 🔥🔥🔥 | 上下文显示优化、工具调用可见性、session 状态调试 |
+| **国际化与本地化** | 🔥🔥 | 文档语言切换、CJK 输入、多语言 Issue 自动翻译 |
+
+---
+
+## 开发者关注点
+
+### 🔴 高频痛点
+
+1. **Windows 终端兼容性危机**
+   - v1.2.10 引入多个 TUI 回归问题，PowerShell/Git Bash/Windows Terminal 场景下基础输入功能受损
+   - 建议：优先合并 [#14766](https://github.com/anomalyco/opencode/pull/14766) 等修复，考虑增加 Windows 专项 CI 测试
+
+2. **模型行为变更追踪滞后**
+   - Anthropic Claude 4.6 的 prefill 限制、OpenAI GPT-5 的新字段，适配存在时间差
+   - 建议：建立供应商 API 变更预警机制，或增加运行时能力探测
+
+3. **Edit 工具可靠性争议**
+   - 缩进破坏、全文件格式化、范围外变更等问题持续（[#10656](https://github.com/anomalyco/opencode/issues/10656), [#14612](https://github.com/anomalyco/opencode/issues/14612), [#14450](https://github.com/anomalyco/opencode/issues/14450)）
+   - [PR #4604](https://github.com/anomalyco/opencode/pull/4604) 的"仅格式化变更范围"方案值得加速推进
+
+### 🟡 体验优化诉求
+
+- **键位可配置性**：[#4997](https://github.com/anomalyco/opencode/issues/4997) 29 条评论反映 Emacs/Vim 用户强烈需求
+- **Session 可恢复性**：归档功能暂时禁用（[#12020](https://github.com/anomalyco/opencode/pull/12020)），需尽快实现归档浏览/恢复
+- **视觉反馈增强**：子代理颜色标识（[#14678](https://github.com/anomalyco/opencode/pull/14678)）、工作状态指示器（[#10435](https://github.com/anomalyco/opencode/pull/10435)）等 PR 提升多代理场景可观测性
+
+### 🟢 生态建设
+
+- **插件系统演进**：[#13957](https://github.com/anomalyco/opencode/issues/13957) 提出 8 层基础设施架构，[#14741](https://github.com/anomalyco/opencode/pull/14741) 新增流式钩子
+- **MCP 深度集成**：从工具调用向"服务器即能力"模式演进，指令暴露、响应完整性是关键下一步
+
+---
+*本日报由 [ai-cli-radar](https://github.com/duanyytop/ai-cli-radar) 自动生成。*
