@@ -1,5 +1,5 @@
 /**
- * ArXiv collector — wraps agents-radar's arxiv.ts into ContentCollector interface.
+ * ArXiv collector — wraps the legacy arxiv.ts implementation into ContentCollector interface.
  */
 
 import { fetchArxivData, type ArxivPaper } from "@/arxiv";

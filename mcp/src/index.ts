@@ -1,7 +1,7 @@
 /**
- * agents-radar MCP Server — Cloudflare Worker
+ * PaperHub MCP Server — Cloudflare Worker
  *
- * Exposes agents-radar digest data as MCP tools so any MCP-compatible
+ * Exposes PaperHub digest data as MCP tools so any MCP-compatible
  * client (Claude Desktop, OpenClaw, etc.) can query the latest AI ecosystem reports.
  *
  * Tools:
@@ -11,7 +11,7 @@
  *   search        — keyword search across recent reports
  */
 
-const PAGES_URL = "https://duanyytop.github.io/agents-radar";
+const PAGES_URL = "https://xlongwu.github.io/PaperHub";
 
 const REPORT_LABELS: Record<string, string> = {
   "ai-cli": "AI CLI Tools Digest (ZH)",
@@ -144,7 +144,7 @@ const TOOLS = [
   {
     name: "list_reports",
     description:
-      "List available digest dates and report types from agents-radar. Returns the last N days of available reports.",
+      "List available digest dates and report types from PaperHub. Returns the last N days of available reports.",
     inputSchema: {
       type: "object",
       properties: {
@@ -154,7 +154,7 @@ const TOOLS = [
   },
   {
     name: "get_report",
-    description: "Fetch the full content of a specific agents-radar digest report.",
+    description: "Fetch the full content of a specific PaperHub digest report.",
     inputSchema: {
       type: "object",
       properties: {
@@ -183,7 +183,7 @@ const TOOLS = [
   },
   {
     name: "search",
-    description: "Search for a keyword or phrase across recent agents-radar digest reports.",
+    description: "Search for a keyword or phrase across recent PaperHub digest reports.",
     inputSchema: {
       type: "object",
       properties: {
@@ -215,7 +215,7 @@ async function handleMcp(body: unknown): Promise<unknown> {
           result: {
             protocolVersion: "2024-11-05",
             capabilities: { tools: {} },
-            serverInfo: { name: "agents-radar", version: "1.0.0" },
+            serverInfo: { name: "paperhub", version: "1.0.0" },
           },
         };
 
@@ -281,7 +281,7 @@ export default {
     // Health check
     if (request.method === "GET" && url.pathname === "/") {
       return Response.json(
-        { name: "agents-radar-mcp", status: "ok", tools: TOOLS.map((t) => t.name) },
+        { name: "paperhub-mcp", status: "ok", tools: TOOLS.map((t) => t.name) },
         { headers: CORS },
       );
     }

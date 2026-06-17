@@ -2,7 +2,7 @@
 
 ## Project overview
 
-PaperHub is a desktop application for aggregating, summarizing, and recommending academic papers and technical blog posts from arXiv, OpenAI GPT Blog, and Anthropic Claude Blog. It is built on top of the agents-radar codebase (TypeScript/Node.js) and runs as a local-first desktop app (Electron or Tauri) with an embedded Node.js backend.
+PaperHub is a desktop application for aggregating, summarizing, and recommending academic papers and technical blog posts from arXiv, OpenAI GPT Blog, and Anthropic Claude Blog. It is built on top of a legacy TypeScript/Node.js digest engine and runs as a local-first desktop app (Electron or Tauri) with an embedded Node.js backend.
 
 Key capabilities:
 - Automated content collection from 3 sources (arXiv API, GPT Blog RSS, Claude Blog sitemap)
@@ -88,13 +88,13 @@ The system runs as a desktop app with three layers:
 | `src/recommender/personalized.ts` | Personalized recommendation: user memory from `digests/` files + tag matching |
 | `src/recommender/memory.ts` | User memory system: extract keywords from digest files via TF-IDF/LLM |
 | `src/search.ts` | Search orchestration: keyword search (FTS5) + semantic search (vector) + report generation |
-| `src/providers/` | **Reused from agents-radar** — LLM Provider abstraction layer |
-| `src/prompts.ts` | **Reused/extended from agents-radar** — Prompt builders for summarization |
-| `src/i18n.ts` | **Reused/extended from agents-radar** — Bilingual strings: `Lang` type, UI labels, messages |
-| `src/date.ts` | **Reused from agents-radar** — Date utilities |
-| `src/config.ts` | **Reused/extended from agents-radar** — YAML config loader for desktop app settings |
-| `src/web.ts` | **Reused from agents-radar** — Sitemap-based content fetching |
-| `src/report.ts` | **Reused from agents-radar** — `callLlm` with concurrency limiter |
+| `src/providers/` | **Inherited from the legacy digest engine** — LLM Provider abstraction layer |
+| `src/prompts.ts` | **Inherited/extended from the legacy digest engine** — Prompt builders for summarization |
+| `src/i18n.ts` | **Inherited/extended from the legacy digest engine** — Bilingual strings: `Lang` type, UI labels, messages |
+| `src/date.ts` | **Inherited from the legacy digest engine** — Date utilities |
+| `src/config.ts` | **Inherited/extended from the legacy digest engine** — YAML config loader for desktop app settings |
+| `src/web.ts` | **Inherited from the legacy digest engine** — Sitemap-based content fetching |
+| `src/report.ts` | **Inherited from the legacy digest engine** — `callLlm` with concurrency limiter |
 
 ## Data sources
 
@@ -207,7 +207,7 @@ PaperHub/
 │   ├── collectors/          # Data source collectors
 │   ├── db/                  # Database layer (SQLite, FTS5, sqlite-vec)
 │   ├── recommender/         # Recommendation engines
-│   ├── providers/           # LLM providers (reused from agents-radar)
+│   ├── providers/           # LLM providers (inherited from the legacy digest engine)
 │   ├── __tests__/           # Unit tests
 │   ├── index.ts             # Desktop app entry
 │   ├── server.ts            # API server
@@ -232,4 +232,4 @@ PaperHub/
 
 ## License
 
-MIT — derived from agents-radar, same license.
+MIT — inherited from the upstream codebase lineage, same license.

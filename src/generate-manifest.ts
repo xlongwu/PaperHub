@@ -6,7 +6,7 @@ import { REPORT_LABELS } from "./i18n";
 const DIGESTS_DIR = "digests";
 const MANIFEST_PATH = "manifest.json";
 const FEED_PATH = "feed.xml";
-const SITE_URL = "https://duanyytop.github.io/agents-radar";
+const SITE_URL = "https://xlongwu.github.io/PaperHub";
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const REPORT_FILES = [
   "ai-cli",
@@ -155,7 +155,7 @@ async function main(): Promise<void> {
     `<?xml version="1.0" encoding="UTF-8"?>\n` +
     `<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:content="http://purl.org/rss/1.0/modules/content/">\n` +
     `  <channel>\n` +
-    `    <title>agents-radar</title>\n` +
+    `    <title>PaperHub</title>\n` +
     `    <link>${SITE_URL}</link>\n` +
     `    <description>AI 开源生态每日简报 · Daily AI ecosystem digest</description>\n` +
     `    <language>zh-CN</language>\n` +

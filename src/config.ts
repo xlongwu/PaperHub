@@ -1,6 +1,6 @@
 /**
  * PaperHub configuration loader.
- * Extends agents-radar config with desktop-app specific settings.
+ * Extends the legacy digest config with desktop-app specific settings.
  */
 
 import fs from "node:fs";
@@ -135,7 +135,7 @@ function parsePositiveInteger(value: string | undefined): number | undefined {
 }
 
 // ---------------------------------------------------------------------------
-// agents-radar compatibility (preserved for existing code/tests)
+// Legacy compatibility (preserved for existing code/tests)
 // ---------------------------------------------------------------------------
 
 interface RawRepoEntry {

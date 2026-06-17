@@ -18,11 +18,11 @@
 | 模块 | 文件 | 说明 |
 |------|------|------|
 | 核心类型 | `src/types.ts` | Document, RawDocument, ContentCollector, API 响应类型 |
-| 配置管理 | `src/config.ts` | 数据目录、PaperHub 配置、agents-radar 兼容配置 |
+| 配置管理 | `src/config.ts` | 数据目录、PaperHub 配置、历史兼容配置 |
 | 数据库连接 | `src/db/index.ts` | better-sqlite3 连接、Schema 迁移（v1） |
 | 文档 CRUD | `src/db/documents.ts` | 插入、查询、更新、删除、统计 |
 | 采集器接口 | `src/collectors/types.ts` | ContentCollector / RawDocument 类型定义 |
-| arXiv 采集器 | `src/collectors/arxiv.ts` | 复用 agents-radar arxiv.ts，包装为 ContentCollector |
+| arXiv 采集器 | `src/collectors/arxiv.ts` | 复用历史 arxiv.ts 逻辑，包装为 ContentCollector |
 | 数据转换器 | `src/collectors/transformer.ts` | RawDocument → Document 标准化转换 |
 | 去重工具 | `src/utils/dedup.ts` | Levenshtein 距离 + 标题相似度检测 |
 | 重试工具 | `src/utils/retry.ts` | 指数退避重试 + 错误日志持久化 |

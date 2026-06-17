@@ -6,7 +6,7 @@ PaperHub is a local-first paper and AI blog intelligence desk. It collects paper
 
 ## Current Status
 
-- The project is now centered on the `PaperHub` desktop app rather than the old `agents-radar` positioning.
+- The project is now centered on the `PaperHub` desktop app rather than the older digest-only positioning.
 - Phase 6 code-side review and fixes are complete.
 - The current release verification chain is green in this repo:
   - `pnpm typecheck`
@@ -125,5 +125,5 @@ The first command builds the unpacked app directory. The second builds Windows i
 ## Repository Notes
 
 - Historical digest data is still present under `digests/`
-- Some internal integrations and historical modules still carry legacy `agents-radar` naming
+- Some historical compatibility comments still reflect the pre-PaperHub project lineage
 - The repository has already been migrated to a standalone `PaperHub` GitHub project, but code-level naming cleanup can continue incrementally

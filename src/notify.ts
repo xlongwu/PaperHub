@@ -19,7 +19,7 @@ export interface Highlights {
   en: ReportHighlights;
 }
 
-const PAGES_URL_DEFAULT = "https://duanyytop.github.io/agents-radar";
+const PAGES_URL_DEFAULT = "https://xlongwu.github.io/PaperHub";
 
 function escapeHtml(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
@@ -58,7 +58,7 @@ export function buildMessage(
 
   const icon = isMonthly ? "📆" : isWeekly ? "📅" : "📡";
   const suffix = isMonthly ? " 月报" : isWeekly ? " 周报" : "";
-  const lines: string[] = [`${icon} <b>agents-radar${suffix} · ${date}</b>`];
+  const lines: string[] = [`${icon} <b>PaperHub${suffix} · ${date}</b>`];
 
   // Daily reports first, then rollups
   const ordered = [
