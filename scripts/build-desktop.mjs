@@ -1,10 +1,17 @@
+import fs from "node:fs";
+import { createRequire } from "node:module";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { runNode, runPnpm, withPnpmOnPath } from "./pnpm-runner.mjs";
 
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const outputDir = path.resolve(rootDir, "dist-desktop");
 const isWindows = process.platform === "win32";
 const args = process.argv.slice(2);
+const electronVersion = readPackageJson().devDependencies.electron.replace(/^[^\d]*/, "");
+const electronDist = resolveElectronDist();
+const require = createRequire(import.meta.url);
 const nodeMajor = Number.parseInt(process.versions.node.split(".")[0] ?? "0", 10);
 const nodeOptions = joinNodeOptions(process.env.NODE_OPTIONS, "--experimental-require-module");
 const buildEnv = withPnpmOnPath(
@@ -16,6 +23,7 @@ const buildEnv = withPnpmOnPath(
 );
 
 assertReleaseHost();
+cleanOutputDirectory();
 
 await runPnpm(["ui:build"], {
   cwd: rootDir,
@@ -32,6 +40,7 @@ await runNode(["node_modules/electron-builder/install-app-deps.js", "--arch=x64"
 await runNode(
   [
     "node_modules/electron-builder/cli.js",
+    ...(electronDist ? [`--config.electronDist=${electronDist}`] : []),
     ...(args.includes("--dir") ? ["--dir", "--win", "--x64"] : ["--win", "nsis", "portable", "--x64"]),
   ],
   {
@@ -39,6 +48,8 @@ await runNode(
     env: buildEnv,
   },
 );
+
+verifyPackagedUi();
 
 function assertReleaseHost() {
   if (!isWindows) {
@@ -50,6 +61,80 @@ function assertReleaseHost() {
       `PaperHub Windows packaging requires Node.js 20.x LTS because electron-builder install-app-deps is not stable on Node ${process.version}.`,
     );
   }
+}
+
+function cleanOutputDirectory() {
+  const relative = path.relative(rootDir, outputDir);
+  if (!relative || relative.startsWith("..") || path.isAbsolute(relative)) {
+    throw new Error(`Refusing to clean output directory outside the project: ${outputDir}`);
+  }
+
+  fs.rmSync(outputDir, { recursive: true, force: true });
+}
+
+function verifyPackagedUi() {
+  const resourcesDir = path.join(outputDir, "win-unpacked", "resources");
+  const appDir = path.join(resourcesDir, "app");
+  const asarPath = path.join(resourcesDir, "app.asar");
+  const readPackagedFile = fs.existsSync(appDir)
+    ? (relativePath) => fs.readFileSync(path.join(appDir, relativePath))
+    : createAsarReader(asarPath);
+
+  const html = readPackagedFile("dist-ui/index.html").toString("utf-8");
+  const scriptMatch = html.match(/<script[^>]+src="\/assets\/([^"]+\.js)"/);
+  if (!scriptMatch?.[1]) {
+    throw new Error("Could not locate the packaged UI JavaScript bundle.");
+  }
+
+  const bundlePath = path.join("dist-ui", "assets", scriptMatch[1]);
+  const bundle = readPackagedFile(bundlePath).toString("utf-8");
+  if (!bundle.includes("LLM connection") || !bundle.includes("Save LLM settings")) {
+    throw new Error("Packaged UI does not contain the LLM settings interface.");
+  }
+
+  console.log(`[desktop-build] Verified packaged LLM settings UI: ${bundlePath}`);
+}
+
+function createAsarReader(asarPath) {
+  if (!fs.existsSync(asarPath)) {
+    throw new Error(`Packaged application is missing: ${asarPath}`);
+  }
+
+  const electronBuilderRequire = createRequire(require.resolve("electron-builder/package.json"));
+  const asar = electronBuilderRequire("@electron/asar");
+  return (relativePath) => asar.extractFile(asarPath, relativePath);
+}
+
+function resolveElectronDist() {
+  const override = process.env.PAPERHUB_ELECTRON_DIST?.trim();
+  if (override) {
+    return path.resolve(override);
+  }
+
+  const cacheRoot =
+    process.env.electron_config_cache?.trim() ||
+    path.join(process.env.LOCALAPPDATA || path.join(os.homedir(), "AppData", "Local"), "electron", "Cache");
+  if (!fs.existsSync(cacheRoot)) {
+    return null;
+  }
+
+  const expectedName = `electron-v${electronVersion}-win32-x64.zip`;
+  for (const entry of fs.readdirSync(cacheRoot, { withFileTypes: true })) {
+    if (!entry.isDirectory()) {
+      continue;
+    }
+    const candidate = path.join(cacheRoot, entry.name, expectedName);
+    if (fs.existsSync(candidate)) {
+      console.log(`[desktop-build] Using cached Electron distribution: ${candidate}`);
+      return candidate;
+    }
+  }
+
+  return null;
+}
+
+function readPackageJson() {
+  return JSON.parse(fs.readFileSync(path.join(rootDir, "package.json"), "utf-8"));
 }
 
 function joinNodeOptions(existing, addition) {

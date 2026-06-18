@@ -66,6 +66,32 @@ describe("searchFts5", () => {
     expect(results.some((r) => r.document.title === "RAG Survey")).toBe(true);
   });
 
+  it("treats AI abbreviations as concepts and removes one-term noise", () => {
+    insertDocument(
+      makeDoc({
+        id: "synthetic-llm",
+        url: "https://example.com/synthetic-llm",
+        title: "Synthetic Data for Large Language Models",
+        abstract: "A study of synthetic training corpora for language model alignment.",
+        modelTags: ["Large Language Model"],
+      }),
+    );
+    insertDocument(
+      makeDoc({
+        id: "data-only",
+        url: "https://example.com/data-only",
+        title: "Data Processing Pipelines",
+        abstract: "Efficient data storage and analytics infrastructure.",
+        domainTags: ["Data"],
+        modelTags: [],
+      }),
+    );
+
+    const results = searchFts5({ query: "synthetic data LLM" });
+
+    expect(results.map((result) => result.document.id)).toEqual(["synthetic-llm"]);
+  });
+
   it("filters by source", () => {
     insertDocument(makeDoc({ source: "arxiv", title: "ArXiv Paper" }));
     insertDocument(makeDoc({ source: "gpt_blog", title: "Blog Post" }));
@@ -93,11 +119,19 @@ describe("searchVector", () => {
     // Use mock embedding (deterministic)
     process.env["EMBEDDING_MOCK"] = "1";
 
-    const doc1 = makeDoc({ id: "vec-1", title: "Large Language Models", abstract: "LLM survey and overview" });
+    const doc1 = makeDoc({
+      id: "vec-1",
+      title: "Large Language Models",
+      abstract: "LLM survey and overview",
+    });
     insertDocument(doc1);
     await indexDocumentVector(doc1);
 
-    const doc2 = makeDoc({ id: "vec-2", title: "Transformer Architecture", abstract: "Attention mechanism details" });
+    const doc2 = makeDoc({
+      id: "vec-2",
+      title: "Transformer Architecture",
+      abstract: "Attention mechanism details",
+    });
     insertDocument(doc2);
     await indexDocumentVector(doc2);
 
@@ -123,6 +157,42 @@ describe("hybridSearch", () => {
     const result = await hybridSearch({ query: "combined search", mode: "hybrid" });
     expect(result.mode).toBe("hybrid");
     expect(result.total).toBeGreaterThanOrEqual(0);
+  });
+
+  it("keeps multi-concept hybrid searches focused on documents covering the query", async () => {
+    process.env["EMBEDDING_MOCK"] = "1";
+
+    const relevant = makeDoc({
+      id: "hybrid-synthetic-llm",
+      url: "https://example.com/hybrid-synthetic-llm",
+      title: "Synthetic Data for LLM Evaluation",
+      abstract: "Synthetic datasets for evaluating large language models.",
+      modelTags: ["LLM"],
+    });
+    const partial = makeDoc({
+      id: "hybrid-data-only",
+      url: "https://example.com/hybrid-data-only",
+      title: "Data Warehouse Design",
+      abstract: "Data storage, indexing, and reporting.",
+      domainTags: ["Data"],
+      modelTags: [],
+    });
+
+    insertDocument(relevant);
+    insertDocument(partial);
+    await indexDocumentVector(relevant);
+    await indexDocumentVector(partial);
+
+    const result = await hybridSearch({
+      query: "synthetic data LLM",
+      mode: "hybrid",
+      limit: 10,
+    });
+
+    expect(result.results.map((entry) => entry.document.id)).toContain("hybrid-synthetic-llm");
+    expect(result.results.map((entry) => entry.document.id)).not.toContain("hybrid-data-only");
+
+    delete process.env["EMBEDDING_MOCK"];
   });
 
   it("supports pagination", async () => {

@@ -5,11 +5,14 @@ import { EmptyBlock, LoadingBlock, SectionHeader } from "../components";
 import {
   getFavorites,
   getHistory,
+  getLlmSettings,
   getUserMemory,
   getUserPreferences,
   rebuildUserMemory,
   removeFavorite,
+  saveLlmSettings,
   saveUserPreferences,
+  type LlmProviderName,
 } from "../lib/api";
 
 export function UserCenterPage(): JSX.Element {
@@ -17,6 +20,10 @@ export function UserCenterPage(): JSX.Element {
   const preferencesQuery = useQuery({
     queryKey: ["user", "preferences"],
     queryFn: getUserPreferences,
+  });
+  const llmSettingsQuery = useQuery({
+    queryKey: ["llm", "settings"],
+    queryFn: getLlmSettings,
   });
   const memoryQuery = useQuery({
     queryKey: ["user", "memory"],
@@ -35,6 +42,10 @@ export function UserCenterPage(): JSX.Element {
   const [defaultLanguage, setDefaultLanguage] = useState("zh");
   const [summaryLength, setSummaryLength] = useState("short");
   const [dailyRecommendCount, setDailyRecommendCount] = useState("10");
+  const [llmProvider, setLlmProvider] = useState<LlmProviderName>("deepseek");
+  const [llmApiKeyDraft, setLlmApiKeyDraft] = useState("");
+  const [llmModel, setLlmModel] = useState("");
+  const [llmBaseUrl, setLlmBaseUrl] = useState("");
 
   useEffect(() => {
     if (!preferencesQuery.data) {
@@ -46,6 +57,17 @@ export function UserCenterPage(): JSX.Element {
     setSummaryLength(preferencesQuery.data.summary_length ?? "short");
     setDailyRecommendCount(preferencesQuery.data.daily_recommend_count ?? "10");
   }, [preferencesQuery.data]);
+
+  useEffect(() => {
+    if (!llmSettingsQuery.data) {
+      return;
+    }
+
+    setLlmProvider(llmSettingsQuery.data.provider);
+    setLlmModel(llmSettingsQuery.data.model);
+    setLlmBaseUrl(llmSettingsQuery.data.baseUrl);
+    setLlmApiKeyDraft("");
+  }, [llmSettingsQuery.data]);
 
   const savePreferencesMutation = useMutation({
     mutationFn: async () =>
@@ -71,6 +93,34 @@ export function UserCenterPage(): JSX.Element {
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["user", "memory"] });
       await queryClient.invalidateQueries({ queryKey: ["home", "personalized"] });
+    },
+  });
+
+  const saveLlmSettingsMutation = useMutation({
+    mutationFn: () =>
+      saveLlmSettings({
+        provider: llmProvider,
+        ...(llmApiKeyDraft.trim() ? { apiKey: llmApiKeyDraft.trim() } : {}),
+        model: llmModel,
+        baseUrl: llmBaseUrl,
+      }),
+    onSuccess: async () => {
+      setLlmApiKeyDraft("");
+      await queryClient.invalidateQueries({ queryKey: ["llm", "settings"] });
+    },
+  });
+
+  const clearLlmApiKeyMutation = useMutation({
+    mutationFn: () =>
+      saveLlmSettings({
+        provider: llmProvider,
+        clearApiKey: true,
+        model: llmModel,
+        baseUrl: llmBaseUrl,
+      }),
+    onSuccess: async () => {
+      setLlmApiKeyDraft("");
+      await queryClient.invalidateQueries({ queryKey: ["llm", "settings"] });
     },
   });
 
@@ -103,14 +153,22 @@ export function UserCenterPage(): JSX.Element {
           </label>
           <label className="field">
             <span>Default language</span>
-            <select className="field-input" onChange={(event) => setDefaultLanguage(event.target.value)} value={defaultLanguage}>
+            <select
+              className="field-input"
+              onChange={(event) => setDefaultLanguage(event.target.value)}
+              value={defaultLanguage}
+            >
               <option value="zh">中文</option>
               <option value="en">English</option>
             </select>
           </label>
           <label className="field">
             <span>Summary length</span>
-            <select className="field-input" onChange={(event) => setSummaryLength(event.target.value)} value={summaryLength}>
+            <select
+              className="field-input"
+              onChange={(event) => setSummaryLength(event.target.value)}
+              value={summaryLength}
+            >
               <option value="short">Short</option>
               <option value="detailed">Detailed</option>
             </select>
@@ -131,6 +189,105 @@ export function UserCenterPage(): JSX.Element {
 
       <section className="content-panel">
         <SectionHeader
+          description="Configure the provider used for summaries, tags, and search reports. API keys stay on this device and are never shown again."
+          kicker="AI"
+          title="LLM connection"
+        />
+        {llmSettingsQuery.isLoading ? <LoadingBlock /> : null}
+        <div className="settings-grid">
+          <label className="field">
+            <span>Provider</span>
+            <select
+              className="field-input"
+              onChange={(event) => {
+                setLlmProvider(event.target.value as LlmProviderName);
+                setLlmApiKeyDraft("");
+                setLlmModel("");
+                setLlmBaseUrl("");
+              }}
+              value={llmProvider}
+            >
+              {(
+                llmSettingsQuery.data?.supportedProviders ?? [
+                  "deepseek",
+                  "openai",
+                  "anthropic",
+                  "openrouter",
+                  "github-copilot",
+                ]
+              ).map((provider) => (
+                <option key={provider} value={provider}>
+                  {providerLabel(provider)}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="field">
+            <span>API key</span>
+            <input
+              autoComplete="off"
+              className="field-input"
+              onChange={(event) => setLlmApiKeyDraft(event.target.value)}
+              placeholder={
+                llmSettingsQuery.data?.hasApiKey && llmSettingsQuery.data.provider === llmProvider
+                  ? "A key is already configured; leave blank to keep it"
+                  : "Paste the provider API key"
+              }
+              type="password"
+              value={llmApiKeyDraft}
+            />
+          </label>
+          <label className="field">
+            <span>Model</span>
+            <input
+              className="field-input"
+              onChange={(event) => setLlmModel(event.target.value)}
+              placeholder="Use the provider default"
+              value={llmModel}
+            />
+          </label>
+          <label className="field">
+            <span>API base URL</span>
+            <input
+              className="field-input"
+              onChange={(event) => setLlmBaseUrl(event.target.value)}
+              placeholder="Use the provider default endpoint"
+              type="url"
+              value={llmBaseUrl}
+            />
+          </label>
+          <p className="settings-note" role="status">
+            {llmSettingsStatus(llmSettingsQuery.data, llmProvider)}
+          </p>
+          {saveLlmSettingsMutation.error ? (
+            <p className="settings-error">{saveLlmSettingsMutation.error.message}</p>
+          ) : null}
+          <div className="toolbar-inline">
+            <button
+              className="primary-button"
+              disabled={saveLlmSettingsMutation.isPending}
+              onClick={() => saveLlmSettingsMutation.mutate()}
+              type="button"
+            >
+              {saveLlmSettingsMutation.isPending ? "Saving..." : "Save LLM settings"}
+            </button>
+            {llmSettingsQuery.data?.apiKeySource === "stored" &&
+            llmSettingsQuery.data.provider === llmProvider ? (
+              <button
+                className="secondary-button"
+                disabled={clearLlmApiKeyMutation.isPending}
+                onClick={() => clearLlmApiKeyMutation.mutate()}
+                type="button"
+              >
+                Remove saved key
+              </button>
+            ) : null}
+          </div>
+        </div>
+      </section>
+
+      <section className="content-panel">
+        <SectionHeader
           description="These are the long-lived terms currently extracted from recent digests and weighted into the profile."
           kicker="Memory"
           title="User memory"
@@ -142,7 +299,10 @@ export function UserCenterPage(): JSX.Element {
         </div>
         {memoryQuery.isLoading ? <LoadingBlock /> : null}
         {(memoryQuery.data?.length ?? 0) === 0 && !memoryQuery.isLoading ? (
-          <EmptyBlock description="Memory will appear after the first digest rebuild." title="No memory terms yet" />
+          <EmptyBlock
+            description="Memory will appear after the first digest rebuild."
+            title="No memory terms yet"
+          />
         ) : null}
         <div className="memory-grid">
           {memoryQuery.data?.map((term) => (
@@ -164,7 +324,10 @@ export function UserCenterPage(): JSX.Element {
           />
           {historyQuery.isLoading ? <LoadingBlock /> : null}
           {(historyQuery.data?.length ?? 0) === 0 && !historyQuery.isLoading ? (
-            <EmptyBlock description="Mark a document as read from the detail page to register a reading event." title="No history yet" />
+            <EmptyBlock
+              description="Mark a document as read from the detail page to register a reading event."
+              title="No history yet"
+            />
           ) : null}
           <div className="list-panel">
             {historyQuery.data?.map((item) => (
@@ -184,7 +347,10 @@ export function UserCenterPage(): JSX.Element {
           />
           {favoritesQuery.isLoading ? <LoadingBlock /> : null}
           {(favoritesQuery.data?.length ?? 0) === 0 && !favoritesQuery.isLoading ? (
-            <EmptyBlock description="Save a paper from the detail page to pin it here." title="No favorites yet" />
+            <EmptyBlock
+              description="Save a paper from the detail page to pin it here."
+              title="No favorites yet"
+            />
           ) : null}
           <div className="list-panel">
             {favoritesQuery.data?.map((item) => (
@@ -204,4 +370,31 @@ export function UserCenterPage(): JSX.Element {
       </div>
     </div>
   );
+}
+
+function providerLabel(provider: LlmProviderName): string {
+  const labels: Record<LlmProviderName, string> = {
+    anthropic: "Anthropic",
+    openai: "OpenAI",
+    "github-copilot": "GitHub Models",
+    openrouter: "OpenRouter",
+    deepseek: "DeepSeek",
+  };
+  return labels[provider];
+}
+
+function llmSettingsStatus(
+  settings: Awaited<ReturnType<typeof getLlmSettings>> | undefined,
+  selectedProvider: LlmProviderName,
+): string {
+  if (!settings || settings.provider !== selectedProvider) {
+    return "Save to activate this provider.";
+  }
+  if (settings.apiKeySource === "stored") {
+    return "API key configured locally. New LLM requests will use these settings.";
+  }
+  if (settings.apiKeySource === "environment") {
+    return "Using an API key from the process environment.";
+  }
+  return "No API key configured. LLM requests will fail until a key is saved.";
 }

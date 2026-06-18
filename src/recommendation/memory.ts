@@ -4,6 +4,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { getAppRootDir } from "@/config";
 import { clearUserMemoryTerms, getUserMemoryTerms, upsertUserMemoryTerms } from "@/db/recommendations";
 import { ARXIV_DOMAIN_MAP } from "@/tagger/arxiv-mapping";
 import { extractModelTags } from "@/tagger/model-extract";
@@ -109,11 +110,9 @@ const FALLBACK_STOP_WORDS = new Set([
   "weekly",
 ]);
 
-export function extractMemoryFromDigests(
-  options: MemoryExtractionOptions = {},
-): MemoryTerm[] {
+export function extractMemoryFromDigests(options: MemoryExtractionOptions = {}): MemoryTerm[] {
   const now = options.now ?? new Date();
-  const digestDir = options.digestDir ?? path.resolve(process.cwd(), "digests");
+  const digestDir = options.digestDir ?? path.resolve(getAppRootDir(), "digests");
   const maxDays = options.maxDays ?? 30;
   const maxTerms = options.maxTerms ?? 20;
   const minTermsBeforeFallback = options.minTermsBeforeFallback ?? 5;
@@ -134,9 +133,7 @@ export function extractMemoryFromDigests(
   return finalizeMemoryTerms(accumulators, maxTerms, now);
 }
 
-export function rebuildUserMemoryFromDigests(
-  options: MemoryExtractionOptions = {},
-): MemoryTerm[] {
+export function rebuildUserMemoryFromDigests(options: MemoryExtractionOptions = {}): MemoryTerm[] {
   const terms = extractMemoryFromDigests(options);
   clearUserMemoryTerms("digest");
   upsertUserMemoryTerms(terms);
@@ -145,11 +142,7 @@ export function rebuildUserMemoryFromDigests(
 
 export { getUserMemoryTerms, clearUserMemoryTerms };
 
-function loadDigestFiles(
-  digestDir: string,
-  now: Date,
-  maxDays: number,
-): DigestFile[] {
+function loadDigestFiles(digestDir: string, now: Date, maxDays: number): DigestFile[] {
   return listRelevantDigestFiles(digestDir, now, maxDays)
     .map((file) => ({
       ...file,
@@ -182,11 +175,7 @@ function listRelevantDigestFiles(
 
     const folderPath = path.join(digestDir, folder);
     for (const basename of fs.readdirSync(folderPath)) {
-      if (
-        !/^ai-.*\.md$/.test(basename) ||
-        basename.endsWith("-en.md") ||
-        basename === "index.md"
-      ) {
+      if (!/^ai-.*\.md$/.test(basename) || basename.endsWith("-en.md") || basename === "index.md") {
         continue;
       }
 

@@ -8,11 +8,12 @@
  */
 
 import { OpenAICompatibleProvider } from "./openai-compatible";
+import type { ProviderOptions } from "./types";
 
 export class OpenAIProvider extends OpenAICompatibleProvider {
   readonly name = "openai";
 
-  constructor(opts?: { apiKey?: string; baseURL?: string; model?: string }) {
+  constructor(opts?: ProviderOptions) {
     super({
       apiKey: opts?.apiKey ?? process.env["OPENAI_API_KEY"],
       baseURL: opts?.baseURL ?? process.env["OPENAI_BASE_URL"],

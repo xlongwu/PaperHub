@@ -7,16 +7,17 @@
  */
 
 import { OpenAICompatibleProvider } from "./openai-compatible";
+import type { ProviderOptions } from "./types";
 
 const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
 
 export class OpenRouterProvider extends OpenAICompatibleProvider {
   readonly name = "openrouter";
 
-  constructor(opts?: { apiKey?: string; model?: string }) {
+  constructor(opts?: ProviderOptions) {
     super({
       apiKey: opts?.apiKey ?? process.env["OPENROUTER_API_KEY"],
-      baseURL: OPENROUTER_BASE_URL,
+      baseURL: opts?.baseURL ?? OPENROUTER_BASE_URL,
       model: opts?.model ?? process.env["OPENROUTER_MODEL"] ?? "anthropic/claude-sonnet-4",
     });
   }

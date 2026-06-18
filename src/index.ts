@@ -7,7 +7,7 @@ import "dotenv/config";
 import { initDatabase, closeDb } from "@/db/index";
 import { startServer } from "@/api/server";
 import { startScheduler, stopScheduler, waitForRunningTasks } from "@/scheduler";
-import { createProvider, type ProviderName } from "@/providers/index";
+import { getLlmSettingsState } from "@/providers/index";
 import { getLogsDir } from "@/config";
 import { initDefaultPreferences } from "@/db/user";
 import fs from "node:fs";
@@ -94,24 +94,14 @@ function setupShutdownHandlers(server: ReturnType<typeof startServer>): void {
  * accepts undefined), but runtime calls would fail with confusing errors.
  */
 function validateLlmProvider(): void {
-  const providerName = (process.env["LLM_PROVIDER"] ?? "deepseek") as ProviderName;
-
-  const keyEnvVars: Record<string, string> = {
-    anthropic: "ANTHROPIC_API_KEY",
-    openai: "OPENAI_API_KEY",
-    deepseek: "DEEPSEEK_API_KEY",
-    "github-copilot": "GITHUB_TOKEN",
-    openrouter: "OPENROUTER_API_KEY",
-  };
-
-  const keyVar = keyEnvVars[providerName];
-  if (keyVar && !process.env[keyVar]) {
+  const settings = getLlmSettingsState();
+  if (!settings.hasApiKey) {
     console.warn(
-      `[app] WARNING: LLM provider "${providerName}" selected but ${keyVar} env var is not set. ` +
-        "LLM summarization and search reports will fail at runtime.",
+      `[app] WARNING: LLM provider "${settings.provider}" has no API key configured. ` +
+        "Set one in Profile > LLM connection or through an environment variable.",
     );
   } else {
-    console.log(`[app] LLM provider "${providerName}" validated.`);
+    console.log(`[app] LLM provider "${settings.provider}" validated (${settings.apiKeySource} key).`);
   }
 
   // Also validate embedding provider

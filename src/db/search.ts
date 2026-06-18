@@ -5,6 +5,7 @@
 import { getDb } from "./index";
 import { getDocumentById } from "./documents";
 import { generateEmbedding, EMBEDDING_DIMENSION } from "@/embedding";
+import { analyzeSearchQuery, scoreDocumentAgainstQuery } from "@/search-query";
 import type { Document } from "@/types";
 
 // ---------------------------------------------------------------------------
@@ -44,46 +45,21 @@ const VECTOR_K_CAP = 200; // Prevent full-scan KNN when index grows large
 // FTS5 keyword search
 // ---------------------------------------------------------------------------
 
-/**
- * Escape FTS5 special characters and delimiters that could be interpreted as
- * query syntax. Each user-supplied term is wrapped in double-quotes to prevent
- * FTS5 operators (AND, OR, NOT, NEAR, ^, parentheses) from altering query
- * semantics.
- */
-function escapeFts5Term(term: string): string {
-  // Strip characters that FTS5 treats specially, then wrap in double-quotes
-  // to prevent the term from being parsed as an operator or expression.
-  const cleaned = term.replace(/["*^()]/g, "").trim();
-  if (cleaned.length === 0) return "";
-  // Quote the term so FTS5 treats it as a literal phrase match with prefix
-  return `"${cleaned}"*`;
-}
-
 export function searchFts5(options: Fts5SearchOptions): SearchResult[] {
   const db = getDb();
   const limit = Math.min(options.limit ?? 20, SEARCH_RESULT_LIMIT_CAP);
   const offset = Math.max(options.offset ?? 0, 0);
-
-  // Build prefix query with escaped terms, joined with AND
-  const terms = options.query
-    .trim()
-    .split(/\s+/)
-    .filter((t) => t.length > 0)
-    .map(escapeFts5Term)
-    .filter((t) => t.length > 0);
-
-  if (terms.length === 0) return [];
-
-  const ftsQuery = terms.join(" AND ");
+  const analysis = analyzeSearchQuery(options.query);
+  if (analysis.concepts.length === 0) return [];
 
   // Base SQL
   let sql = `
-    SELECT d.*, rank
+    SELECT d.*, bm25(document_fts, 8.0, 2.0, 5.0) AS fts_rank
     FROM document_fts fts
     JOIN documents d ON d.rowid = fts.rowid
     WHERE document_fts MATCH ?
   `;
-  const params: (string | number)[] = [ftsQuery];
+  const params: (string | number)[] = [analysis.ftsQuery];
 
   // Source filter
   if (options.sources && options.sources.length > 0) {
@@ -110,40 +86,49 @@ export function searchFts5(options: Fts5SearchOptions): SearchResult[] {
     params.push(options.dateRange.start, options.dateRange.end);
   }
 
-  sql += ` ORDER BY rank LIMIT ? OFFSET ?`;
-  params.push(limit, offset);
+  const candidateLimit = Math.min(SEARCH_RESULT_LIMIT_CAP, Math.max(100, (offset + limit) * 5));
+  sql += ` ORDER BY fts_rank LIMIT ?`;
+  params.push(candidateLimit);
 
   const rows = db.prepare(sql).all(...params) as Record<string, unknown>[];
 
-  return rows.map((row) => ({
-    document: rowToDocument(row),
-    score: normalizeRank(Number(row["rank"])),
-    matchType: "fts",
-    snippet: buildSnippet(rowToDocument(row), options.query),
-  }));
+  const ranked = rows
+    .map((row, rankIndex) => {
+      const document = rowToDocument(row);
+      const relevance = scoreDocumentAgainstQuery(document, analysis);
+      const rankScore = normalizeRank(rankIndex);
+
+      return {
+        document,
+        score: Math.min(1, relevance.score * 0.9 + rankScore * 0.1),
+        matchType: "fts" as const,
+        snippet: buildSnippet(document, options.query),
+        matchedConcepts: relevance.matchedConcepts,
+      };
+    })
+    .filter((result) => result.matchedConcepts >= analysis.minimumLexicalMatches)
+    .sort((a, b) => b.score - a.score);
+
+  return ranked
+    .slice(offset, offset + limit)
+    .map(({ matchedConcepts: _matchedConcepts, ...result }) => result);
 }
 
-function normalizeRank(rank: number): number {
-  // FTS5 rank is negative (lower = better). Convert to 0–1.
-  const r = Math.abs(rank);
-  return Math.max(0, Math.min(1, 1 - r / 10));
+function normalizeRank(rankIndex: number): number {
+  // Convert the BM25 candidate position into a small, stable tie-break score.
+  const position = Math.max(0, rankIndex);
+  return 1 / (1 + position * 0.08);
 }
 
 function buildSnippet(document: Document, query: string): string | undefined {
-  const terms = query
-    .trim()
-    .toLowerCase()
-    .split(/\s+/)
-    .filter(Boolean);
+  const terms = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
 
   if (terms.length === 0) return undefined;
 
   const candidates = [document.title, document.abstract];
   for (const candidate of candidates) {
     const lower = candidate.toLowerCase();
-    const matchIndex = terms
-      .map((term) => lower.indexOf(term))
-      .find((index) => index >= 0);
+    const matchIndex = terms.map((term) => lower.indexOf(term)).find((index) => index >= 0);
 
     if (matchIndex === undefined || matchIndex < 0) {
       continue;
@@ -272,9 +257,10 @@ function rowToDocument(row: Record<string, unknown>): Document {
 
 export function storeVector(documentId: string, embedding: number[]): void {
   const db = getDb();
-  db.prepare(
-    "INSERT OR REPLACE INTO document_vectors(document_id, embedding) VALUES (?, ?)"
-  ).run(documentId, serializeEmbedding(embedding));
+  db.prepare("INSERT OR REPLACE INTO document_vectors(document_id, embedding) VALUES (?, ?)").run(
+    documentId,
+    serializeEmbedding(embedding),
+  );
 }
 
 export async function indexDocumentVector(doc: Document): Promise<void> {
@@ -294,13 +280,11 @@ export function countIndexedVectors(): number {
 function serializeEmbedding(embedding: number[]): Buffer {
   if (embedding.length !== EMBEDDING_DIMENSION) {
     throw new Error(
-      `Embedding dimension mismatch: expected ${EMBEDDING_DIMENSION}, received ${embedding.length}`
+      `Embedding dimension mismatch: expected ${EMBEDDING_DIMENSION}, received ${embedding.length}`,
     );
   }
 
-  const values = Float32Array.from(
-    embedding.map((value) => (Number.isFinite(value) ? value : 0))
-  );
+  const values = Float32Array.from(embedding.map((value) => (Number.isFinite(value) ? value : 0)));
   return Buffer.from(values.buffer);
 }
 

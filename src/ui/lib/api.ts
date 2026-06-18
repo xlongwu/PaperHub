@@ -1,8 +1,4 @@
-import type {
-  Document,
-  MemoryTerm,
-  RecommendationEntry,
-} from "@/types";
+import type { Document, MemoryTerm, RecommendationEntry } from "@/types";
 
 declare global {
   interface Window {
@@ -41,6 +37,16 @@ export interface PagedResult<T> {
 }
 
 export type TimeRangePreset = "all" | "7d" | "30d" | "90d" | "365d";
+export type LlmProviderName = "anthropic" | "openai" | "github-copilot" | "openrouter" | "deepseek";
+
+export interface LlmSettings {
+  provider: LlmProviderName;
+  model: string;
+  baseUrl: string;
+  hasApiKey: boolean;
+  apiKeySource: "stored" | "environment" | "missing";
+  supportedProviders: LlmProviderName[];
+}
 
 export async function getHotRecommendations(): Promise<RecommendationEntry[]> {
   const response = await apiGet<RecommendationEntry[]>("/api/recommendations/hot");
@@ -100,7 +106,9 @@ export async function searchDocuments(params: {
   return response.data;
 }
 
-export async function getTagCloud(category?: string): Promise<Array<{ tag: string; category: string; count: number }>> {
+export async function getTagCloud(
+  category?: string,
+): Promise<Array<{ tag: string; category: string; count: number }>> {
   const suffix = category ? `?category=${encodeURIComponent(category)}` : "";
   const response = await apiGet<Array<{ tag: string; category: string; count: number }>>(
     `/api/tags${suffix}`,
@@ -137,6 +145,28 @@ export async function getUserPreferences(): Promise<Record<string, string>> {
 export async function saveUserPreferences(payload: Record<string, string>): Promise<Record<string, string>> {
   const response = await apiPost<Record<string, string>>("/api/user/preferences", payload);
   return response.data ?? {};
+}
+
+export async function getLlmSettings(): Promise<LlmSettings> {
+  const response = await apiGet<LlmSettings>("/api/llm/settings");
+  if (!response.data) {
+    throw new Error("LLM settings are unavailable");
+  }
+  return response.data;
+}
+
+export async function saveLlmSettings(payload: {
+  provider: LlmProviderName;
+  apiKey?: string;
+  clearApiKey?: boolean;
+  model?: string;
+  baseUrl?: string;
+}): Promise<LlmSettings> {
+  const response = await apiPost<LlmSettings>("/api/llm/settings", payload);
+  if (!response.data) {
+    throw new Error("LLM settings were not saved");
+  }
+  return response.data;
 }
 
 export async function getUserMemory(): Promise<MemoryTerm[]> {

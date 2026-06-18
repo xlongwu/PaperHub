@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   AnthropicProvider,
+  DeepSeekProvider,
   OpenAIProvider,
   GitHubCopilotProvider,
   OpenRouterProvider,
@@ -328,11 +329,11 @@ describe("createProvider", () => {
     }
   });
 
-  it("defaults to anthropic when LLM_PROVIDER is not set", () => {
+  it("defaults to deepseek when LLM_PROVIDER is not set", () => {
     delete process.env["LLM_PROVIDER"];
     const p = createProvider();
-    expect(p.name).toBe("anthropic");
-    expect(p).toBeInstanceOf(AnthropicProvider);
+    expect(p.name).toBe("deepseek");
+    expect(p).toBeInstanceOf(DeepSeekProvider);
   });
 
   it("creates anthropic provider", () => {

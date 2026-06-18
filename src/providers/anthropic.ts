@@ -8,16 +8,20 @@
  */
 
 import Anthropic from "@anthropic-ai/sdk";
-import type { LlmProvider } from "./types";
+import type { LlmProvider, ProviderOptions } from "./types";
 
 export class AnthropicProvider implements LlmProvider {
   readonly name = "anthropic";
   private readonly client: Anthropic;
   private readonly model: string;
 
-  constructor(model?: string) {
-    this.model = model ?? process.env["ANTHROPIC_MODEL"] ?? "claude-sonnet-4-6";
-    this.client = new Anthropic();
+  constructor(options?: string | ProviderOptions) {
+    const normalized = typeof options === "string" ? { model: options } : options;
+    this.model = normalized?.model ?? process.env["ANTHROPIC_MODEL"] ?? "claude-sonnet-4-6";
+    this.client = new Anthropic({
+      apiKey: normalized?.apiKey ?? process.env["ANTHROPIC_API_KEY"],
+      baseURL: normalized?.baseURL ?? process.env["ANTHROPIC_BASE_URL"],
+    });
   }
 
   async call(prompt: string, maxTokens: number): Promise<string> {

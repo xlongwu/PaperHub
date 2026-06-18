@@ -4,6 +4,7 @@
 
 import { searchFts5, searchVector, matchesSearchFilters, type SearchResult } from "@/db/search";
 import { callLlm } from "@/report";
+import { analyzeSearchQuery, scoreDocumentAgainstQuery } from "@/search-query";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -55,7 +56,7 @@ export async function hybridSearch(options: HybridSearchOptions): Promise<Hybrid
       vecResults = await searchVector({
         query: options.query,
         limit: candidateLimit,
-        threshold: 0.5, // aligned with searchVector default
+        threshold: mode === "hybrid" ? 0.58 : 0.5,
         sources: options.sources,
         tags: options.tags,
         dateRange: options.dateRange,
@@ -67,7 +68,7 @@ export async function hybridSearch(options: HybridSearchOptions): Promise<Hybrid
   }
 
   // Merge and deduplicate
-  const merged = mergeResults(ftsResults, vecResults, mode);
+  const merged = mergeResults(ftsResults, vecResults, mode, options.query);
 
   // Apply a final defensive filter — delegates to the shared, single-source
   // predicate in db/search.ts so both branches stay in lockstep.
@@ -98,26 +99,45 @@ export async function hybridSearch(options: HybridSearchOptions): Promise<Hybrid
 // Merge & rank
 // ---------------------------------------------------------------------------
 
-function mergeResults(fts: SearchResult[], vec: SearchResult[], mode: string): SearchResult[] {
-  const seen = new Map<string, SearchResult>();
+function mergeResults(fts: SearchResult[], vec: SearchResult[], mode: string, query: string): SearchResult[] {
+  if (mode === "keyword") return [...fts].sort((a, b) => b.score - a.score);
+  if (mode === "semantic") return [...vec].sort((a, b) => b.score - a.score);
 
-  // FTS scores are already normalized to [0,1]
-  for (const r of fts) {
-    seen.set(r.document.id, { ...r, score: r.score * (mode === "hybrid" ? 0.6 : 1.0) });
-  }
+  const analysis = analyzeSearchQuery(query);
+  const ftsById = new Map(fts.map((result) => [result.document.id, result]));
+  const vecById = new Map(vec.map((result) => [result.document.id, result]));
+  const documentIds = new Set([...ftsById.keys(), ...vecById.keys()]);
+  const merged: SearchResult[] = [];
 
-  // Vector scores are cosine similarity [0,1]
-  for (const r of vec) {
-    const existing = seen.get(r.document.id);
-    if (existing) {
-      // Combine scores
-      existing.score = existing.score + r.score * (mode === "hybrid" ? 0.4 : 1.0);
-    } else {
-      seen.set(r.document.id, { ...r, score: r.score * (mode === "hybrid" ? 0.4 : 1.0) });
+  for (const documentId of documentIds) {
+    const keywordResult = ftsById.get(documentId);
+    const vectorResult = vecById.get(documentId);
+    const base = keywordResult ?? vectorResult;
+    if (!base) continue;
+
+    const lexical = scoreDocumentAgainstQuery(base.document, analysis);
+    if (
+      !keywordResult &&
+      analysis.concepts.length > 1 &&
+      lexical.matchedConcepts < analysis.minimumHybridMatches
+    ) {
+      continue;
     }
+
+    const keywordScore = keywordResult?.score ?? 0;
+    const vectorScore = vectorResult?.score ?? 0;
+    const overlapBonus = keywordResult && vectorResult ? 0.08 : 0;
+    const score = Math.min(1, keywordScore * 0.52 + vectorScore * 0.28 + lexical.score * 0.2 + overlapBonus);
+
+    merged.push({
+      ...base,
+      score,
+      matchType: keywordResult && vectorResult ? "hybrid" : base.matchType,
+      snippet: keywordResult?.snippet ?? base.snippet,
+    });
   }
 
-  return [...seen.values()].sort((a, b) => b.score - a.score);
+  return merged.sort((a, b) => b.score - a.score);
 }
 
 // ---------------------------------------------------------------------------
@@ -126,7 +146,10 @@ function mergeResults(fts: SearchResult[], vec: SearchResult[], mode: string): S
 
 async function generateSearchReport(results: SearchResult[], query: string): Promise<string> {
   const summaries = results
-    .map((r, i) => `${i + 1}. ${r.document.title}\n   ${r.document.abstract.slice(0, 200)}...\n   来源: ${r.document.sourceTag}`)
+    .map(
+      (r, i) =>
+        `${i + 1}. ${r.document.title}\n   ${r.document.abstract.slice(0, 200)}...\n   来源: ${r.document.sourceTag}`,
+    )
     .join("\n\n");
 
   const prompt = `用户搜索主题: "${query}"

@@ -19,6 +19,7 @@ import {
   countFavorites,
 } from "@/db/user";
 import { insertDocument } from "@/db/documents";
+import { getStoredLlmProviderSettings, saveStoredLlmProviderSettings } from "@/db/llm-settings";
 import type { Document } from "@/types";
 import { safeUnlink, testPath } from "./test-utils";
 
@@ -122,6 +123,34 @@ describe("Browsing history", () => {
     insertDocument(makeDoc("doc-1"));
     recordHistory("doc-1");
     expect(countHistory()).toBe(1);
+  });
+});
+
+describe("LLM provider settings", () => {
+  it("stores provider credentials outside general preferences", () => {
+    saveStoredLlmProviderSettings("deepseek", {
+      apiKey: "sk-local-only",
+      model: "deepseek-chat",
+      baseUrl: "https://api.deepseek.com",
+    });
+
+    expect(getStoredLlmProviderSettings("deepseek")).toEqual({
+      provider: "deepseek",
+      apiKey: "sk-local-only",
+      model: "deepseek-chat",
+      baseUrl: "https://api.deepseek.com",
+    });
+    expect(Object.values(getUserPreferences())).not.toContain("sk-local-only");
+  });
+
+  it("preserves an existing key when only model settings change", () => {
+    saveStoredLlmProviderSettings("openai", { apiKey: "sk-existing" });
+    saveStoredLlmProviderSettings("openai", { model: "gpt-4o-mini" });
+
+    expect(getStoredLlmProviderSettings("openai")).toMatchObject({
+      apiKey: "sk-existing",
+      model: "gpt-4o-mini",
+    });
   });
 });
 

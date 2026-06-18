@@ -5,6 +5,7 @@
  */
 
 import { getCacheDir } from "@/config";
+import { getStoredLlmProviderSettings } from "@/db/llm-settings";
 import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
@@ -15,6 +16,12 @@ import crypto from "node:crypto";
 
 const EMBEDDING_DIMENSION = 1536;
 const EMBEDDING_MODEL = "text-embedding-3-small";
+
+export interface EmbeddingRuntime {
+  provider: "openai" | "mock";
+  model: string;
+  signature: string;
+}
 
 // ---------------------------------------------------------------------------
 // Cache
@@ -122,10 +129,10 @@ export async function generateEmbedding(text: string): Promise<number[]> {
   const cached = getCachedEmbedding(text);
   if (cached) return cached;
 
-  const provider = resolveEmbeddingProvider();
+  const runtime = getEmbeddingRuntime();
 
   let embedding: number[];
-  if (provider === "local") {
+  if (runtime.provider === "mock") {
     embedding = generateMockEmbedding(text);
   } else {
     embedding = await generateOpenAIEmbedding(text);
@@ -138,22 +145,47 @@ export async function generateEmbedding(text: string): Promise<number[]> {
 export { EMBEDDING_DIMENSION };
 
 function getEmbeddingApiKey(): string | undefined {
-  return process.env["EMBEDDING_API_KEY"] || process.env["OPENAI_API_KEY"];
+  const environmentKey = process.env["EMBEDDING_API_KEY"] || process.env["OPENAI_API_KEY"];
+  if (environmentKey) {
+    return environmentKey;
+  }
+
+  try {
+    return getStoredLlmProviderSettings("openai")?.apiKey ?? undefined;
+  } catch {
+    return undefined;
+  }
 }
 
-function resolveEmbeddingProvider(): "openai" | "local" {
+export function getEmbeddingRuntime(): EmbeddingRuntime {
   if (process.env["EMBEDDING_MOCK"] === "1") {
-    return "local";
+    return {
+      provider: "mock",
+      model: "deterministic-test-vector-v1",
+      signature: `mock:deterministic-test-vector-v1:${EMBEDDING_DIMENSION}`,
+    };
   }
 
   const configured = process.env["EMBEDDING_PROVIDER"]?.trim().toLowerCase();
-  if (configured === "local" || configured === "openai") {
-    return configured;
+  if (configured === "local") {
+    throw new Error(
+      'EMBEDDING_PROVIDER="local" is not implemented yet. Configure OpenAI embeddings instead.',
+    );
   }
 
-  if (configured) {
-    throw new Error(`Invalid EMBEDDING_PROVIDER: ${configured}. Use "openai" or "local".`);
+  if (configured && configured !== "openai") {
+    throw new Error(`Invalid EMBEDDING_PROVIDER: ${configured}. Use "openai".`);
   }
 
-  return getEmbeddingApiKey() ? "openai" : "local";
+  if (!getEmbeddingApiKey()) {
+    throw new Error(
+      "Semantic search is unavailable until OPENAI_API_KEY, EMBEDDING_API_KEY, or an OpenAI key in LLM settings is configured.",
+    );
+  }
+
+  return {
+    provider: "openai",
+    model: EMBEDDING_MODEL,
+    signature: `openai:${EMBEDDING_MODEL}:${EMBEDDING_DIMENSION}`,
+  };
 }

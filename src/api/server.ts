@@ -5,13 +5,8 @@
 import fs from "node:fs";
 import path from "node:path";
 import express, { type Request, type Response, type NextFunction } from "express";
-import { loadPaperHubConfig } from "@/config";
-import {
-  getAllDocuments,
-  getDocumentById,
-  countDocuments,
-  countDocumentsByDate,
-} from "@/db/documents";
+import { getAppRootDir, loadPaperHubConfig } from "@/config";
+import { getAllDocuments, getDocumentById, countDocuments, countDocumentsByDate } from "@/db/documents";
 import { arxivCollector } from "@/collectors/arxiv";
 import { gptBlogCollector } from "@/collectors/gpt-blog";
 import { claudeBlogCollector } from "@/collectors/claude-blog";
@@ -36,6 +31,14 @@ import { applyDocumentTags } from "@/tagger/apply";
 import { findDuplicateByTitle } from "@/utils/dedup";
 import { summarizeBatch } from "@/summarizer";
 import { hybridSearch } from "@/search";
+import {
+  getLlmSettingsState,
+  saveLlmSettings,
+  VALID_PROVIDER_NAMES,
+  type LlmSettingsUpdate,
+  type ProviderName,
+} from "@/providers";
+import { resetLlmProvider } from "@/report";
 import { indexDocumentVector } from "@/db/search";
 import {
   getTagCloud,
@@ -62,15 +65,14 @@ const config = loadPaperHubConfig();
 const app = express();
 
 // --- Security middleware ---
-app.use(corsMiddleware);                          // CORS: localhost only
-app.use(express.json({ limit: "1mb" }));          // Request body size cap
+app.use(corsMiddleware); // CORS: localhost only
+app.use(express.json({ limit: "1mb" })); // Request body size cap
 
 // Rate limiters: different limits per endpoint sensitivity
-const generalLimiter = createRateLimiter({ windowMs: 60_000, max: 120 });
 const writeLimiter = createRateLimiter({ windowMs: 60_000, max: 20 });
-const collectLimiter = createRateLimiter({ windowMs: 300_000, max: 5 });    // 5 per 5 min
-const llmLimiter = createRateLimiter({ windowMs: 300_000, max: 10 });       // 10 per 5 min
-const searchLimiter = createRateLimiter({ windowMs: 60_000, max: 30 });     // 30 per min
+const collectLimiter = createRateLimiter({ windowMs: 300_000, max: 5 }); // 5 per 5 min
+const llmLimiter = createRateLimiter({ windowMs: 300_000, max: 10 }); // 10 per 5 min
+const searchLimiter = createRateLimiter({ windowMs: 60_000, max: 30 }); // 30 per min
 
 /**
  * Whitelist of allowed user-preference keys.  Any key not in this set is
@@ -78,18 +80,20 @@ const searchLimiter = createRateLimiter({ windowMs: 60_000, max: 30 });     // 3
  * config keys (e.g. DB path, log path) via the preferences endpoint.
  */
 const ALLOWED_PREFERENCE_KEYS = new Set([
-  "language",
+  "interest_tags",
+  "default_language",
+  "summary_length",
+  "daily_recommend_count",
   "theme",
   "sources",
-  "interests",
-  "readingHours",
-  "emailNotifications",
-  "weeklyDigest",
-  "monthlyDigest",
-  "defaultDateRange",
+  "reading_hours",
+  "email_notifications",
+  "weekly_digest",
+  "monthly_digest",
+  "default_date_range",
 ]);
 
-function sanitizePreferences(body: unknown): Record<string, string> {
+export function sanitizePreferences(body: unknown): Record<string, string> {
   if (!body || typeof body !== "object" || Array.isArray(body)) {
     return {};
   }
@@ -102,7 +106,72 @@ function sanitizePreferences(body: unknown): Record<string, string> {
   return sanitized;
 }
 
-const frontendDistDir = path.resolve(process.cwd(), "dist-ui");
+class LlmSettingsValidationError extends Error {}
+
+export function parseLlmSettingsUpdate(body: unknown): LlmSettingsUpdate {
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    throw new LlmSettingsValidationError("LLM settings must be an object.");
+  }
+
+  const input = body as Record<string, unknown>;
+  const provider = normalizeBoundedString(input.provider, "provider", 64);
+  if (!VALID_PROVIDER_NAMES.includes(provider as ProviderName)) {
+    throw new LlmSettingsValidationError(
+      `Unsupported LLM provider. Valid providers: ${VALID_PROVIDER_NAMES.join(", ")}.`,
+    );
+  }
+
+  const update: LlmSettingsUpdate = { provider: provider as ProviderName };
+
+  if (input.apiKey !== undefined) {
+    const apiKey = normalizeBoundedString(input.apiKey, "apiKey", 4096);
+    if (apiKey) {
+      update.apiKey = apiKey;
+    }
+  }
+
+  if (input.clearApiKey !== undefined) {
+    if (typeof input.clearApiKey !== "boolean") {
+      throw new LlmSettingsValidationError("clearApiKey must be a boolean.");
+    }
+    update.clearApiKey = input.clearApiKey;
+  }
+
+  if (input.model !== undefined) {
+    update.model = normalizeBoundedString(input.model, "model", 256);
+  }
+
+  if (input.baseUrl !== undefined) {
+    const baseUrl = normalizeBoundedString(input.baseUrl, "baseUrl", 2048);
+    if (baseUrl) {
+      let parsed: URL;
+      try {
+        parsed = new URL(baseUrl);
+      } catch {
+        throw new LlmSettingsValidationError("baseUrl must be a valid HTTP(S) URL.");
+      }
+      if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+        throw new LlmSettingsValidationError("baseUrl must use HTTP or HTTPS.");
+      }
+    }
+    update.baseUrl = baseUrl;
+  }
+
+  return update;
+}
+
+function normalizeBoundedString(value: unknown, field: string, maxLength: number): string {
+  if (typeof value !== "string") {
+    throw new LlmSettingsValidationError(`${field} must be a string.`);
+  }
+  const normalized = value.trim();
+  if (normalized.length > maxLength) {
+    throw new LlmSettingsValidationError(`${field} is too long.`);
+  }
+  return normalized;
+}
+
+const frontendDistDir = path.resolve(getAppRootDir(), "dist-ui");
 const frontendIndexHtml = path.join(frontendDistDir, "index.html");
 
 // ---------------------------------------------------------------------------
@@ -206,10 +275,7 @@ export async function indexAllVectors(): Promise<{ indexed: number; total: numbe
   return { indexed, total };
 }
 
-export function userMemoryResponse(options?: {
-  limit?: number;
-  source?: "digest";
-}): {
+export function userMemoryResponse(options?: { limit?: number; source?: "digest" }): {
   data: MemoryTerm[];
   meta: NonNullable<ApiResponse<unknown>["meta"]>;
 } {
@@ -433,6 +499,30 @@ app.get("/api/stats", (_req, res) => {
 // User preferences
 // ---------------------------------------------------------------------------
 
+app.get("/api/llm/settings", (_req, res) => {
+  try {
+    ok(res, getLlmSettingsState());
+  } catch (e) {
+    logError("api/llm/settings", e);
+    err(res, 500, "Failed to fetch LLM settings");
+  }
+});
+
+app.post("/api/llm/settings", writeLimiter, (req, res) => {
+  try {
+    const settings = saveLlmSettings(parseLlmSettingsUpdate(req.body));
+    resetLlmProvider();
+    ok(res, settings);
+  } catch (e) {
+    if (e instanceof LlmSettingsValidationError) {
+      err(res, 400, e.message);
+      return;
+    }
+    logError("api/llm/settings", e);
+    err(res, 500, "Failed to update LLM settings");
+  }
+});
+
 app.get("/api/user/preferences", (_req, res) => {
   try {
     const prefs = getUserPreferences();
@@ -447,7 +537,11 @@ app.post("/api/user/preferences", writeLimiter, (req, res) => {
   try {
     const prefs = sanitizePreferences(req.body);
     if (Object.keys(prefs).length === 0) {
-      err(res, 400, "No valid preferences provided. Allowed keys: " + [...ALLOWED_PREFERENCE_KEYS].join(", "));
+      err(
+        res,
+        400,
+        "No valid preferences provided. Allowed keys: " + [...ALLOWED_PREFERENCE_KEYS].join(", "),
+      );
       return;
     }
 
@@ -750,8 +844,8 @@ app.use((_req: Request, res: Response) => {
 // ---------------------------------------------------------------------------
 
 export function startServer(): ReturnType<typeof app.listen> {
-  const server = app.listen(config.port, () => {
-    console.log(`[api] Server listening on http://localhost:${config.port}`);
+  const server = app.listen(config.port, "127.0.0.1", () => {
+    console.log(`[api] Server listening on http://127.0.0.1:${config.port}`);
   });
   return server;
 }

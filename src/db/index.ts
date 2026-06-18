@@ -13,7 +13,7 @@ import { getDbPath } from "@/config";
 // Migration tracking
 // ---------------------------------------------------------------------------
 
-const CURRENT_SCHEMA_VERSION = 4;
+const CURRENT_SCHEMA_VERSION = 6;
 
 interface Migration {
   version: number;
@@ -192,6 +192,30 @@ const MIGRATIONS: Migration[] = [
 
       CREATE INDEX IF NOT EXISTS idx_rec_snapshots_kind_date
         ON recommendation_snapshots(kind, snapshot_date, rank);
+    `,
+  },
+  {
+    version: 5,
+    name: "llm-provider-settings",
+    sql: `
+      CREATE TABLE IF NOT EXISTS llm_provider_settings (
+        provider TEXT PRIMARY KEY,
+        api_key TEXT,
+        model TEXT,
+        base_url TEXT,
+        updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+      );
+    `,
+  },
+  {
+    version: 6,
+    name: "embedding-index-metadata",
+    sql: `
+      CREATE TABLE IF NOT EXISTS embedding_index_metadata (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        signature TEXT NOT NULL,
+        updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+      );
     `,
   },
 ];

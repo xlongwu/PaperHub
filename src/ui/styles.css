@@ -129,7 +129,9 @@ textarea {
   padding: 10px 14px;
   border-radius: 999px;
   color: var(--ink-800);
-  transition: background-color 180ms ease, transform 180ms ease;
+  transition:
+    background-color 180ms ease,
+    transform 180ms ease;
 }
 
 .nav-link:hover,
@@ -166,7 +168,10 @@ textarea {
 .secondary-button,
 .text-link,
 .inline-action {
-  transition: transform 160ms ease, opacity 160ms ease, background-color 160ms ease;
+  transition:
+    transform 160ms ease,
+    opacity 160ms ease,
+    background-color 160ms ease;
 }
 
 .search-button,
@@ -443,6 +448,21 @@ textarea {
 .field-textarea {
   min-height: 120px;
   resize: vertical;
+}
+
+.settings-note,
+.settings-error {
+  margin: 0;
+  font-size: 0.86rem;
+  line-height: 1.5;
+}
+
+.settings-note {
+  color: var(--ink-600);
+}
+
+.settings-error {
+  color: var(--accent);
 }
 
 .empty-block,

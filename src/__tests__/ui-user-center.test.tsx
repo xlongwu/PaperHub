@@ -14,6 +14,7 @@ afterEach(() => {
 describe("UserCenterPage", () => {
   it("renders memory terms and saves edited preferences", async () => {
     const savedBodies: string[] = [];
+    const savedLlmBodies: string[] = [];
 
     vi.stubGlobal(
       "fetch",
@@ -40,10 +41,31 @@ describe("UserCenterPage", () => {
           });
         }
 
+        if (url.endsWith("/api/llm/settings") && method === "GET") {
+          return jsonResponse({
+            provider: "deepseek",
+            model: "deepseek-chat",
+            baseUrl: "https://api.deepseek.com",
+            hasApiKey: false,
+            apiKeySource: "missing",
+            supportedProviders: ["anthropic", "openai", "github-copilot", "openrouter", "deepseek"],
+          });
+        }
+
+        if (url.endsWith("/api/llm/settings") && method === "POST") {
+          savedLlmBodies.push(String(init?.body ?? ""));
+          return jsonResponse({
+            provider: "deepseek",
+            model: "deepseek-chat",
+            baseUrl: "https://api.deepseek.com",
+            hasApiKey: true,
+            apiKeySource: "stored",
+            supportedProviders: ["anthropic", "openai", "github-copilot", "openrouter", "deepseek"],
+          });
+        }
+
         if (url.includes("/api/user/memory")) {
-          return jsonResponse([
-            { category: "topic", term: "Agents", weight: 1.2, source: "digest" },
-          ]);
+          return jsonResponse([{ category: "topic", term: "Agents", weight: 1.2, source: "digest" }]);
         }
 
         if (url.includes("/api/user/history")) {
@@ -81,6 +103,16 @@ describe("UserCenterPage", () => {
       expect(savedBodies).toHaveLength(1);
     });
     expect(savedBodies[0]).toContain("RAG");
+
+    fireEvent.change(screen.getByLabelText("API key"), {
+      target: { value: "sk-ui-test" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save LLM settings" }));
+
+    await waitFor(() => {
+      expect(savedLlmBodies).toHaveLength(1);
+    });
+    expect(savedLlmBodies[0]).toContain("sk-ui-test");
   });
 });
 

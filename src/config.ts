@@ -20,6 +20,11 @@ export function getDataDir(): string {
   return dir;
 }
 
+/** Root containing bundled application resources such as dist-ui and digests. */
+export function getAppRootDir(): string {
+  return process.env["PAPERHUB_APP_ROOT"]?.trim() || process.cwd();
+}
+
 export function getDbPath(): string {
   const override = process.env["PAPERHUB_DB_PATH"]?.trim();
   if (override) {

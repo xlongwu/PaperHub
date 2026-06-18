@@ -29,6 +29,11 @@ function getProvider(): LlmProvider {
   return provider;
 }
 
+/** Drop the cached client after local LLM settings change. */
+export function resetLlmProvider(): void {
+  provider = null;
+}
+
 // ---------------------------------------------------------------------------
 // Concurrency limiter — prevents rate-limit (429) errors when many LLM calls
 // are fired in parallel. At most LLM_CONCURRENCY requests are in-flight at

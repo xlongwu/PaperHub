@@ -5,7 +5,7 @@
  *   import { createProvider, type LlmProvider } from "./providers/index";
  */
 
-export type { LlmProvider, ProviderFactory } from "./types";
+export type { LlmProvider, ProviderFactory, ProviderOptions } from "./types";
 export { OpenAICompatibleProvider } from "./openai-compatible";
 export { AnthropicProvider } from "./anthropic";
 export { OpenAIProvider } from "./openai";
@@ -13,23 +13,25 @@ export { GitHubCopilotProvider } from "./github-copilot";
 export { OpenRouterProvider } from "./openrouter";
 export { DeepSeekProvider } from "./deepseek";
 
-import type { LlmProvider, ProviderFactory } from "./types";
+import type { LlmProvider, ProviderFactory, ProviderOptions } from "./types";
 import { AnthropicProvider } from "./anthropic";
 import { OpenAIProvider } from "./openai";
 import { GitHubCopilotProvider } from "./github-copilot";
 import { OpenRouterProvider } from "./openrouter";
 import { DeepSeekProvider } from "./deepseek";
+import { getStoredLlmProviderSettings, saveStoredLlmProviderSettings } from "@/db/llm-settings";
+import { getUserPreference, setUserPreference } from "@/db/user";
 
 // ---------------------------------------------------------------------------
 // Single source of truth — add new providers here only.
 // ---------------------------------------------------------------------------
 
 const PROVIDERS = {
-  anthropic: () => new AnthropicProvider(),
-  openai: () => new OpenAIProvider(),
-  "github-copilot": () => new GitHubCopilotProvider(),
-  openrouter: () => new OpenRouterProvider(),
-  deepseek: () => new DeepSeekProvider(),
+  anthropic: (options?: ProviderOptions) => new AnthropicProvider(options),
+  openai: (options?: ProviderOptions) => new OpenAIProvider(options),
+  "github-copilot": (options?: ProviderOptions) => new GitHubCopilotProvider(options),
+  openrouter: (options?: ProviderOptions) => new OpenRouterProvider(options),
+  deepseek: (options?: ProviderOptions) => new DeepSeekProvider(options),
 } satisfies Record<string, ProviderFactory>;
 
 /** Supported provider name — derived from the PROVIDERS registry. */
@@ -37,6 +39,59 @@ export type ProviderName = keyof typeof PROVIDERS;
 
 /** All valid provider names — derived from the registry. */
 export const VALID_PROVIDER_NAMES = Object.keys(PROVIDERS) as ProviderName[];
+
+const PROVIDER_ENV: Record<
+  ProviderName,
+  { apiKey: string; model: string; baseURL?: string; defaultModel: string; defaultBaseURL?: string }
+> = {
+  anthropic: {
+    apiKey: "ANTHROPIC_API_KEY",
+    model: "ANTHROPIC_MODEL",
+    baseURL: "ANTHROPIC_BASE_URL",
+    defaultModel: "claude-sonnet-4-6",
+  },
+  openai: {
+    apiKey: "OPENAI_API_KEY",
+    model: "OPENAI_MODEL",
+    baseURL: "OPENAI_BASE_URL",
+    defaultModel: "gpt-4o",
+  },
+  "github-copilot": {
+    apiKey: "GITHUB_TOKEN",
+    model: "GITHUB_COPILOT_MODEL",
+    defaultModel: "gpt-4o",
+    defaultBaseURL: "https://models.github.ai/inference",
+  },
+  openrouter: {
+    apiKey: "OPENROUTER_API_KEY",
+    model: "OPENROUTER_MODEL",
+    defaultModel: "anthropic/claude-sonnet-4",
+    defaultBaseURL: "https://openrouter.ai/api/v1",
+  },
+  deepseek: {
+    apiKey: "DEEPSEEK_API_KEY",
+    model: "DEEPSEEK_MODEL",
+    defaultModel: "deepseek-chat",
+    defaultBaseURL: "https://api.deepseek.com",
+  },
+};
+
+export interface LlmSettingsState {
+  provider: ProviderName;
+  model: string;
+  baseUrl: string;
+  hasApiKey: boolean;
+  apiKeySource: "stored" | "environment" | "missing";
+  supportedProviders: ProviderName[];
+}
+
+export interface LlmSettingsUpdate {
+  provider: ProviderName;
+  apiKey?: string;
+  clearApiKey?: boolean;
+  model?: string;
+  baseUrl?: string;
+}
 
 /**
  * Create an LLM provider by name.
@@ -48,7 +103,8 @@ export const VALID_PROVIDER_NAMES = Object.keys(PROVIDERS) as ProviderName[];
  * endpoint URLs.
  */
 export function createProvider(name?: ProviderName): LlmProvider {
-  const providerName = name ?? (process.env["LLM_PROVIDER"] as ProviderName | undefined) ?? "anthropic";
+  const runtime = resolveRuntimeSettings(name);
+  const providerName = runtime.provider;
 
   const factory = (PROVIDERS as Record<string, ProviderFactory | undefined>)[providerName];
   if (!factory) {
@@ -60,5 +116,97 @@ export function createProvider(name?: ProviderName): LlmProvider {
   }
 
   console.log(`[providers] Using LLM provider: ${providerName}`);
-  return factory();
+  return factory({
+    apiKey: runtime.apiKey,
+    model: runtime.model,
+    baseURL: runtime.baseUrl,
+  });
+}
+
+export function getLlmSettingsState(provider?: ProviderName): LlmSettingsState {
+  const runtime = resolveRuntimeSettings(provider);
+  return {
+    provider: runtime.provider,
+    model: runtime.model,
+    baseUrl: runtime.baseUrl ?? "",
+    hasApiKey: Boolean(runtime.apiKey),
+    apiKeySource: runtime.apiKeySource,
+    supportedProviders: [...VALID_PROVIDER_NAMES],
+  };
+}
+
+export function saveLlmSettings(update: LlmSettingsUpdate): LlmSettingsState {
+  assertProviderName(update.provider);
+  setUserPreference("llm_provider", update.provider);
+
+  saveStoredLlmProviderSettings(update.provider, {
+    apiKey: update.clearApiKey ? null : update.apiKey,
+    model: update.model,
+    baseUrl: update.baseUrl,
+  });
+
+  return getLlmSettingsState(update.provider);
+}
+
+function resolveRuntimeSettings(requestedProvider?: ProviderName): {
+  provider: ProviderName;
+  apiKey?: string;
+  model: string;
+  baseUrl?: string;
+  apiKeySource: LlmSettingsState["apiKeySource"];
+} {
+  const provider = requestedProvider ?? resolveSelectedProvider();
+  assertProviderName(provider);
+
+  const env = PROVIDER_ENV[provider];
+  const stored = readStoredSettings(provider);
+  const storedApiKey = stored?.apiKey?.trim();
+  const environmentApiKey = process.env[env.apiKey]?.trim();
+  const apiKey = storedApiKey || environmentApiKey || undefined;
+  const apiKeySource = storedApiKey ? "stored" : environmentApiKey ? "environment" : "missing";
+
+  return {
+    provider,
+    apiKey,
+    model: stored?.model?.trim() || process.env[env.model]?.trim() || env.defaultModel,
+    baseUrl:
+      stored?.baseUrl?.trim() ||
+      (env.baseURL ? process.env[env.baseURL]?.trim() : undefined) ||
+      env.defaultBaseURL,
+    apiKeySource,
+  };
+}
+
+function resolveSelectedProvider(): ProviderName {
+  const stored = readSelectedProvider();
+  const environment = process.env["LLM_PROVIDER"]?.trim();
+  const candidate = stored || environment || "deepseek";
+  assertProviderName(candidate);
+  return candidate;
+}
+
+function assertProviderName(value: string): asserts value is ProviderName {
+  if (!VALID_PROVIDER_NAMES.includes(value as ProviderName)) {
+    throw new Error(
+      `Invalid LLM provider: "${value}". ` +
+        `Valid providers are: ${VALID_PROVIDER_NAMES.join(", ")}. ` +
+        `Set the LLM_PROVIDER env var to one of these values.`,
+    );
+  }
+}
+
+function readSelectedProvider(): string | null {
+  try {
+    return getUserPreference("llm_provider");
+  } catch {
+    return null;
+  }
+}
+
+function readStoredSettings(provider: ProviderName) {
+  try {
+    return getStoredLlmProviderSettings(provider);
+  } catch {
+    return null;
+  }
 }

@@ -41,8 +41,9 @@ function ensureBackendProcess() {
   }
 
   const nodeExe = process.execPath;
-  const rootDir = getRootDir();
-  const scriptPath = path.join(rootDir, "src/index.ts");
+  const appRootDir = getAppRootDir();
+  const workingDir = getWorkingDir();
+  const scriptPath = path.join(appRootDir, "src/index.ts");
 
   console.log("[desktop] Spawning backend:", nodeExe, scriptPath);
 
@@ -51,10 +52,11 @@ function ensureBackendProcess() {
   const backendEnv = { ...process.env };
   delete backendEnv.NODE_OPTIONS;
   backendEnv.ELECTRON_RUN_AS_NODE = "1";
+  backendEnv.PAPERHUB_APP_ROOT = appRootDir;
 
   try {
     backendProcess = spawn(nodeExe, ["--import", "tsx", scriptPath], {
-      cwd: rootDir,
+      cwd: workingDir,
       stdio: "inherit",
       env: backendEnv,
     });
@@ -130,8 +132,12 @@ function waitForHealthyServer(url, timeoutMs) {
   });
 }
 
-function getRootDir() {
+function getAppRootDir() {
   return app.isPackaged ? app.getAppPath() : path.join(__dirname, "..");
+}
+
+function getWorkingDir() {
+  return app.isPackaged ? path.dirname(app.getAppPath()) : path.join(__dirname, "..");
 }
 
 app.whenReady().then(async () => {

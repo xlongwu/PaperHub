@@ -63,9 +63,27 @@ afterAll(() => {
 
 describe("listDocumentsResponse", () => {
   it("applies date filtering before pagination and returns filtered totals", () => {
-    insertDocument(makeDoc({ id: "doc-in-range-1", url: "https://example.com/range-1", publishedAt: "2026-06-15T00:00:00Z" }));
-    insertDocument(makeDoc({ id: "doc-in-range-2", url: "https://example.com/range-2", publishedAt: "2026-06-12T00:00:00Z" }));
-    insertDocument(makeDoc({ id: "doc-out-range", url: "https://example.com/out-range", publishedAt: "2026-06-05T00:00:00Z" }));
+    insertDocument(
+      makeDoc({
+        id: "doc-in-range-1",
+        url: "https://example.com/range-1",
+        publishedAt: "2026-06-15T00:00:00Z",
+      }),
+    );
+    insertDocument(
+      makeDoc({
+        id: "doc-in-range-2",
+        url: "https://example.com/range-2",
+        publishedAt: "2026-06-12T00:00:00Z",
+      }),
+    );
+    insertDocument(
+      makeDoc({
+        id: "doc-out-range",
+        url: "https://example.com/out-range",
+        publishedAt: "2026-06-05T00:00:00Z",
+      }),
+    );
 
     const payload = listDocumentsResponse({
       from: "2026-06-10T00:00:00Z",

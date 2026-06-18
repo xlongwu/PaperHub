@@ -13,4 +13,10 @@ export interface LlmProvider {
 }
 
 /** Factory function that creates an LlmProvider instance. */
-export type ProviderFactory = () => LlmProvider;
+export interface ProviderOptions {
+  apiKey?: string;
+  model?: string;
+  baseURL?: string;
+}
+
+export type ProviderFactory = (options?: ProviderOptions) => LlmProvider;
