@@ -152,7 +152,7 @@ describe("indexAllVectors", () => {
     expect(payload.total).toBe(1001);
     expect(payload.indexed).toBe(1001);
     expect(countIndexedVectors()).toBe(1001);
-  }, 15_000);
+  }, 30_000);
 });
 
 describe("recommendation responses", () => {

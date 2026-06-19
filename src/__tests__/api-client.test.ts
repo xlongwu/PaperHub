@@ -67,17 +67,19 @@ describe("ui api client", () => {
   it("throws when the API returns an error envelope", async () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn(async () =>
-        new Response(
-          JSON.stringify({
-            success: false,
-            error: "Document not found",
-          }),
-          {
-            status: 404,
-            headers: { "Content-Type": "application/json" },
-          },
-        )),
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              success: false,
+              error: "Document not found",
+            }),
+            {
+              status: 404,
+              headers: { "Content-Type": "application/json" },
+            },
+          ),
+      ),
     );
 
     await expect(getDocument("missing")).rejects.toThrow("Document not found");

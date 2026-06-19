@@ -113,7 +113,7 @@ export function saveRecommendationSnapshot(
 ): void {
   const db = getDb();
   const removeExisting = db.prepare(
-    "DELETE FROM recommendation_snapshots WHERE kind = ? AND snapshot_date = ?"
+    "DELETE FROM recommendation_snapshots WHERE kind = ? AND snapshot_date = ?",
   );
   const insert = db.prepare(`
     INSERT INTO recommendation_snapshots (
@@ -130,14 +130,7 @@ export function saveRecommendationSnapshot(
     removeExisting.run(kind, snapshotDate);
 
     entries.forEach((entry, index) => {
-      insert.run(
-        kind,
-        snapshotDate,
-        entry.document.id,
-        entry.score,
-        index + 1,
-        JSON.stringify(entry.reason),
-      );
+      insert.run(kind, snapshotDate, entry.document.id, entry.score, index + 1, JSON.stringify(entry.reason));
     });
   });
 
@@ -149,9 +142,10 @@ export function pruneRecommendationSnapshots(
   earliestSnapshotDateToKeep: string,
 ): void {
   const db = getDb();
-  db.prepare(
-    "DELETE FROM recommendation_snapshots WHERE kind = ? AND snapshot_date < ?"
-  ).run(kind, earliestSnapshotDateToKeep);
+  db.prepare("DELETE FROM recommendation_snapshots WHERE kind = ? AND snapshot_date < ?").run(
+    kind,
+    earliestSnapshotDateToKeep,
+  );
 }
 
 export function getRecommendationSnapshot(options: {
@@ -197,13 +191,13 @@ export function getRecommendationSnapshot(options: {
   return results;
 }
 
-export function getLatestRecommendationSnapshotDate(
-  kind: RecommendationKind,
-): string | null {
+export function getLatestRecommendationSnapshotDate(kind: RecommendationKind): string | null {
   const db = getDb();
-  const row = db.prepare(
-    "SELECT snapshot_date FROM recommendation_snapshots WHERE kind = ? ORDER BY snapshot_date DESC LIMIT 1"
-  ).get(kind) as { snapshot_date: string } | undefined;
+  const row = db
+    .prepare(
+      "SELECT snapshot_date FROM recommendation_snapshots WHERE kind = ? ORDER BY snapshot_date DESC LIMIT 1",
+    )
+    .get(kind) as { snapshot_date: string } | undefined;
 
   return row?.snapshot_date ?? null;
 }
@@ -230,10 +224,7 @@ function parseJsonMeta(meta: string | null): Record<string, unknown> | undefined
   }
 }
 
-function parseRecommendationReason(
-  reason: string | null,
-  kind: RecommendationKind,
-): RecommendationReason {
+function parseRecommendationReason(reason: string | null, kind: RecommendationKind): RecommendationReason {
   if (!reason) {
     return { kind, factors: [] };
   }

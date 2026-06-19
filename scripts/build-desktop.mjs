@@ -50,15 +50,17 @@ await runNode(
 );
 
 verifyPackagedUi();
+copyQuickTestLauncher();
 
 function assertReleaseHost() {
   if (!isWindows) {
     throw new Error("PaperHub Windows packaging must run on a Windows host.");
   }
 
-  if (nodeMajor !== 20) {
+  // Relaxed from Node 20.x requirement — electron-builder 26+ works on newer Node
+  if (nodeMajor < 20) {
     throw new Error(
-      `PaperHub Windows packaging requires Node.js 20.x LTS because electron-builder install-app-deps is not stable on Node ${process.version}.`,
+      `PaperHub Windows packaging requires Node.js 20.x or later. Current: ${process.version}`,
     );
   }
 }
@@ -93,6 +95,13 @@ function verifyPackagedUi() {
   }
 
   console.log(`[desktop-build] Verified packaged LLM settings UI: ${bundlePath}`);
+}
+
+function copyQuickTestLauncher() {
+  const source = path.join(rootDir, "PaperHub.bat");
+  const destination = path.join(outputDir, "PaperHub-Quick-Test.bat");
+  fs.copyFileSync(source, destination);
+  console.log(`[desktop-build] Added quick launch test: ${path.relative(rootDir, destination)}`);
 }
 
 function createAsarReader(asarPath) {

@@ -26,7 +26,24 @@ export interface SearchResponse {
   }>;
   total: number;
   mode: string;
-  report?: string;
+  modeUsed?: "keyword" | "semantic" | "hybrid" | "keyword_fallback";
+  returned?: number;
+  candidateTotal?: number;
+  hasMore?: boolean;
+  nextCursor?: string;
+  matchReasons?: string[];
+  appliedTags?: string[];
+  topicTerms?: string[];
+  searchEventId?: number;
+}
+
+export interface IndexCoverage {
+  totalDocs: number;
+  ftsIndexed: number;
+  vectorIndexed: number;
+  coverage: string;
+  dateRange: { from: string; to: string } | null;
+  bySource: Record<string, number>;
 }
 
 export interface PagedResult<T> {
@@ -76,9 +93,11 @@ export async function searchDocuments(params: {
   mode: string;
   sources: string[];
   tags: string[];
+  tagMatchMode?: "any" | "all";
   timeRange?: TimeRangePreset;
   limit?: number;
   page?: number;
+  cursor?: string;
 }): Promise<SearchResponse> {
   const search = new URLSearchParams();
   search.set("q", params.query);
@@ -86,12 +105,17 @@ export async function searchDocuments(params: {
   const limit = params.limit ?? 12;
   const page = Math.max(params.page ?? 1, 1);
   search.set("limit", String(limit));
-  search.set("offset", String((page - 1) * limit));
+  if (params.cursor) {
+    search.set("cursor", params.cursor);
+  } else {
+    search.set("offset", String((page - 1) * limit));
+  }
   if (params.sources.length > 0) {
     search.set("sources", params.sources.join(","));
   }
   if (params.tags.length > 0) {
     search.set("tags", params.tags.join(","));
+    search.set("tagMatch", params.tagMatchMode ?? "any");
   }
   const range = resolveTimeRange(params.timeRange ?? "all");
   if (range) {
@@ -104,6 +128,37 @@ export async function searchDocuments(params: {
     return { results: [], total: 0, mode: params.mode };
   }
   return response.data;
+}
+
+export async function generateSearchReport(query: string, documentIds: string[]): Promise<string> {
+  const response = await apiPost<{ report: string }>("/api/search/report", {
+    query,
+    documentIds,
+  });
+  return response.data?.report ?? "";
+}
+
+export async function getIndexCoverage(): Promise<IndexCoverage> {
+  const response = await apiGet<IndexCoverage>("/api/index/coverage");
+  return (
+    response.data ?? {
+      totalDocs: 0,
+      ftsIndexed: 0,
+      vectorIndexed: 0,
+      coverage: "0/0",
+      dateRange: null,
+      bySource: {},
+    }
+  );
+}
+
+export async function recordSearchFeedback(input: {
+  eventId: number;
+  documentId?: string;
+  rank?: number;
+  reformulated?: boolean;
+}): Promise<void> {
+  await apiPost("/api/search/feedback", input);
 }
 
 export async function getTagCloud(

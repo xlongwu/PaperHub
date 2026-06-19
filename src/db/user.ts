@@ -18,12 +18,17 @@ export function getUserPreference(key: string): string | null {
 
 export function setUserPreference(key: string, value: string): void {
   const db = getDb();
-  db.prepare("INSERT INTO user_preferences (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(key, value);
+  db.prepare(
+    "INSERT INTO user_preferences (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+  ).run(key, value);
 }
 
 export function getUserPreferences(): Record<string, string> {
   const db = getDb();
-  const rows = db.prepare("SELECT key, value FROM user_preferences").all() as { key: string; value: string }[];
+  const rows = db.prepare("SELECT key, value FROM user_preferences").all() as {
+    key: string;
+    value: string;
+  }[];
   const result: Record<string, string> = {};
   for (const row of rows) {
     result[row.key] = row.value;
@@ -56,7 +61,10 @@ export function recordHistory(documentId: string): void {
   db.prepare("INSERT INTO browsing_history (document_id) VALUES (?)").run(documentId);
 }
 
-export function getHistory(options?: { limit?: number; offset?: number }): Array<{ id: number; documentId: string; viewedAt: string }> {
+export function getHistory(options?: {
+  limit?: number;
+  offset?: number;
+}): Array<{ id: number; documentId: string; viewedAt: string }> {
   const db = getDb();
   let sql = "SELECT id, document_id, viewed_at FROM browsing_history ORDER BY viewed_at DESC";
   const params: number[] = [];
@@ -76,7 +84,9 @@ export function getHistory(options?: { limit?: number; offset?: number }): Array
 
 export function countHistory(): number {
   const db = getDb();
-  const row = db.prepare("SELECT COUNT(*) as count FROM browsing_history").get() as { count: number } | undefined;
+  const row = db.prepare("SELECT COUNT(*) as count FROM browsing_history").get() as
+    | { count: number }
+    | undefined;
   return row?.count ?? 0;
 }
 
@@ -96,11 +106,16 @@ export function removeFavorite(documentId: string): void {
 
 export function isFavorite(documentId: string): boolean {
   const db = getDb();
-  const row = db.prepare("SELECT 1 FROM favorites WHERE document_id = ? LIMIT 1").get(documentId) as { 1: number } | undefined;
+  const row = db.prepare("SELECT 1 FROM favorites WHERE document_id = ? LIMIT 1").get(documentId) as
+    | { 1: number }
+    | undefined;
   return row !== undefined;
 }
 
-export function getFavorites(options?: { limit?: number; offset?: number }): Array<{ id: number; documentId: string; createdAt: string }> {
+export function getFavorites(options?: {
+  limit?: number;
+  offset?: number;
+}): Array<{ id: number; documentId: string; createdAt: string }> {
   const db = getDb();
   let sql = "SELECT id, document_id, created_at FROM favorites ORDER BY created_at DESC";
   const params: number[] = [];

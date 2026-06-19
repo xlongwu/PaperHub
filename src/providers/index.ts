@@ -180,7 +180,7 @@ function resolveRuntimeSettings(requestedProvider?: ProviderName): {
 function resolveSelectedProvider(): ProviderName {
   const stored = readSelectedProvider();
   const environment = process.env["LLM_PROVIDER"]?.trim();
-  const candidate = stored || environment || "deepseek";
+  const candidate = environment || stored || "deepseek";
   assertProviderName(candidate);
   return candidate;
 }

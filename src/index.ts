@@ -10,6 +10,7 @@ import { startScheduler, stopScheduler, waitForRunningTasks } from "@/scheduler"
 import { getLlmSettingsState } from "@/providers/index";
 import { getLogsDir } from "@/config";
 import { initDefaultPreferences } from "@/db/user";
+import { startIndexer, stopIndexer } from "@/search-indexer";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -54,6 +55,7 @@ function setupShutdownHandlers(server: ReturnType<typeof startServer>): void {
     console.log(`[app] Received ${signal}, shutting down gracefully...`);
 
     stopScheduler();
+    stopIndexer();
     await waitForRunningTasks();
     server.close(() => {
       console.log("[app] Server closed.");
@@ -127,15 +129,26 @@ async function main(): Promise<void> {
   setupLogging();
 
   // 1. Init database
-  initDatabase();
-  console.log("[app] Database initialized.");
+  try {
+    initDatabase();
+    console.log("[app] Database initialized.");
+  } catch (e) {
+    console.error("[app] Database initialization failed:", e);
+    throw e;
+  }
 
   // 1.5. Init default user preferences
-  initDefaultPreferences();
-  console.log("[app] User preferences initialized.");
+  try {
+    initDefaultPreferences();
+    console.log("[app] User preferences initialized.");
+  } catch (e) {
+    console.error("[app] User preferences initialization failed:", e);
+    // Non-fatal — continue without preferences
+  }
 
   // 1.6. Validate LLM provider is usable (fail fast if api key missing)
   validateLlmProvider();
+  startIndexer();
 
   // 2. Start API server
   const server = startServer();

@@ -36,6 +36,12 @@
     "test:watch": "node node_modules/vitest/vitest.mjs",
     "test:coverage": "node node_modules/vitest/vitest.mjs run --coverage",
     "release:verify": "node node_modules/typescript/bin/tsc --noEmit && node node_modules/vitest/vitest.mjs run && node --import tsx scripts/run-phase6-e2e.mjs",
+    "search:eval": "node --import tsx scripts/evaluate-search.ts --engine v2 --corpus full",
+    "search:eval:baseline": "node --import tsx scripts/evaluate-search.ts --engine v1 --corpus full --save",
+    "search:eval:save": "node --import tsx scripts/evaluate-search.ts --engine v2 --corpus full --save",
+    "search:eval:compare": "node --import tsx scripts/evaluate-search.ts --engine v2 --corpus full --compare --save",
+    "arxiv:backfill": "node --import tsx scripts/backfill-arxiv.ts",
+    "arxiv:backfill:recent": "node --import tsx scripts/backfill-arxiv.ts --days 30",
     "prepare": "node node_modules/husky/bin.js"
   },
   "dependencies": {
@@ -78,7 +84,7 @@
     "prettier": "^3",
     "typescript": "^5.7.0",
     "typescript-eslint": "^8",
-    "vite": "^5.4.19",
+    "vite": "^7.3.1",
     "vitest": "^4.0.18"
   },
   "build": {
@@ -115,5 +121,12 @@
     "portable": {
       "artifactName": "PaperHub-${version}-portable-${arch}.${ext}"
     }
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "better-sqlite3",
+      "electron",
+      "esbuild"
+    ]
   }
 }

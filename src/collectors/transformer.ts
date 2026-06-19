@@ -24,6 +24,7 @@ export function rawToDocument(raw: RawDocument): Document {
     publishedAt: raw.publishedAt,
     authors: raw.authors,
     abstract: raw.abstract,
+    fullText: raw.content,
     fullTextPath: undefined,
     language: raw.language,
     domainTags: [], // filled in Phase 2

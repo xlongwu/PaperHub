@@ -20,19 +20,31 @@ beforeEach(() => {
   setDbPath(TEST_DB_PATH);
   initDatabase();
 
-  writeDigest("2026-06-28", "ai-agents.md", `
+  writeDigest(
+    "2026-06-28",
+    "ai-agents.md",
+    `
     Agents and RAG are becoming core patterns.
     GPT-4 powers many agent workflows.
     arXiv and OpenAI GPT Blog are both highlighted here.
-  `);
-  writeDigest("2026-06-27", "ai-cli.md", `
+  `,
+  );
+  writeDigest(
+    "2026-06-27",
+    "ai-cli.md",
+    `
     CLI agents are popular.
     Claude 3 and GPT-4 appear in tooling discussions.
     Anthropic and arXiv are referenced repeatedly.
-  `);
-  writeDigest("2026-06-23", "ai-weekly.md", `
+  `,
+  );
+  writeDigest(
+    "2026-06-23",
+    "ai-weekly.md",
+    `
     Weekly recap: Agents, RAG, GPT-4, Claude 3, Anthropic, arXiv.
-  `);
+  `,
+  );
 });
 
 afterEach(() => {
@@ -75,10 +87,14 @@ describe("extractMemoryFromDigests", () => {
   });
 
   it("adds fallback topic terms when rule extraction is too sparse", () => {
-    writeSparseDigest("2026-06-29", "ai-sparse.md", `
+    writeSparseDigest(
+      "2026-06-29",
+      "ai-sparse.md",
+      `
       Benchmarking orchestration pipelines needs benchmarking discipline.
       Orchestration quality depends on benchmarking and regression tracking.
-    `);
+    `,
+    );
 
     const terms = extractMemoryFromDigests({
       digestDir: SPARSE_DIGEST_DIR,

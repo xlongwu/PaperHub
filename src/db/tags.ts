@@ -79,8 +79,9 @@ export function getDocumentsByTag(
 
 export function countDocumentsByTag(tag: string): number {
   const db = getDb();
-  const row = db.prepare(
-    `SELECT COUNT(*) as count
+  const row = db
+    .prepare(
+      `SELECT COUNT(*) as count
      FROM documents
      WHERE
        EXISTS (SELECT 1 FROM json_each(domain_tags) WHERE value = ?)
@@ -88,8 +89,9 @@ export function countDocumentsByTag(tag: string): number {
        OR source = ?
        OR source_tag = ?
        OR type_tag = ?
-       OR CAST(year_tag AS TEXT) = ?`
-  ).get(tag, tag, tag, tag, tag, tag) as { count: number } | undefined;
+       OR CAST(year_tag AS TEXT) = ?`,
+    )
+    .get(tag, tag, tag, tag, tag, tag) as { count: number } | undefined;
   return row?.count ?? 0;
 }
 
@@ -104,9 +106,9 @@ export function refreshTagStats(): void {
     db.prepare("DELETE FROM tag_stats").run();
 
     // Domain tags
-    const domainRows = db.prepare(
-      "SELECT domain_tags FROM documents WHERE domain_tags IS NOT NULL AND domain_tags != '[]'"
-    ).all() as { domain_tags: string }[];
+    const domainRows = db
+      .prepare("SELECT domain_tags FROM documents WHERE domain_tags IS NOT NULL AND domain_tags != '[]'")
+      .all() as { domain_tags: string }[];
 
     const domainCounts = new Map<string, number>();
     for (const row of domainRows) {
@@ -126,9 +128,9 @@ export function refreshTagStats(): void {
     }
 
     // Model tags
-    const modelRows = db.prepare(
-      "SELECT model_tags FROM documents WHERE model_tags IS NOT NULL AND model_tags != '[]'"
-    ).all() as { model_tags: string }[];
+    const modelRows = db
+      .prepare("SELECT model_tags FROM documents WHERE model_tags IS NOT NULL AND model_tags != '[]'")
+      .all() as { model_tags: string }[];
 
     const modelCounts = new Map<string, number>();
     for (const row of modelRows) {
@@ -146,25 +148,25 @@ export function refreshTagStats(): void {
     }
 
     // Source tags
-    const sourceRows = db.prepare(
-      "SELECT source_tag, COUNT(*) as count FROM documents GROUP BY source_tag"
-    ).all() as { source_tag: string; count: number }[];
+    const sourceRows = db
+      .prepare("SELECT source_tag, COUNT(*) as count FROM documents GROUP BY source_tag")
+      .all() as { source_tag: string; count: number }[];
     for (const row of sourceRows) {
       insert.run(row.source_tag, "source", row.count);
     }
 
     // Type tags
-    const typeRows = db.prepare(
-      "SELECT type_tag, COUNT(*) as count FROM documents GROUP BY type_tag"
-    ).all() as { type_tag: string; count: number }[];
+    const typeRows = db
+      .prepare("SELECT type_tag, COUNT(*) as count FROM documents GROUP BY type_tag")
+      .all() as { type_tag: string; count: number }[];
     for (const row of typeRows) {
       insert.run(row.type_tag, "type", row.count);
     }
 
     // Year tags
-    const yearRows = db.prepare(
-      "SELECT year_tag, COUNT(*) as count FROM documents GROUP BY year_tag"
-    ).all() as { year_tag: number; count: number }[];
+    const yearRows = db
+      .prepare("SELECT year_tag, COUNT(*) as count FROM documents GROUP BY year_tag")
+      .all() as { year_tag: number; count: number }[];
     for (const row of yearRows) {
       insert.run(String(row.year_tag), "year", row.count);
     }
@@ -182,7 +184,7 @@ export function refreshTagStats(): void {
 export function updateTagStatsForDocument(doc: Document): void {
   const db = getDb();
   const insert = db.prepare(
-    "INSERT INTO tag_stats(tag, category, count) VALUES (?, ?, 1) ON CONFLICT(tag, category) DO UPDATE SET count = count + 1, last_updated = CURRENT_TIMESTAMP"
+    "INSERT INTO tag_stats(tag, category, count) VALUES (?, ?, 1) ON CONFLICT(tag, category) DO UPDATE SET count = count + 1, last_updated = CURRENT_TIMESTAMP",
   );
 
   for (const tag of doc.domainTags) {

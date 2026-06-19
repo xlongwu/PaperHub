@@ -4,7 +4,7 @@
 
 import { getDb } from "./index";
 import { getDocumentById } from "./documents";
-import { generateEmbedding, EMBEDDING_DIMENSION } from "@/embedding";
+import { generateEmbedding, EMBEDDING_DIMENSION, getEmbeddingRuntime } from "@/embedding";
 import { analyzeSearchQuery, scoreDocumentAgainstQuery } from "@/search-query";
 import type { Document } from "@/types";
 
@@ -18,6 +18,7 @@ export interface Fts5SearchOptions {
   offset?: number;
   sources?: string[];
   tags?: string[];
+  tagMatchMode?: "any" | "all";
   dateRange?: { start: string; end: string };
 }
 
@@ -28,6 +29,7 @@ export interface VectorSearchOptions {
   threshold?: number;
   sources?: string[];
   tags?: string[];
+  tagMatchMode?: "any" | "all";
   dateRange?: { start: string; end: string };
 }
 
@@ -36,10 +38,12 @@ export interface SearchResult {
   score: number; // 0–1, higher is better
   matchType: "fts" | "vector" | "hybrid";
   snippet?: string;
+  semanticScore?: number;
+  matchedField?: string;
 }
 
 const SEARCH_RESULT_LIMIT_CAP = 1000;
-const VECTOR_K_CAP = 200; // Prevent full-scan KNN when index grows large
+const VECTOR_K_CAP = 800;
 
 // ---------------------------------------------------------------------------
 // FTS5 keyword search
@@ -54,37 +58,16 @@ export function searchFts5(options: Fts5SearchOptions): SearchResult[] {
 
   // Base SQL
   let sql = `
-    SELECT d.*, bm25(document_fts, 8.0, 2.0, 5.0) AS fts_rank
-    FROM document_fts fts
+    SELECT d.*,
+      bm25(document_fts_v2, 10.0, 4.0, 2.5, 2.5, 1.5, 5.0, 0.5, 1.0) AS fts_rank,
+      snippet(document_fts_v2, -1, '<mark>', '</mark>', '…', 24) AS fts_snippet
+    FROM document_fts_v2 fts
     JOIN documents d ON d.rowid = fts.rowid
-    WHERE document_fts MATCH ?
+    WHERE document_fts_v2 MATCH ?
   `;
-  const params: (string | number)[] = [analysis.ftsQuery];
+  const params: (string | number)[] = [analysis.strictFtsQuery];
 
-  // Source filter
-  if (options.sources && options.sources.length > 0) {
-    const placeholders = options.sources.map(() => "?").join(",");
-    sql += ` AND d.source IN (${placeholders})`;
-    params.push(...options.sources);
-  }
-
-  // Tag filter (domain_tags or model_tags contains the tag)
-  if (options.tags && options.tags.length > 0) {
-    for (const tag of options.tags) {
-      sql += `
-        AND (
-          EXISTS (SELECT 1 FROM json_each(d.domain_tags) WHERE value = ?)
-          OR EXISTS (SELECT 1 FROM json_each(d.model_tags) WHERE value = ?)
-        )
-      `;
-      params.push(tag, tag);
-    }
-  }
-
-  if (options.dateRange) {
-    sql += " AND d.published_at >= ? AND d.published_at <= ?";
-    params.push(options.dateRange.start, options.dateRange.end);
-  }
+  ({ sql } = appendSqlFilters(sql, params, options));
 
   const candidateLimit = Math.min(SEARCH_RESULT_LIMIT_CAP, Math.max(100, (offset + limit) * 5));
   sql += ` ORDER BY fts_rank LIMIT ?`;
@@ -102,11 +85,12 @@ export function searchFts5(options: Fts5SearchOptions): SearchResult[] {
         document,
         score: Math.min(1, relevance.score * 0.9 + rankScore * 0.1),
         matchType: "fts" as const,
-        snippet: buildSnippet(document, options.query),
+        snippet: String(row.fts_snippet ?? "") || buildSnippet(document, options.query),
         matchedConcepts: relevance.matchedConcepts,
       };
     })
-    .filter((result) => result.matchedConcepts >= analysis.minimumLexicalMatches)
+    // No hard concept-hit filtering — concept coverage is a ranking signal, never a gate.
+    // Documents with low concept coverage still rank low via the score formula above.
     .sort((a, b) => b.score - a.score);
 
   return ranked
@@ -151,6 +135,22 @@ function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+function buildCjkSnippet(document: Document, term?: string): string | undefined {
+  const fields = [document.summaryZh, document.title, document.abstract, document.summaryEn].filter(
+    (value): value is string => Boolean(value),
+  );
+  if (!term) return fields[0]?.slice(0, 160);
+
+  for (const field of fields) {
+    const index = field.indexOf(term);
+    if (index < 0) continue;
+    const start = Math.max(0, index - 40);
+    const end = Math.min(field.length, index + term.length + 80);
+    return field.slice(start, end).replace(new RegExp(escapeRegExp(term), "g"), `<mark>${term}</mark>`);
+  }
+  return fields[0]?.slice(0, 160);
+}
+
 // ---------------------------------------------------------------------------
 // Vector (semantic) search via sqlite-vec
 // ---------------------------------------------------------------------------
@@ -168,7 +168,7 @@ export async function searchVector(options: VectorSearchOptions): Promise<Search
   // sqlite-vec KNN search — expects compact JSON array string
   const sql = `
     SELECT document_id, distance
-    FROM document_vectors
+    FROM document_vectors_v2
     WHERE embedding MATCH ?
       AND k = ?
     ORDER BY distance
@@ -203,6 +203,7 @@ export async function searchVector(options: VectorSearchOptions): Promise<Search
       document: doc,
       score: similarity,
       matchType: "vector",
+      semanticScore: similarity,
     });
   }
 
@@ -212,6 +213,207 @@ export async function searchVector(options: VectorSearchOptions): Promise<Search
   }
 
   return results.slice(offset, offset + limit);
+}
+
+// ---------------------------------------------------------------------------
+// Multi-path recall — Stage 3
+// ---------------------------------------------------------------------------
+
+/** Options common to all recall paths. */
+export interface RecallOptions {
+  limit: number;
+  sources?: string[];
+  tags?: string[];
+  tagMatchMode?: "any" | "all";
+  dateRange?: { start: string; end: string };
+}
+
+// ── Path 1: Exact title recall ────────────────────────────────────────────
+
+/**
+ * Exact title recall: AND of quoted concept phrases, BM25 ranked.
+ * Targets high-precision exact matches.  Max 50 candidates.
+ */
+export function searchFts5Exact(exactTitleQuery: string, options: RecallOptions): SearchResult[] {
+  return runFtsRecall(`title : (${exactTitleQuery})`, options, 50);
+}
+
+// ── Path 2: FTS strict recall ─────────────────────────────────────────────
+
+/**
+ * Strict FTS recall: AND of concept alternatives, BM25 ranked.
+ * Balanced precision/recall. Max 100 candidates.
+ */
+export function searchFts5Strict(strictFtsQuery: string, options: RecallOptions): SearchResult[] {
+  return runFtsRecall(strictFtsQuery, options, 100);
+}
+
+// ── Path 3: FTS broad recall ──────────────────────────────────────────────
+
+/**
+ * Broad FTS recall: OR of all aliases, high recall low precision.
+ * Max 300 candidates.  No concept filtering — ranking handles quality.
+ */
+export function searchFts5Broad(broadFtsQuery: string, options: RecallOptions): SearchResult[] {
+  return runFtsRecall(broadFtsQuery, options, 300);
+}
+
+// ── Path 4: CJK n-gram recall ─────────────────────────────────────────────
+
+/**
+ * Chinese/CJK recall via n-grams against title, summary_zh, and abstract.
+ * Max 150 candidates.
+ */
+export function searchCjkNgram(cjkNgrams: string[], options: RecallOptions): SearchResult[] {
+  if (!cjkNgrams || cjkNgrams.length === 0) return [];
+  const db = getDb();
+  const grams = [...new Set(cjkNgrams.filter((gram) => gram.length >= 2))].slice(0, 30);
+  if (grams.length === 0) return [];
+
+  const params: Array<string | number> = [];
+  const gramClauses = grams.map(
+    () => `
+    (
+      d.title LIKE ? OR d.abstract LIKE ? OR d.summary_zh LIKE ?
+      OR d.summary_en LIKE ? OR d.domain_tags LIKE ? OR d.model_tags LIKE ?
+    )
+  `,
+  );
+  for (const gram of grams) {
+    const pattern = `%${gram}%`;
+    params.push(pattern, pattern, pattern, pattern, pattern, pattern);
+  }
+
+  let sql = `
+    SELECT d.*
+    FROM documents d
+    WHERE (${gramClauses.join(" OR ")})
+  `;
+  ({ sql } = appendSqlFilters(sql, params, options));
+  sql += " ORDER BY d.published_at DESC, d.id LIMIT ?";
+  params.push(Math.min(options.limit, 150));
+
+  const rows = db.prepare(sql).all(...params) as Record<string, unknown>[];
+  return rows
+    .map((row) => {
+      const document = rowToDocument(row);
+      const searchable = [
+        document.title,
+        document.abstract,
+        document.summaryZh ?? "",
+        document.summaryEn ?? "",
+        ...document.domainTags,
+        ...document.modelTags,
+      ].join(" ");
+      const matched = grams.filter((gram) => searchable.includes(gram));
+      return {
+        document,
+        score: matched.length / grams.length,
+        matchType: "fts" as const,
+        snippet: buildCjkSnippet(document, matched[0]),
+      };
+    })
+    .sort((a, b) => b.score - a.score || a.document.id.localeCompare(b.document.id));
+}
+
+function runFtsRecall(
+  query: string,
+  options: RecallOptions,
+  cap: number,
+  weights = [10.0, 4.0, 2.5, 2.5, 1.5, 5.0, 0.5, 1.0],
+): SearchResult[] {
+  if (!query) return [];
+  const db = getDb();
+  const limit = Math.min(options.limit, cap);
+  const params: Array<string | number> = [query];
+  let sql = `
+    SELECT d.*,
+      bm25(document_fts_v2, ${weights.join(", ")}) AS fts_rank,
+      snippet(document_fts_v2, -1, '<mark>', '</mark>', '…', 24) AS fts_snippet
+    FROM document_fts_v2 fts
+    JOIN documents d ON d.rowid = fts.rowid
+    WHERE document_fts_v2 MATCH ?
+  `;
+  ({ sql } = appendSqlFilters(sql, params, options));
+  sql += " ORDER BY fts_rank, d.id LIMIT ?";
+  params.push(limit);
+
+  const rows = db.prepare(sql).all(...params) as Record<string, unknown>[];
+  return rows.map((row, index) => ({
+    document: rowToDocument(row),
+    score: normalizeRank(index),
+    matchType: "fts" as const,
+    snippet: String(row.fts_snippet ?? "") || undefined,
+  }));
+}
+
+// ── Path 5: Vector semantic recall (adaptive oversampling) ─────────────────
+
+/**
+ * Vector recall with adaptive oversampling.
+ * Starts at 200, increases to 400 → 800 if filtered results don't reach
+ * 3 × the requested limit. This prevents the "filter-after-KNN" problem
+ * where tag/source/date filters throw away most of the top-K results.
+ */
+export async function searchVectorAdaptive(
+  query: string,
+  options: RecallOptions & { threshold?: number },
+): Promise<SearchResult[]> {
+  const db = getDb();
+  const minCandidates = options.limit * 3;
+  const threshold = options.threshold ?? 0.58;
+
+  const totalIndexed = countIndexedVectors();
+  if (totalIndexed === 0) return [];
+
+  const embedding = await generateEmbedding(query);
+  const serializedEmbedding = serializeEmbedding(embedding);
+
+  const kSteps = [200, 400, 800];
+  let bestResults: SearchResult[] = [];
+  for (const k of kSteps) {
+    const kValue = Math.min(totalIndexed, k);
+
+    const rows = db
+      .prepare(
+        `
+      SELECT document_id, distance
+      FROM document_vectors_v2
+      WHERE embedding MATCH ?
+        AND k = ?
+      ORDER BY distance
+    `,
+      )
+      .all(serializedEmbedding, kValue) as {
+      document_id: string;
+      distance: number;
+    }[];
+
+    const results: SearchResult[] = [];
+    for (const row of rows) {
+      const doc = getDocumentById(row.document_id);
+      if (!doc) continue;
+      if (!matchesSearchFilters(doc, options)) continue;
+
+      const similarity = 1 - row.distance / 2;
+      if (similarity < threshold) continue;
+
+      results.push({
+        document: doc,
+        score: similarity,
+        semanticScore: similarity,
+        matchType: "vector",
+      });
+    }
+    bestResults = results;
+
+    // Stop if we have enough candidates that pass filters
+    if (results.length >= minCandidates || kValue >= totalIndexed) {
+      return results.slice(0, options.limit);
+    }
+  }
+
+  return bestResults.slice(0, options.limit);
 }
 
 // ---------------------------------------------------------------------------
@@ -236,6 +438,7 @@ function rowToDocument(row: Record<string, unknown>): Document {
     publishedAt: String(row.published_at),
     authors: safeJsonParse<string[]>(row.authors, []),
     abstract: String(row.abstract ?? ""),
+    fullText: row.full_text ? String(row.full_text) : undefined,
     fullTextPath: row.full_text_path ? String(row.full_text_path) : undefined,
     language: String(row.language) as "zh" | "en",
     domainTags: safeJsonParse<string[]>(row.domain_tags, []),
@@ -257,24 +460,163 @@ function rowToDocument(row: Record<string, unknown>): Document {
 
 export function storeVector(documentId: string, embedding: number[]): void {
   const db = getDb();
-  db.prepare("INSERT OR REPLACE INTO document_vectors(document_id, embedding) VALUES (?, ?)").run(
+  db.prepare("INSERT OR REPLACE INTO document_vectors_v2(document_id, embedding) VALUES (?, ?)").run(
     documentId,
     serializeEmbedding(embedding),
   );
 }
 
 export async function indexDocumentVector(doc: Document): Promise<void> {
-  const text = `${doc.title}\n${doc.abstract}\n${doc.domainTags.join(" ")}\n${doc.modelTags.join(" ")}`;
+  const db = getDb();
+  const runtime = getEmbeddingRuntime();
+  db.prepare(
+    `
+    INSERT INTO document_index_state (
+      document_id, embedding_status, vector_signature, updated_at
+    ) VALUES (?, 'running', ?, datetime('now'))
+    ON CONFLICT(document_id) DO UPDATE SET
+      embedding_status = 'running',
+      vector_signature = excluded.vector_signature,
+      last_error = NULL,
+      updated_at = datetime('now')
+  `,
+  ).run(doc.id, runtime.signature);
+
+  // Include summaries in embedding text for better semantic recall
+  const parts: string[] = [doc.title];
+  if (doc.abstract) parts.push(doc.abstract);
+  if (doc.fullText) parts.push(doc.fullText);
+  if (doc.summaryZh) parts.push(doc.summaryZh);
+  if (doc.summaryEn) parts.push(doc.summaryEn);
+  parts.push(...doc.domainTags);
+  parts.push(...doc.modelTags);
+
+  const text = parts.join("\n").slice(0, 8000); // OpenAI token limit safety
   const embedding = await generateEmbedding(text);
   storeVector(doc.id, embedding);
+
+  // Track index state
+  db.prepare(
+    `
+    INSERT INTO document_index_state (
+      document_id, vector_signature, vector_indexed_at,
+      embedding_status, embedding_attempts, last_error, updated_at
+    )
+    VALUES (?, ?, datetime('now'), 'ready', 0, NULL, datetime('now'))
+    ON CONFLICT(document_id) DO UPDATE SET
+      vector_signature = excluded.vector_signature,
+      vector_indexed_at = excluded.vector_indexed_at,
+      embedding_status = 'ready',
+      embedding_attempts = 0,
+      last_error = NULL,
+      vector_error = NULL,
+      vector_retry_count = 0,
+      updated_at = datetime('now')
+  `,
+  ).run(doc.id, runtime.signature);
+  db.prepare(
+    `
+    INSERT INTO embedding_index_metadata(id, signature, updated_at)
+    VALUES (1, ?, datetime('now'))
+    ON CONFLICT(id) DO UPDATE SET
+      signature = excluded.signature,
+      updated_at = excluded.updated_at
+  `,
+  ).run(runtime.signature);
 }
 
 export function countIndexedVectors(): number {
   const db = getDb();
-  const row = db.prepare("SELECT COUNT(*) as count FROM document_vectors").get() as
+  const row = db.prepare("SELECT COUNT(*) as count FROM document_vectors_v2").get() as
     | { count: number }
     | undefined;
   return row?.count ?? 0;
+}
+
+/**
+ * Get documents that need vector indexing (not yet indexed or stale signature).
+ */
+export function getPendingVectorDocuments(limit = 50): Document[] {
+  const db = getDb();
+  const runtime = getEmbeddingRuntime();
+  const rows = db
+    .prepare(
+      `
+    SELECT d.*
+    FROM documents d
+    LEFT JOIN document_index_state s ON d.id = s.document_id
+    WHERE s.vector_indexed_at IS NULL
+       OR s.vector_signature != ?
+       OR s.embedding_status = 'pending'
+       OR (s.embedding_status = 'failed' AND s.embedding_attempts < 5)
+       OR d.updated_at > s.vector_indexed_at
+    ORDER BY d.published_at DESC
+    LIMIT ?
+  `,
+    )
+    .all(runtime.signature, limit) as Record<string, unknown>[];
+  return rows.map(rowToDocument);
+}
+
+export function markVectorIndexFailed(documentId: string, error: unknown): void {
+  const message = error instanceof Error ? error.message : String(error);
+  getDb()
+    .prepare(
+      `
+      UPDATE document_index_state
+      SET embedding_status = 'failed',
+          embedding_attempts = embedding_attempts + 1,
+          last_error = ?,
+          vector_error = ?,
+          vector_retry_count = vector_retry_count + 1,
+          updated_at = datetime('now')
+      WHERE document_id = ?
+    `,
+    )
+    .run(message.slice(0, 1000), message.slice(0, 1000), documentId);
+}
+
+/**
+ * Get aggregated index state statistics for monitoring.
+ */
+export function getIndexStateStats(): {
+  total: number;
+  ftsIndexed: number;
+  vectorIndexed: number;
+  vectorPending: number;
+  vectorErrors: number;
+} {
+  const db = getDb();
+  const total = (db.prepare("SELECT COUNT(*) as c FROM documents").get() as { c: number }).c;
+  let vectorIndexed = 0;
+  let vectorErrors = 0;
+  try {
+    vectorIndexed = (
+      db
+        .prepare(
+          `SELECT COUNT(*) as c
+           FROM document_index_state s
+           JOIN document_vectors_v2 v ON v.document_id = s.document_id
+           WHERE s.embedding_status = 'ready'`,
+        )
+        .get() as { c: number }
+    ).c;
+    vectorErrors = (
+      db
+        .prepare("SELECT COUNT(*) as c FROM document_index_state WHERE embedding_status = 'failed'")
+        .get() as { c: number }
+    ).c;
+  } catch {
+    // document_index_state table doesn't exist yet (pre-v8)
+  }
+
+  return {
+    total,
+    ftsIndexed: countFtsDocuments(),
+    vectorIndexed,
+    vectorPending: total - vectorIndexed,
+    vectorErrors,
+  };
 }
 
 function serializeEmbedding(embedding: number[]): Buffer {
@@ -295,26 +637,21 @@ function serializeEmbedding(embedding: number[]): Buffer {
  */
 export function matchesSearchFilters(
   document: Document,
-  filters: { sources?: string[]; tags?: string[]; dateRange?: { start: string; end: string } },
+  filters: {
+    sources?: string[];
+    tags?: string[];
+    tagMatchMode?: "any" | "all";
+    dateRange?: { start: string; end: string };
+  },
 ): boolean {
   if (filters.sources && filters.sources.length > 0 && !filters.sources.includes(document.source)) {
     return false;
   }
 
-  if (
-    filters.tags &&
-    filters.tags.length > 0 &&
-    !filters.tags.every(
-      (tag) =>
-        document.domainTags.includes(tag) ||
-        document.modelTags.includes(tag) ||
-        document.source === tag ||
-        document.sourceTag === tag ||
-        document.typeTag === tag ||
-        String(document.yearTag) === tag,
-    )
-  ) {
-    return false;
+  if (filters.tags && filters.tags.length > 0) {
+    const matches = filters.tags.map((tag) => documentMatchesTag(document, tag));
+    const matched = filters.tagMatchMode === "all" ? matches.every(Boolean) : matches.some(Boolean);
+    if (!matched) return false;
   }
 
   if (
@@ -325,4 +662,133 @@ export function matchesSearchFilters(
   }
 
   return true;
+}
+
+export function hasIndexedSearchTag(tag: string): boolean {
+  const db = getDb();
+  const variants = tagVariants(tag);
+  const placeholders = variants.map(() => "?").join(",");
+  const params: string[] = [];
+  for (let repeat = 0; repeat < 6; repeat++) params.push(...variants);
+
+  const row = db
+    .prepare(
+      `
+      SELECT 1
+      FROM documents d
+      WHERE
+        EXISTS (
+          SELECT 1 FROM json_each(d.domain_tags)
+          WHERE lower(replace(replace(value, '-', ''), ' ', '')) IN (${placeholders})
+        )
+        OR EXISTS (
+          SELECT 1 FROM json_each(d.model_tags)
+          WHERE lower(replace(replace(value, '-', ''), ' ', '')) IN (${placeholders})
+        )
+        OR lower(replace(replace(d.source, '-', ''), ' ', '')) IN (${placeholders})
+        OR lower(replace(replace(d.source_tag, '-', ''), ' ', '')) IN (${placeholders})
+        OR lower(replace(replace(d.type_tag, '-', ''), ' ', '')) IN (${placeholders})
+        OR CAST(d.year_tag AS TEXT) IN (${placeholders})
+      LIMIT 1
+    `,
+    )
+    .get(...params);
+
+  return row !== undefined;
+}
+
+function appendSqlFilters(
+  sql: string,
+  params: Array<string | number>,
+  options: {
+    sources?: string[];
+    tags?: string[];
+    tagMatchMode?: "any" | "all";
+    dateRange?: { start: string; end: string };
+  },
+): { sql: string } {
+  if (options.sources?.length) {
+    sql += ` AND d.source IN (${options.sources.map(() => "?").join(",")})`;
+    params.push(...options.sources);
+  }
+
+  if (options.tags?.length) {
+    const clauses = options.tags.map((tag) => {
+      const variants = tagVariants(tag);
+      const placeholders = variants.map(() => "?").join(",");
+      return `
+      (
+        EXISTS (
+          SELECT 1 FROM json_each(d.domain_tags)
+          WHERE lower(replace(replace(value, '-', ''), ' ', '')) IN (${placeholders})
+        )
+        OR EXISTS (
+          SELECT 1 FROM json_each(d.model_tags)
+          WHERE lower(replace(replace(value, '-', ''), ' ', '')) IN (${placeholders})
+        )
+        OR lower(replace(replace(d.source, '-', ''), ' ', '')) IN (${placeholders})
+        OR lower(replace(replace(d.source_tag, '-', ''), ' ', '')) IN (${placeholders})
+        OR lower(replace(replace(d.type_tag, '-', ''), ' ', '')) IN (${placeholders})
+        OR CAST(d.year_tag AS TEXT) IN (${placeholders})
+      )
+    `;
+    });
+    sql += ` AND (${clauses.join(options.tagMatchMode === "all" ? " AND " : " OR ")})`;
+    for (const tag of options.tags) {
+      const variants = tagVariants(tag);
+      for (let repeat = 0; repeat < 6; repeat++) params.push(...variants);
+    }
+  }
+
+  if (options.dateRange) {
+    sql += " AND d.published_at >= ? AND d.published_at <= ?";
+    params.push(options.dateRange.start, options.dateRange.end);
+  }
+  return { sql };
+}
+
+function tagVariants(value: string): string[] {
+  const target = normalizeTag(value);
+  const groups: Record<string, string[]> = {
+    agents: ["agent", "agents", "agentic"],
+    llm: ["llm", "llms", "largelanguagemodel", "largelanguagemodels"],
+    gpt4: ["gpt4", "gpt40", "gpt4o"],
+  };
+  return groups[target] ?? [target];
+}
+
+function normalizeTag(value: string): string {
+  const normalized = value
+    .trim()
+    .toLowerCase()
+    .replace(/[-_\s]+/g, "");
+  const aliases: Record<string, string> = {
+    agent: "agents",
+    llms: "llm",
+    largelanguagemodel: "llm",
+    largelanguagemodels: "llm",
+    gpt4: "gpt4",
+  };
+  return aliases[normalized] ?? normalized;
+}
+
+function documentMatchesTag(document: Document, tag: string): boolean {
+  const target = normalizeTag(tag);
+  return [
+    ...document.domainTags,
+    ...document.modelTags,
+    document.source,
+    document.sourceTag,
+    document.typeTag,
+    String(document.yearTag),
+  ].some((value) => normalizeTag(value) === target);
+}
+
+function countFtsDocuments(): number {
+  try {
+    const row = getDb().prepare("SELECT COUNT(*) AS count FROM document_fts_v2").get() as { count: number };
+    return row.count;
+  } catch {
+    return 0;
+  }
 }

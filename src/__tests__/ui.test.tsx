@@ -19,21 +19,15 @@ describe("HomePage", () => {
         const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
 
         if (url.includes("/api/recommendations/hot")) {
-          return jsonResponse([
-            makeRecommendation("hot-1", "Hot agents"),
-          ]);
+          return jsonResponse([makeRecommendation("hot-1", "Hot agents")]);
         }
 
         if (url.includes("/api/recommendations/personalized")) {
-          return jsonResponse([
-            makeRecommendation("personal-1", "Personalized planning"),
-          ]);
+          return jsonResponse([makeRecommendation("personal-1", "Personalized planning")]);
         }
 
         if (url.includes("/api/documents?limit=8")) {
-          return jsonResponse([
-            makeDocument("latest-1", "Latest memory systems"),
-          ]);
+          return jsonResponse([makeDocument("latest-1", "Latest memory systems")]);
         }
 
         throw new Error(`Unhandled fetch: ${url}`);

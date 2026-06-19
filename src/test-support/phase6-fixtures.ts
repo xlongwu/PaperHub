@@ -181,7 +181,9 @@ export function createPhase6FixtureMemory(): MemoryTerm[] {
   ];
 }
 
-function makeDocument(overrides: Partial<Document> & Pick<Document, "id" | "title" | "url" | "publishedAt">): Document {
+function makeDocument(
+  overrides: Partial<Document> & Pick<Document, "id" | "title" | "url" | "publishedAt">,
+): Document {
   return {
     id: overrides.id,
     title: overrides.title,

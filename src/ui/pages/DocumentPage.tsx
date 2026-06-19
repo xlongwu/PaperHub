@@ -71,7 +71,10 @@ export function DocumentPage(): JSX.Element {
   if (!document) {
     return (
       <section className="content-panel">
-        <EmptyBlock description="The requested document could not be found in the local archive." title="Document missing" />
+        <EmptyBlock
+          description="The requested document could not be found in the local archive."
+          title="Document missing"
+        />
       </section>
     );
   }

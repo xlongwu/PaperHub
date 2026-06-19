@@ -5,7 +5,13 @@
 import { describe, it, expect, beforeEach, afterAll } from "vitest";
 import { initDatabase, closeDb, setDbPath, clearDbPath } from "@/db/index";
 import { insertDocument } from "@/db/documents";
-import { getTagCloud, getDocumentsByTag, countDocumentsByTag, refreshTagStats, updateTagStatsForDocument } from "@/db/tags";
+import {
+  getTagCloud,
+  getDocumentsByTag,
+  countDocumentsByTag,
+  refreshTagStats,
+  updateTagStatsForDocument,
+} from "@/db/tags";
 import type { Document } from "@/types";
 import { safeUnlink, testPath } from "./test-utils";
 
@@ -155,11 +161,6 @@ describe("updateTagStatsForDocument", () => {
     const cloud = getTagCloud();
     const paperEntries = cloud.filter((entry) => entry.tag === "paper");
 
-    expect(paperEntries.map((entry) => entry.category).sort()).toEqual([
-      "domain",
-      "model",
-      "source",
-      "type",
-    ]);
+    expect(paperEntries.map((entry) => entry.category).sort()).toEqual(["domain", "model", "source", "type"]);
   });
 });

@@ -3,20 +3,15 @@
  */
 
 import { getAllDocuments } from "@/db/documents";
-import {
-  clearUserMemoryTerms,
-  getUserMemoryTerms,
-  saveRecommendationSnapshot,
-} from "@/db/recommendations";
+import { clearUserMemoryTerms, getUserMemoryTerms, saveRecommendationSnapshot } from "@/db/recommendations";
 import { extractMemoryFromDigests, rebuildUserMemoryFromDigests } from "@/recommendation/memory";
 import { buildUserProfile } from "@/recommendation/profile";
-import { buildHotRecommendations, getHotRecommendations, refreshHotRecommendations } from "@/recommendation/hot";
-import type {
-  Document,
-  MemoryTerm,
-  RecommendationEntry,
-  WeightedProfileTerm,
-} from "@/types";
+import {
+  buildHotRecommendations,
+  getHotRecommendations,
+  refreshHotRecommendations,
+} from "@/recommendation/hot";
+import type { Document, MemoryTerm, RecommendationEntry, WeightedProfileTerm } from "@/types";
 
 export interface PersonalizedRecommendationOptions {
   limit?: number;
@@ -105,18 +100,13 @@ function scoreDocument(
     .map((tag) => scoreTagMatch(document, tag))
     .filter((signal) => signal.score > 0);
 
-  const profileMatchScore = normalizeScore(
-    tagSignals.reduce((sum, signal) => sum + signal.score, 0),
-  );
+  const profileMatchScore = normalizeScore(tagSignals.reduce((sum, signal) => sum + signal.score, 0));
   const recencyScore = calculateRecencyScore(document.publishedAt, now);
   const sourceBonus = calculateSourceBonus(document, weightedTags);
   const summaryBonus = document.isSummarized ? 1 : 0;
 
   const finalScore =
-    profileMatchScore * 0.65 +
-    recencyScore * 0.25 +
-    sourceBonus * 0.05 +
-    summaryBonus * 0.05;
+    profileMatchScore * 0.65 + recencyScore * 0.25 + sourceBonus * 0.05 + summaryBonus * 0.05;
 
   return {
     document,

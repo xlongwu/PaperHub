@@ -3,10 +3,7 @@ import { mapArxivCategories } from "@/tagger/arxiv-mapping";
 import { classifyBlogTags } from "@/tagger/llm-classify";
 import { extractModelTags } from "@/tagger/model-extract";
 
-export async function applyDocumentTags(
-  doc: Document,
-  raw: Pick<RawDocument, "metadata">,
-): Promise<void> {
+export async function applyDocumentTags(doc: Document, raw: Pick<RawDocument, "metadata">): Promise<void> {
   if (doc.source === "arxiv" && Array.isArray(raw.metadata?.categories)) {
     doc.domainTags = mapArxivCategories(raw.metadata.categories as string[]);
   }

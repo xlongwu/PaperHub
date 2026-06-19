@@ -18,6 +18,7 @@ export interface Document {
   publishedAt: string; // ISO 8601
   authors: string[];
   abstract: string;
+  fullText?: string;
   fullTextPath?: string; // local file path
   language: DocumentLanguage;
 

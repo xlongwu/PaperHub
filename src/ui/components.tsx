@@ -25,9 +25,7 @@ export function SectionHeader(props: {
   );
 }
 
-export function RecommendationCard(props: {
-  entry: RecommendationEntry;
-}): JSX.Element {
+export function RecommendationCard(props: { entry: RecommendationEntry }): JSX.Element {
   const { document, reason, score } = props.entry;
 
   return (
@@ -57,6 +55,7 @@ export function DocumentCard(props: {
   document: Document;
   snippet?: string;
   emphasis?: string;
+  onOpen?: () => void;
 }): JSX.Element {
   const { document } = props;
   return (
@@ -66,13 +65,13 @@ export function DocumentCard(props: {
         <span>{formatDate(document.publishedAt)}</span>
         <span>{document.typeTag}</span>
       </div>
-      <Link className="paper-title-link" to={`/documents/${document.id}`}>
+      <Link className="paper-title-link" onClick={props.onOpen} to={`/documents/${document.id}`}>
         <h3 className="paper-title">{document.title}</h3>
       </Link>
       <p className="paper-abstract">
         {props.snippet
           ? renderHighlightedSnippet(props.snippet)
-          : props.emphasis ?? document.summaryZh ?? document.abstract}
+          : (props.emphasis ?? document.summaryZh ?? document.abstract)}
       </p>
       <div className="chip-row">
         {document.domainTags.slice(0, 4).map((tag) => (
@@ -85,10 +84,7 @@ export function DocumentCard(props: {
   );
 }
 
-export function EmptyBlock(props: {
-  title: string;
-  description: string;
-}): JSX.Element {
+export function EmptyBlock(props: { title: string; description: string }): JSX.Element {
   return (
     <div className="empty-block">
       <p className="empty-title">{props.title}</p>
@@ -107,11 +103,7 @@ export function LoadingBlock(): JSX.Element {
   );
 }
 
-export function StatTile(props: {
-  label: string;
-  value: string;
-  note: string;
-}): JSX.Element {
+export function StatTile(props: { label: string; value: string; note: string }): JSX.Element {
   return (
     <article className="stat-tile">
       <p className="stat-label">{props.label}</p>

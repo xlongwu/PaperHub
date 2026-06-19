@@ -25,9 +25,7 @@ export interface HotRecommendationResponse {
   cached: boolean;
 }
 
-export function buildHotRecommendations(
-  options: HotRecommendationOptions = {},
-): RecommendationEntry[] {
+export function buildHotRecommendations(options: HotRecommendationOptions = {}): RecommendationEntry[] {
   const limit = Math.min(options.limit ?? 10, 100);
   const now = options.now ?? new Date();
   const windowDays = options.windowDays ?? 14;
@@ -46,9 +44,7 @@ export function buildHotRecommendations(
   return diversifyBySource(candidates, limit);
 }
 
-export function getHotRecommendations(
-  options: HotRecommendationOptions = {},
-): HotRecommendationResponse {
+export function getHotRecommendations(options: HotRecommendationOptions = {}): HotRecommendationResponse {
   const limit = Math.min(options.limit ?? 10, 100);
   const snapshotDate = toDateKey(options.now ?? new Date());
   const cached = getRecommendationSnapshot({ kind: "hot", snapshotDate, limit });
@@ -61,9 +57,7 @@ export function getHotRecommendations(
   return { entries: fresh, snapshotDate, cached: false };
 }
 
-export function refreshHotRecommendations(
-  options: HotRecommendationOptions = {},
-): RecommendationEntry[] {
+export function refreshHotRecommendations(options: HotRecommendationOptions = {}): RecommendationEntry[] {
   const snapshotDate = toDateKey(options.now ?? new Date());
   const entries = buildHotRecommendations({
     ...options,
@@ -94,10 +88,7 @@ export function getLatestHotSnapshot(limit = 10): HotRecommendationResponse {
 }
 
 function scoreHotDocument(document: Document, now: Date): number {
-  const ageHours = Math.max(
-    0,
-    (now.getTime() - new Date(document.publishedAt).getTime()) / (1000 * 60 * 60),
-  );
+  const ageHours = Math.max(0, (now.getTime() - new Date(document.publishedAt).getTime()) / (1000 * 60 * 60));
   const timeDecay = Math.pow(0.5, ageHours / 48);
 
   let freshnessBoost = 0;
@@ -112,10 +103,7 @@ function scoreHotDocument(document: Document, now: Date): number {
 }
 
 function buildHotReason(document: Document, now: Date): RecommendationEntry["reason"] {
-  const ageHours = Math.max(
-    0,
-    (now.getTime() - new Date(document.publishedAt).getTime()) / (1000 * 60 * 60),
-  );
+  const ageHours = Math.max(0, (now.getTime() - new Date(document.publishedAt).getTime()) / (1000 * 60 * 60));
   const factors = ["time_decay"];
 
   if (ageHours <= 24) {

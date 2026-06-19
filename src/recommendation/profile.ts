@@ -11,9 +11,7 @@ export interface BuildUserProfileOptions {
   includeRead?: boolean;
 }
 
-export function buildUserProfile(
-  options: BuildUserProfileOptions = {},
-): UserProfile {
+export function buildUserProfile(options: BuildUserProfileOptions = {}): UserProfile {
   const includeRead = options.includeRead ?? false;
   const weightedTerms = new Map<string, WeightedProfileTerm>();
   const excludedDocumentIds = new Set<string>();
@@ -36,7 +34,9 @@ export function buildUserProfile(
     });
   }
 
-  const favoriteDocs = getFavorites().map((item) => getDocumentById(item.documentId)).filter(Boolean) as Document[];
+  const favoriteDocs = getFavorites()
+    .map((item) => getDocumentById(item.documentId))
+    .filter(Boolean) as Document[];
   for (const doc of favoriteDocs) {
     accumulateDocumentSignal(weightedTerms, doc, "favorite", 0.85);
     excludedDocumentIds.add(doc.id);
@@ -108,10 +108,7 @@ function accumulateDocumentSignal(
   });
 }
 
-function addWeightedTerm(
-  weightedTerms: Map<string, WeightedProfileTerm>,
-  term: WeightedProfileTerm,
-): void {
+function addWeightedTerm(weightedTerms: Map<string, WeightedProfileTerm>, term: WeightedProfileTerm): void {
   const key = `${term.category}:${term.term}`;
   const existing = weightedTerms.get(key);
 

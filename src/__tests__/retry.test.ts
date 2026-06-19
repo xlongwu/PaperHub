@@ -13,11 +13,14 @@ describe("withRetry", () => {
 
   it("retries on failure and eventually succeeds", async () => {
     let attempts = 0;
-    const result = await withRetry(() => {
-      attempts++;
-      if (attempts < 3) throw new Error("fail");
-      return Promise.resolve("success");
-    }, { maxRetries: 3, baseDelayMs: 10 });
+    const result = await withRetry(
+      () => {
+        attempts++;
+        if (attempts < 3) throw new Error("fail");
+        return Promise.resolve("success");
+      },
+      { maxRetries: 3, baseDelayMs: 10 },
+    );
 
     expect(result).toBe("success");
     expect(attempts).toBe(3);
@@ -26,10 +29,13 @@ describe("withRetry", () => {
   it("throws after max retries exceeded", async () => {
     let attempts = 0;
     await expect(
-      withRetry(() => {
-        attempts++;
-        throw new Error("always fails");
-      }, { maxRetries: 2, baseDelayMs: 10 }),
+      withRetry(
+        () => {
+          attempts++;
+          throw new Error("always fails");
+        },
+        { maxRetries: 2, baseDelayMs: 10 },
+      ),
     ).rejects.toThrow("always fails");
 
     expect(attempts).toBe(3); // initial + 2 retries

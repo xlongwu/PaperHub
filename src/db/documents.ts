@@ -27,6 +27,7 @@ function toDb(doc: Document): Record<string, unknown> {
     published_at: doc.publishedAt,
     authors: JSON.stringify(doc.authors),
     abstract: doc.abstract,
+    full_text: doc.fullText ?? null,
     full_text_path: doc.fullTextPath ?? null,
     language: doc.language,
     domain_tags: JSON.stringify(doc.domainTags),
@@ -60,6 +61,7 @@ function fromDb(row: Record<string, unknown>): Document {
     publishedAt: String(row.published_at),
     authors: safeJsonParse<string[]>(row.authors, []),
     abstract: String(row.abstract ?? ""),
+    fullText: row.full_text ? String(row.full_text) : undefined,
     fullTextPath: row.full_text_path ? String(row.full_text_path) : undefined,
     language: String(row.language) as "zh" | "en",
     domainTags: safeJsonParse<string[]>(row.domain_tags, []),
@@ -85,12 +87,12 @@ export function insertDocument(doc: Document): string {
   const stmt = db.prepare(`
     INSERT INTO documents (
       id, title, source, url, published_at, authors, abstract,
-      full_text_path, language, domain_tags, source_tag, type_tag,
+      full_text, full_text_path, language, domain_tags, source_tag, type_tag,
       year_tag, model_tags, summary_zh, summary_en,
       created_at, updated_at, is_summarized
     ) VALUES (
       @id, @title, @source, @url, @published_at, @authors, @abstract,
-      @full_text_path, @language, @domain_tags, @source_tag, @type_tag,
+      @full_text, @full_text_path, @language, @domain_tags, @source_tag, @type_tag,
       @year_tag, @model_tags, @summary_zh, @summary_en,
       @created_at, @updated_at, @is_summarized
     )
@@ -98,6 +100,11 @@ export function insertDocument(doc: Document): string {
       title = excluded.title,
       abstract = excluded.abstract,
       authors = excluded.authors,
+      full_text = excluded.full_text,
+      domain_tags = excluded.domain_tags,
+      model_tags = excluded.model_tags,
+      summary_zh = excluded.summary_zh,
+      summary_en = excluded.summary_en,
       updated_at = excluded.updated_at
   `);
   stmt.run(data);
@@ -106,25 +113,35 @@ export function insertDocument(doc: Document): string {
 
 export function getDocumentById(id: string): Document | null {
   const db = getDb();
-  const row = db.prepare("SELECT * FROM documents WHERE id = ?").get(id) as Record<string, unknown> | undefined;
+  const row = db.prepare("SELECT * FROM documents WHERE id = ?").get(id) as
+    | Record<string, unknown>
+    | undefined;
   return row ? fromDb(row) : null;
 }
 
 export function getDocumentByUrl(url: string): Document | null {
   const db = getDb();
-  const row = db.prepare("SELECT * FROM documents WHERE url = ?").get(url) as Record<string, unknown> | undefined;
+  const row = db.prepare("SELECT * FROM documents WHERE url = ?").get(url) as
+    | Record<string, unknown>
+    | undefined;
   return row ? fromDb(row) : null;
 }
 
 export function getDocumentsBySource(source: string): Document[] {
   const db = getDb();
-  const rows = db.prepare("SELECT * FROM documents WHERE source = ? ORDER BY published_at DESC").all(source) as Record<string, unknown>[];
+  const rows = db
+    .prepare("SELECT * FROM documents WHERE source = ? ORDER BY published_at DESC")
+    .all(source) as Record<string, unknown>[];
   return rows.map(fromDb);
 }
 
 export function getDocumentsByTimeRange(start: string, end: string): Document[] {
   const db = getDb();
-  const rows = db.prepare("SELECT * FROM documents WHERE published_at >= ? AND published_at <= ? ORDER BY published_at DESC").all(start, end) as Record<string, unknown>[];
+  const rows = db
+    .prepare(
+      "SELECT * FROM documents WHERE published_at >= ? AND published_at <= ? ORDER BY published_at DESC",
+    )
+    .all(start, end) as Record<string, unknown>[];
   return rows.map(fromDb);
 }
 
@@ -179,9 +196,7 @@ export function getAllDocuments(options?: DocumentQueryOptions): Document[] {
 export function getPendingSummaryDocuments(limit = 100): Document[] {
   const db = getDb();
   const rows = db
-    .prepare(
-      "SELECT * FROM documents WHERE is_summarized = 0 ORDER BY published_at DESC LIMIT ?",
-    )
+    .prepare("SELECT * FROM documents WHERE is_summarized = 0 ORDER BY published_at DESC LIMIT ?")
     .all(Math.max(1, limit)) as Record<string, unknown>[];
   return rows.map(fromDb);
 }
@@ -192,8 +207,7 @@ export function countDocuments(
   sourceOrOptions?: string | Pick<DocumentQueryOptions, "source" | "from" | "to">,
 ): number {
   const db = getDb();
-  const options =
-    typeof sourceOrOptions === "string" ? { source: sourceOrOptions } : sourceOrOptions;
+  const options = typeof sourceOrOptions === "string" ? { source: sourceOrOptions } : sourceOrOptions;
   const { whereSql, params } = buildDocumentQuery(options);
   const sql = `SELECT COUNT(*) as count FROM documents${whereSql}`;
 
@@ -203,7 +217,9 @@ export function countDocuments(
 
 export function countDocumentsByDate(date: string): number {
   const db = getDb();
-  const row = db.prepare("SELECT COUNT(*) as count FROM documents WHERE date(created_at) = date(?)").get(date) as { count: number } | undefined;
+  const row = db
+    .prepare("SELECT COUNT(*) as count FROM documents WHERE date(created_at) = date(?)")
+    .get(date) as { count: number } | undefined;
   return row?.count ?? 0;
 }
 
@@ -212,14 +228,42 @@ export function updateDocument(id: string, updates: Partial<Document>): void {
   const sets: string[] = [];
   const values: unknown[] = [];
 
-  if (updates.title !== undefined) { sets.push("title = ?"); values.push(updates.title); }
-  if (updates.abstract !== undefined) { sets.push("abstract = ?"); values.push(updates.abstract); }
-  if (updates.summaryZh !== undefined) { sets.push("summary_zh = ?"); values.push(updates.summaryZh); }
-  if (updates.summaryEn !== undefined) { sets.push("summary_en = ?"); values.push(updates.summaryEn); }
-  if (updates.domainTags !== undefined) { sets.push("domain_tags = ?"); values.push(JSON.stringify(updates.domainTags)); }
-  if (updates.modelTags !== undefined) { sets.push("model_tags = ?"); values.push(JSON.stringify(updates.modelTags)); }
-  if (updates.isSummarized !== undefined) { sets.push("is_summarized = ?"); values.push(updates.isSummarized ? 1 : 0); }
-  if (updates.fullTextPath !== undefined) { sets.push("full_text_path = ?"); values.push(updates.fullTextPath); }
+  if (updates.title !== undefined) {
+    sets.push("title = ?");
+    values.push(updates.title);
+  }
+  if (updates.abstract !== undefined) {
+    sets.push("abstract = ?");
+    values.push(updates.abstract);
+  }
+  if (updates.fullText !== undefined) {
+    sets.push("full_text = ?");
+    values.push(updates.fullText);
+  }
+  if (updates.summaryZh !== undefined) {
+    sets.push("summary_zh = ?");
+    values.push(updates.summaryZh);
+  }
+  if (updates.summaryEn !== undefined) {
+    sets.push("summary_en = ?");
+    values.push(updates.summaryEn);
+  }
+  if (updates.domainTags !== undefined) {
+    sets.push("domain_tags = ?");
+    values.push(JSON.stringify(updates.domainTags));
+  }
+  if (updates.modelTags !== undefined) {
+    sets.push("model_tags = ?");
+    values.push(JSON.stringify(updates.modelTags));
+  }
+  if (updates.isSummarized !== undefined) {
+    sets.push("is_summarized = ?");
+    values.push(updates.isSummarized ? 1 : 0);
+  }
+  if (updates.fullTextPath !== undefined) {
+    sets.push("full_text_path = ?");
+    values.push(updates.fullTextPath);
+  }
 
   if (sets.length === 0) return;
 
@@ -228,11 +272,18 @@ export function updateDocument(id: string, updates: Partial<Document>): void {
   values.push(id);
 
   db.prepare(`UPDATE documents SET ${sets.join(", ")} WHERE id = ?`).run(...values);
+  void import("@/search-indexer")
+    .then(({ enqueueVectorIndexing }) => enqueueVectorIndexing([id]))
+    .catch(() => {
+      // Startup and migration paths may update documents before the indexer loads.
+    });
 }
 
 export function documentExists(url: string): boolean {
   const db = getDb();
-  const row = db.prepare("SELECT 1 FROM documents WHERE url = ? LIMIT 1").get(url) as { 1: number } | undefined;
+  const row = db.prepare("SELECT 1 FROM documents WHERE url = ? LIMIT 1").get(url) as
+    | { 1: number }
+    | undefined;
   return row !== undefined;
 }
 

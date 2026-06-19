@@ -8,12 +8,9 @@ import { loadPaperHubConfig, getLogsDir } from "@/config";
 import { arxivCollector } from "@/collectors/arxiv";
 import { gptBlogCollector } from "@/collectors/gpt-blog";
 import { claudeBlogCollector } from "@/collectors/claude-blog";
-import { rawToDocument } from "@/collectors/transformer";
-import { insertDocument, documentExists, getPendingSummaryDocuments } from "@/db/documents";
-import { updateTagStatsForDocument } from "@/db/tags";
+import { ingestDocuments } from "@/services/document-ingestion";
+import { getPendingSummaryDocuments } from "@/db/documents";
 import { withRetry, logError } from "@/utils/retry";
-import { findDuplicateByTitle } from "@/utils/dedup";
-import { applyDocumentTags } from "@/tagger/apply";
 import { summarizeBatch } from "@/summarizer";
 import fs from "node:fs";
 import path from "node:path";
@@ -68,21 +65,11 @@ async function runCollector(collector: typeof arxivCollector): Promise<{ inserte
       },
     });
 
-    let inserted = 0;
-    for (const raw of rawDocs) {
-      const doc = rawToDocument(raw);
-      if (documentExists(doc.url) || findDuplicateByTitle(doc.title)) {
-        continue;
-      }
-
-      await applyDocumentTags(doc, raw);
-      insertDocument(doc);
-      updateTagStatsForDocument(doc);
-      inserted++;
-    }
-
-    logScheduler(`[scheduler] ${collector.id} done: ${inserted} new items inserted.`);
-    return { inserted, source: collector.id };
+    const result = await ingestDocuments(rawDocs);
+    logScheduler(
+      `[scheduler] ${collector.id} done: ${result.inserted} new, ${result.skipped} skipped, ${result.errors} errors`,
+    );
+    return { inserted: result.inserted, source: collector.id };
   } catch (e) {
     logError(`scheduler/${collector.id}`, e);
     logScheduler(`[scheduler] ${collector.id} failed: ${e instanceof Error ? e.message : String(e)}`);
@@ -129,7 +116,9 @@ async function rebuildDailyHotRecommendations(): Promise<void> {
     );
   } catch (e) {
     logError("scheduler/hot", e);
-    logScheduler(`[scheduler] Hot recommendation rebuild failed: ${e instanceof Error ? e.message : String(e)}`);
+    logScheduler(
+      `[scheduler] Hot recommendation rebuild failed: ${e instanceof Error ? e.message : String(e)}`,
+    );
   }
 }
 
@@ -139,9 +128,7 @@ async function rebuildDailyUserMemory(): Promise<void> {
 
   try {
     const terms = rebuildUserMemoryFromDigests({ maxDays: 30, maxTerms: 20 });
-    logScheduler(
-      `[scheduler] User memory rebuilt: ${terms.length} terms in ${Date.now() - startedAt}ms.`,
-    );
+    logScheduler(`[scheduler] User memory rebuilt: ${terms.length} terms in ${Date.now() - startedAt}ms.`);
   } catch (e) {
     logError("scheduler/memory", e);
     logScheduler(`[scheduler] User memory rebuild failed: ${e instanceof Error ? e.message : String(e)}`);
@@ -172,10 +159,14 @@ export function startScheduler(runImmediately = true): void {
   logScheduler(`[scheduler] GPT Blog scheduled: ${config.intervals.gptBlog}`);
 
   // Claude Blog: every 30 minutes
-  const claudeTask = cron.schedule(config.intervals.claudeBlog, () => track(runCollector(claudeBlogCollector)), {
-    scheduled: true,
-    timezone: "UTC",
-  });
+  const claudeTask = cron.schedule(
+    config.intervals.claudeBlog,
+    () => track(runCollector(claudeBlogCollector)),
+    {
+      scheduled: true,
+      timezone: "UTC",
+    },
+  );
   tasks.push(claudeTask);
   logScheduler(`[scheduler] Claude Blog scheduled: ${config.intervals.claudeBlog}`);
 
@@ -257,7 +248,9 @@ export function waitForRunningTasks(): Promise<void> {
 // Manual trigger
 // ---------------------------------------------------------------------------
 
-export async function triggerCollection(source: "arxiv" | "gpt_blog" | "claude_blog" | "all" = "all"): Promise<Record<string, { inserted: number }>> {
+export async function triggerCollection(
+  source: "arxiv" | "gpt_blog" | "claude_blog" | "all" = "all",
+): Promise<Record<string, { inserted: number }>> {
   const results: Record<string, { inserted: number }> = {};
 
   const collectors = [

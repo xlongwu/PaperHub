@@ -2,7 +2,13 @@ import { useQuery } from "@tanstack/react-query";
 import { FormEvent, useEffect, useMemo, useState, useTransition } from "react";
 import { useSearchParams } from "react-router-dom";
 import { DocumentCard, EmptyBlock, LoadingBlock, PaginationBar, SectionHeader } from "../components";
-import { searchDocuments, type TimeRangePreset } from "../lib/api";
+import {
+  generateSearchReport,
+  getIndexCoverage,
+  recordSearchFeedback,
+  searchDocuments,
+  type TimeRangePreset,
+} from "../lib/api";
 
 const sourceOptions = [
   { label: "arXiv", value: "arxiv" },
@@ -28,6 +34,7 @@ export function SearchPage(): JSX.Element {
   const [sources, setSources] = useState<string[]>(appliedState.sources);
   const [, setTags] = useState<string[]>(appliedState.tags);
   const [tagDraft, setTagDraft] = useState(appliedState.tags.join(", "));
+  const [tagMatchMode, setTagMatchMode] = useState<"any" | "all">(appliedState.tagMatchMode);
   const [timeRange, setTimeRange] = useState<TimeRangePreset>(appliedState.timeRange);
   const [, startTransition] = useTransition();
 
@@ -37,6 +44,7 @@ export function SearchPage(): JSX.Element {
     setSources(appliedState.sources);
     setTags(appliedState.tags);
     setTagDraft(appliedState.tags.join(", "));
+    setTagMatchMode(appliedState.tagMatchMode);
     setTimeRange(appliedState.timeRange);
   }, [appliedState]);
 
@@ -47,6 +55,7 @@ export function SearchPage(): JSX.Element {
       appliedState.mode,
       appliedState.sources.join(","),
       appliedState.tags.join(","),
+      appliedState.tagMatchMode,
       appliedState.timeRange,
       appliedState.page,
     ],
@@ -57,10 +66,29 @@ export function SearchPage(): JSX.Element {
         mode: appliedState.mode,
         sources: appliedState.sources,
         tags: appliedState.tags,
+        tagMatchMode: appliedState.tagMatchMode,
         timeRange: appliedState.timeRange,
         page: appliedState.page,
         limit: PAGE_SIZE,
       }),
+  });
+  const reportQuery = useQuery({
+    queryKey: [
+      "search-report",
+      appliedState.query,
+      searchQuery.data?.results.map((result) => result.document.id).join(",") ?? "",
+    ],
+    enabled: appliedState.mode === "hybrid" && (searchQuery.data?.results.length ?? 0) > 10,
+    queryFn: () =>
+      generateSearchReport(
+        appliedState.query,
+        searchQuery.data?.results.map((result) => result.document.id) ?? [],
+      ),
+  });
+  const coverageQuery = useQuery({
+    queryKey: ["index-coverage"],
+    queryFn: getIndexCoverage,
+    staleTime: 30_000,
   });
   const totalPages = Math.max(1, Math.ceil((searchQuery.data?.total ?? 0) / PAGE_SIZE));
 
@@ -76,6 +104,12 @@ export function SearchPage(): JSX.Element {
           className="search-form"
           onSubmit={(event: FormEvent) => {
             event.preventDefault();
+            if (searchQuery.data?.searchEventId && query.trim() !== appliedState.query.trim()) {
+              void recordSearchFeedback({
+                eventId: searchQuery.data.searchEventId,
+                reformulated: true,
+              });
+            }
             startTransition(() => {
               const normalizedTags = tagDraft
                 .split(",")
@@ -88,6 +122,7 @@ export function SearchPage(): JSX.Element {
                   mode,
                   sources,
                   tags: normalizedTags,
+                  tagMatchMode,
                   timeRange,
                   page: 1,
                 }),
@@ -125,9 +160,7 @@ export function SearchPage(): JSX.Element {
                   onClick={(event) => {
                     event.preventDefault();
                     setSources(
-                      active
-                        ? sources.filter((value) => value !== option.value)
-                        : [...sources, option.value],
+                      active ? sources.filter((value) => value !== option.value) : [...sources, option.value],
                     );
                   }}
                   type="button"
@@ -140,7 +173,7 @@ export function SearchPage(): JSX.Element {
 
           <div className="form-grid form-grid-compact">
             <label className="field">
-              <span>Tags</span>
+              <span>Tags or topic refinements</span>
               <input
                 className="field-input"
                 onChange={(event) => setTagDraft(event.target.value)}
@@ -150,12 +183,27 @@ export function SearchPage(): JSX.Element {
             </label>
             <label className="field">
               <span>Published within</span>
-              <select className="field-input" onChange={(event) => setTimeRange(event.target.value as TimeRangePreset)} value={timeRange}>
+              <select
+                className="field-input"
+                onChange={(event) => setTimeRange(event.target.value as TimeRangePreset)}
+                value={timeRange}
+              >
                 {timeRangeOptions.map((option) => (
                   <option key={option.value} value={option.value}>
                     {option.label}
                   </option>
                 ))}
+              </select>
+            </label>
+            <label className="field">
+              <span>Tag matching</span>
+              <select
+                className="field-input"
+                onChange={(event) => setTagMatchMode(event.target.value as "any" | "all")}
+                value={tagMatchMode}
+              >
+                <option value="any">Match any tag</option>
+                <option value="all">Match all tags</option>
               </select>
             </label>
           </div>
@@ -169,22 +217,51 @@ export function SearchPage(): JSX.Element {
       <div className="search-layout">
         <section className="content-panel">
           <SectionHeader
-            description={`Matched ${searchQuery.data?.total ?? 0} documents with mode ${appliedState.mode}.`}
+            description={`Matched ${searchQuery.data?.candidateTotal ?? searchQuery.data?.total ?? 0} candidates with mode ${searchQuery.data?.modeUsed ?? appliedState.mode}.`}
             kicker="Results"
             title="Result list"
           />
           {searchQuery.isLoading ? <LoadingBlock /> : null}
+          {searchQuery.data?.modeUsed === "keyword_fallback" ? (
+            <div className="empty-block">
+              <p className="empty-title">Semantic search is temporarily unavailable</p>
+              <p className="empty-description">Results are currently provided by keyword search.</p>
+            </div>
+          ) : null}
+          {(searchQuery.data?.topicTerms?.length ?? 0) > 0 ? (
+            <div className="empty-block">
+              <p className="empty-title">Topic refinement applied</p>
+              <p className="empty-description">
+                {searchQuery.data?.topicTerms?.join(", ")} is not an indexed tag, so it was included in
+                relevance matching instead of being silently discarded.
+              </p>
+            </div>
+          ) : null}
           {!searchQuery.isLoading && appliedState.query.trim().length === 0 ? (
             <EmptyBlock description="Start with a topic, model, or workflow pattern." title="No search yet" />
           ) : null}
-          {!searchQuery.isLoading && appliedState.query.trim().length > 0 && (searchQuery.data?.results.length ?? 0) === 0 ? (
-            <EmptyBlock description="Try widening the query, changing the mode, or removing some filters." title="No matches found" />
+          {!searchQuery.isLoading &&
+          appliedState.query.trim().length > 0 &&
+          (searchQuery.data?.results.length ?? 0) === 0 ? (
+            <EmptyBlock
+              description="Try widening the query, changing the mode, or removing some filters."
+              title="No matches found"
+            />
           ) : null}
           <div className="stack-grid">
-            {searchQuery.data?.results.map((result) => (
+            {searchQuery.data?.results.map((result, index) => (
               <DocumentCard
                 document={result.document}
                 key={result.document.id}
+                onOpen={() => {
+                  if (searchQuery.data?.searchEventId) {
+                    void recordSearchFeedback({
+                      eventId: searchQuery.data.searchEventId,
+                      documentId: result.document.id,
+                      rank: (appliedState.page - 1) * PAGE_SIZE + index + 1,
+                    });
+                  }
+                }}
                 snippet={result.snippet}
               />
             ))}
@@ -218,15 +295,32 @@ export function SearchPage(): JSX.Element {
 
         <aside className="content-panel report-panel">
           <SectionHeader
-            description="When hybrid mode finds enough signal, the API synthesizes a short briefing for the topic."
+            description="Search results return first; this briefing loads independently."
             kicker="Briefing"
             title="Research memo"
           />
-          {searchQuery.isLoading ? <LoadingBlock /> : null}
-          {!searchQuery.isLoading && !searchQuery.data?.report ? (
-            <EmptyBlock description="A report appears automatically when the result set is rich enough." title="No memo generated" />
+          {reportQuery.isLoading ? <LoadingBlock /> : null}
+          {!reportQuery.isLoading && !reportQuery.data ? (
+            <EmptyBlock
+              description="A report appears automatically when the result set is rich enough."
+              title="No memo generated"
+            />
           ) : null}
-          {searchQuery.data?.report ? <p className="report-copy">{searchQuery.data.report}</p> : null}
+          {reportQuery.data ? <p className="report-copy">{reportQuery.data}</p> : null}
+          <div className="empty-block">
+            <p className="empty-title">Local corpus coverage</p>
+            <p className="empty-description">
+              Documents: {coverageQuery.data?.totalDocs ?? 0} · FTS: {coverageQuery.data?.ftsIndexed ?? 0}/
+              {coverageQuery.data?.totalDocs ?? 0} · Vectors: {coverageQuery.data?.vectorIndexed ?? 0}/
+              {coverageQuery.data?.totalDocs ?? 0}
+            </p>
+            {coverageQuery.data?.dateRange ? (
+              <p className="empty-description">
+                {coverageQuery.data.dateRange.from.slice(0, 10)} to{" "}
+                {coverageQuery.data.dateRange.to.slice(0, 10)}
+              </p>
+            ) : null}
+          </div>
         </aside>
       </div>
     </div>
@@ -238,6 +332,7 @@ function parseSearchParams(params: URLSearchParams): {
   mode: string;
   sources: string[];
   tags: string[];
+  tagMatchMode: "any" | "all";
   timeRange: TimeRangePreset;
   page: number;
 } {
@@ -252,6 +347,7 @@ function parseSearchParams(params: URLSearchParams): {
     mode: params.get("mode") ?? "hybrid",
     sources: params.get("sources")?.split(",").filter(Boolean) ?? [],
     tags: params.get("tags")?.split(",").filter(Boolean) ?? [],
+    tagMatchMode: params.get("tagMatch") === "all" ? "all" : "any",
     timeRange: nextTimeRange,
     page: Number.isFinite(page) && page > 0 ? page : 1,
   };
@@ -262,6 +358,7 @@ function buildSearchParams(state: {
   mode: string;
   sources: string[];
   tags: string[];
+  tagMatchMode: "any" | "all";
   timeRange: TimeRangePreset;
   page: number;
 }): URLSearchParams {
@@ -275,6 +372,7 @@ function buildSearchParams(state: {
   }
   if (state.tags.length > 0) {
     next.set("tags", state.tags.join(","));
+    next.set("tagMatch", state.tagMatchMode);
   }
   if (state.timeRange !== "all") {
     next.set("range", state.timeRange);

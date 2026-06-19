@@ -1,9 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import {
-  getHotRecommendations,
-  getLatestDocuments,
-  getPersonalizedRecommendations,
-} from "../lib/api";
+import { getHotRecommendations, getLatestDocuments, getPersonalizedRecommendations } from "../lib/api";
 import {
   DocumentCard,
   EmptyBlock,
@@ -32,15 +28,21 @@ export function HomePage(): JSX.Element {
       <section className="hero-panel">
         <div className="hero-copy">
           <span className="section-kicker">Research Frontline</span>
-          <h1 className="hero-title">A local intelligence desk for papers, labs, and fast-moving AI ecosystems.</h1>
+          <h1 className="hero-title">
+            A local intelligence desk for papers, labs, and fast-moving AI ecosystems.
+          </h1>
           <p className="hero-description">
-            PaperHub combines recommendation, retrieval, and memory into a single reading surface.
-            Start with the hot board, move into the archive, then follow the tags that matter.
+            PaperHub combines recommendation, retrieval, and memory into a single reading surface. Start with
+            the hot board, move into the archive, then follow the tags that matter.
           </p>
         </div>
         <div className="hero-stats">
           <StatTile label="Hot board" note="Daily rebuild" value={String(hotQuery.data?.length ?? 0)} />
-          <StatTile label="For you" note="Profile matched" value={String(personalizedQuery.data?.length ?? 0)} />
+          <StatTile
+            label="For you"
+            note="Profile matched"
+            value={String(personalizedQuery.data?.length ?? 0)}
+          />
           <StatTile label="Latest" note="Fresh entries" value={String(latestQuery.data?.length ?? 0)} />
         </div>
       </section>
@@ -55,7 +57,10 @@ export function HomePage(): JSX.Element {
         />
         {hotQuery.isLoading ? <LoadingBlock /> : null}
         {!hotQuery.isLoading && (hotQuery.data?.length ?? 0) === 0 ? (
-          <EmptyBlock description="Run collection or rebuild recommendations to populate the board." title="No hot recommendations yet" />
+          <EmptyBlock
+            description="Run collection or rebuild recommendations to populate the board."
+            title="No hot recommendations yet"
+          />
         ) : null}
         <div className="feature-grid">
           {hotQuery.data?.map((entry) => (
@@ -74,7 +79,10 @@ export function HomePage(): JSX.Element {
         />
         {personalizedQuery.isLoading ? <LoadingBlock /> : null}
         {!personalizedQuery.isLoading && (personalizedQuery.data?.length ?? 0) === 0 ? (
-          <EmptyBlock description="Add interest tags or rebuild user memory to unlock personalized picks." title="Profile needs more signal" />
+          <EmptyBlock
+            description="Add interest tags or rebuild user memory to unlock personalized picks."
+            title="Profile needs more signal"
+          />
         ) : null}
         <div className="stack-grid">
           {personalizedQuery.data?.map((entry) => (

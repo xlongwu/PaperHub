@@ -104,7 +104,12 @@ function parseTagResponse(response: string): string[] {
   // Fallback: parse line-by-line
   return response
     .split(/\n|,/)
-    .map((s) => s.trim().replace(/^[-*\d.\s]+/, "").replace(/["']/g, ""))
+    .map((s) =>
+      s
+        .trim()
+        .replace(/^[-*\d.\s]+/, "")
+        .replace(/["']/g, ""),
+    )
     .filter((s) => s.length > 0 && DOMAIN_TAGS.includes(s));
 }
 
@@ -112,7 +117,9 @@ function parseTagResponse(response: string): string[] {
 // Batch classifier for documents
 // ---------------------------------------------------------------------------
 
-export async function classifyDocument(doc: Document): Promise<{ domainTags: string[]; modelTags: string[] }> {
+export async function classifyDocument(
+  doc: Document,
+): Promise<{ domainTags: string[]; modelTags: string[] }> {
   const domainTags = await classifyBlogTags(doc.title, doc.abstract);
   return { domainTags, modelTags: [] }; // modelTags extracted separately
 }

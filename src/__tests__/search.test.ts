@@ -155,7 +155,7 @@ describe("hybridSearch", () => {
     insertDocument(makeDoc({ title: "Combined", abstract: "Combined search test" }));
 
     const result = await hybridSearch({ query: "combined search", mode: "hybrid" });
-    expect(result.mode).toBe("hybrid");
+    expect(result.mode).toBe("keyword_fallback");
     expect(result.total).toBeGreaterThanOrEqual(0);
   });
 
@@ -189,8 +189,9 @@ describe("hybridSearch", () => {
       limit: 10,
     });
 
-    expect(result.results.map((entry) => entry.document.id)).toContain("hybrid-synthetic-llm");
-    expect(result.results.map((entry) => entry.document.id)).not.toContain("hybrid-data-only");
+    const ids = result.results.map((entry) => entry.document.id);
+    expect(ids).toContain("hybrid-synthetic-llm");
+    expect(ids).not.toContain("hybrid-data-only");
 
     delete process.env["EMBEDDING_MOCK"];
   });

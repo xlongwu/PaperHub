@@ -229,8 +229,14 @@ async function handleFetch(input: string | URL | Request, init?: RequestInit): P
     );
   }
 
-  if (url.pathname.startsWith("/api/tags/") && url.pathname.endsWith("/documents") && request.method === "GET") {
-    const tag = decodeURIComponent(url.pathname.replace("/api/tags/", "").replace("/documents", "").replace(/\/$/, ""));
+  if (
+    url.pathname.startsWith("/api/tags/") &&
+    url.pathname.endsWith("/documents") &&
+    request.method === "GET"
+  ) {
+    const tag = decodeURIComponent(
+      url.pathname.replace("/api/tags/", "").replace("/documents", "").replace(/\/$/, ""),
+    );
     const limit = Number.parseInt(url.searchParams.get("limit") ?? "12", 10);
     const offset = Number.parseInt(url.searchParams.get("offset") ?? "0", 10);
     const page = Math.floor(offset / limit) + 1;
@@ -379,7 +385,12 @@ function errorResponse(status: number, message: string): Response {
 }
 
 function splitCsv(value: string | null): string[] {
-  return value?.split(",").map((item) => item.trim()).filter(Boolean) ?? [];
+  return (
+    value
+      ?.split(",")
+      .map((item) => item.trim())
+      .filter(Boolean) ?? []
+  );
 }
 
 function asMode(value: string | null): "keyword" | "semantic" | "hybrid" | undefined {

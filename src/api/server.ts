@@ -10,9 +10,7 @@ import { getAllDocuments, getDocumentById, countDocuments, countDocumentsByDate 
 import { arxivCollector } from "@/collectors/arxiv";
 import { gptBlogCollector } from "@/collectors/gpt-blog";
 import { claudeBlogCollector } from "@/collectors/claude-blog";
-import { rawToDocument } from "@/collectors/transformer";
-import { insertDocument } from "@/db/documents";
-import { documentExists } from "@/db/documents";
+import { ingestDocuments } from "@/services/document-ingestion";
 import { getPendingSummaryDocuments } from "@/db/documents";
 import { withRetry, logError } from "@/utils/retry";
 import type { ApiResponse } from "@/types";
@@ -27,10 +25,8 @@ import {
   countHistory,
   countFavorites,
 } from "@/db/user";
-import { applyDocumentTags } from "@/tagger/apply";
-import { findDuplicateByTitle } from "@/utils/dedup";
 import { summarizeBatch } from "@/summarizer";
-import { hybridSearch } from "@/search";
+import { hybridSearch, generateSearchReport } from "@/search";
 import {
   getLlmSettingsState,
   saveLlmSettings,
@@ -39,14 +35,16 @@ import {
   type ProviderName,
 } from "@/providers";
 import { resetLlmProvider } from "@/report";
-import { indexDocumentVector } from "@/db/search";
+import { indexDocumentVector, getIndexStateStats } from "@/db/search";
+import { getIndexerState } from "@/search-indexer";
+import { getTagCloud, getDocumentsByTag, countDocumentsByTag, refreshTagStats } from "@/db/tags";
+import { getDb, rebuildFtsV2 } from "@/db/index";
 import {
-  getTagCloud,
-  getDocumentsByTag,
-  countDocumentsByTag,
-  refreshTagStats,
-  updateTagStatsForDocument,
-} from "@/db/tags";
+  getSearchQualityStats,
+  markSearchReformulated,
+  recordSearchClick,
+  recordSearchEvent,
+} from "@/db/search-events";
 import {
   buildPersonalizedRecommendations,
   getCurrentMemory,
@@ -230,8 +228,10 @@ export async function searchResponse(options: {
   mode?: "keyword" | "semantic" | "hybrid";
   limit?: number;
   offset?: number;
+  cursor?: string;
   sources?: string[];
   tags?: string[];
+  tagMatchMode?: "any" | "all";
   from?: string;
   to?: string;
 }): Promise<Awaited<ReturnType<typeof hybridSearch>>> {
@@ -240,8 +240,10 @@ export async function searchResponse(options: {
     mode: options.mode,
     limit: options.limit,
     offset: options.offset,
+    cursor: options.cursor,
     sources: options.sources,
     tags: options.tags,
+    tagMatchMode: options.tagMatchMode,
     dateRange: options.from && options.to ? { start: options.from, end: options.to } : undefined,
   });
 }
@@ -260,13 +262,19 @@ export async function indexAllVectors(): Promise<{ indexed: number; total: numbe
 
     total += docs.length;
 
-    for (const doc of docs) {
-      try {
-        await indexDocumentVector(doc);
-        indexed++;
-      } catch (e) {
-        console.error(`[api/index-vectors] Failed for ${doc.id}:`, e);
-      }
+    for (let index = 0; index < docs.length; index += 4) {
+      const batch = docs.slice(index, index + 4);
+      const results = await Promise.allSettled(batch.map((doc) => indexDocumentVector(doc)));
+      results.forEach((result, resultIndex) => {
+        if (result.status === "fulfilled") {
+          indexed++;
+        } else {
+          console.error(
+            `[api/index-vectors] Failed for ${batch[resultIndex]?.id ?? "unknown"}:`,
+            result.reason,
+          );
+        }
+      });
     }
 
     offset += docs.length;
@@ -431,7 +439,8 @@ app.post("/api/collect", collectLimiter, async (req, res) => {
       return;
     }
 
-    const results: Record<string, { collected: number; error?: string }> = {};
+    const results: Record<string, { collected: number; skipped?: number; errors?: number; error?: string }> =
+      {};
 
     const collectors = [
       { id: "arxiv", collector: arxivCollector },
@@ -448,20 +457,12 @@ app.post("/api/collect", collectLimiter, async (req, res) => {
           baseDelayMs: 1000,
         });
 
-        let inserted = 0;
-        for (const raw of rawDocs) {
-          const doc = rawToDocument(raw);
-          if (documentExists(doc.url) || findDuplicateByTitle(doc.title)) {
-            continue;
-          }
-
-          await applyDocumentTags(doc, raw);
-          insertDocument(doc);
-          updateTagStatsForDocument(doc);
-          inserted++;
-        }
-
-        results[id] = { collected: inserted };
+        const ingestionResult = await ingestDocuments(rawDocs);
+        results[id] = {
+          collected: ingestionResult.inserted,
+          skipped: ingestionResult.skipped,
+          errors: ingestionResult.errors,
+        };
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
         results[id] = { collected: 0, error: msg };
@@ -701,21 +702,91 @@ app.get("/api/search", searchLimiter, async (req, res) => {
     }
     const mode = modeRaw as "keyword" | "semantic" | "hybrid";
 
+    const tagMatchMode = String(req.query.tagMatch ?? "any").toLowerCase() === "all" ? "all" : "any";
+    const startedAt = Date.now();
     const result = await searchResponse({
       query: q,
       mode,
       limit: safeParseInt(req.query.limit, 20),
       offset: safeParseInt(req.query.offset, 0),
+      cursor: req.query.cursor as string | undefined,
       sources: req.query.sources ? String(req.query.sources).split(",") : undefined,
       tags: req.query.tags ? String(req.query.tags).split(",") : undefined,
+      tagMatchMode,
       from: req.query.from as string | undefined,
       to: req.query.to as string | undefined,
     });
 
-    ok(res, result);
+    const searchEventId = recordSearchEvent({
+      query: q,
+      mode,
+      modeUsed: result.modeUsed ?? result.mode,
+      resultCount: result.total,
+      latencyMs: Date.now() - startedAt,
+    });
+    ok(res, { ...result, searchEventId });
   } catch (e) {
     logError("api/search", e);
     err(res, 500, "Search failed");
+  }
+});
+
+// POST /api/search/report — async LLM summary (non-blocking)
+app.post("/api/search/report", llmLimiter, async (req, res) => {
+  try {
+    const { query, documentIds } = req.body as { query: string; documentIds: string[] };
+    if (!query || !documentIds?.length) {
+      err(res, 400, "query and documentIds are required");
+      return;
+    }
+
+    // Fetch documents by their IDs
+    const docs = documentIds.map((id: string) => getDocumentById(id)).filter(Boolean);
+    const mockResults = docs.map((doc) => ({ document: doc!, score: 1, matchType: "fts" as const }));
+
+    const report = await generateSearchReport(mockResults, query);
+    ok(res, { report });
+  } catch (e) {
+    logError("api/search/report", e);
+    err(res, 500, "Report generation failed");
+  }
+});
+
+app.post("/api/search/feedback", writeLimiter, (req, res) => {
+  try {
+    const body = req.body as {
+      eventId?: number;
+      documentId?: string;
+      rank?: number;
+      reformulated?: boolean;
+    };
+    if (!Number.isInteger(body.eventId) || Number(body.eventId) <= 0) {
+      err(res, 400, "A valid eventId is required");
+      return;
+    }
+    if (body.reformulated) {
+      markSearchReformulated(Number(body.eventId));
+    }
+    if (body.documentId && Number.isInteger(body.rank) && Number(body.rank) > 0) {
+      recordSearchClick({
+        eventId: Number(body.eventId),
+        documentId: body.documentId,
+        rank: Number(body.rank),
+      });
+    }
+    ok(res, { recorded: true });
+  } catch (e) {
+    logError("api/search/feedback", e);
+    err(res, 500, "Failed to record search feedback");
+  }
+});
+
+app.get("/api/search/metrics", (_req, res) => {
+  try {
+    ok(res, getSearchQualityStats());
+  } catch (e) {
+    logError("api/search/metrics", e);
+    err(res, 500, "Failed to fetch search metrics");
   }
 });
 
@@ -815,6 +886,66 @@ app.post("/api/index-vectors", writeLimiter, async (_req, res) => {
   } catch (e) {
     logError("api/index-vectors", e);
     err(res, 500, "Vector indexing failed");
+  }
+});
+
+// GET /api/index/status — index coverage and indexer state
+app.get("/api/index/status", (_req, res) => {
+  try {
+    const stats = getIndexStateStats();
+    const indexer = getIndexerState();
+    ok(res, { ...stats, indexer });
+  } catch (e) {
+    logError("api/index/status", e);
+    err(res, 500, "Failed to fetch index status");
+  }
+});
+
+// GET /api/index/coverage — corpus coverage with date range
+app.get("/api/index/coverage", (_req, res) => {
+  try {
+    const db = getDb();
+    const totalDocs = (db.prepare("SELECT COUNT(*) as c FROM documents").get() as { c: number }).c;
+    const firstDate = (
+      db.prepare("SELECT MIN(published_at) as d FROM documents").get() as { d: string | null }
+    ).d;
+    const lastDate = (
+      db.prepare("SELECT MAX(published_at) as d FROM documents").get() as { d: string | null }
+    ).d;
+
+    const vectorIndexed = (
+      db.prepare("SELECT COUNT(*) as c FROM document_index_state WHERE embedding_status = 'ready'").get() as {
+        c: number;
+      }
+    ).c;
+    const ftsIndexed = (db.prepare("SELECT COUNT(*) as c FROM document_fts_v2").get() as { c: number }).c;
+
+    const bySource = db
+      .prepare("SELECT source, COUNT(*) as c FROM documents GROUP BY source")
+      .all() as Array<{ source: string; c: number }>;
+
+    ok(res, {
+      totalDocs,
+      ftsIndexed,
+      vectorIndexed,
+      coverage: totalDocs > 0 ? `${vectorIndexed}/${totalDocs}` : "0/0",
+      dateRange: firstDate && lastDate ? { from: firstDate, to: lastDate } : null,
+      bySource: Object.fromEntries(bySource.map((r) => [r.source, r.c])),
+    });
+  } catch (e) {
+    logError("api/index/coverage", e);
+    err(res, 500, "Failed to fetch coverage");
+  }
+});
+
+// POST /api/index/rebuild-fts — manually rebuild FTS from content table
+app.post("/api/index/rebuild-fts", writeLimiter, (_req, res) => {
+  try {
+    rebuildFtsV2();
+    ok(res, { rebuilt: true });
+  } catch (e) {
+    logError("api/index/rebuild-fts", e);
+    err(res, 500, "FTS rebuild failed");
   }
 });
 

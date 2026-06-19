@@ -1,0 +1,144 @@
+{
+  "version": "1",
+  "description": "PaperHub search evaluation queries — Phase 6 fixture corpus (23 documents)",
+  "corpus": "phase6-fixtures",
+  "queries": [
+    {
+      "queryId": "q01-exact-agent",
+      "query": "agent memory",
+      "language": "en",
+      "category": "multi_concept",
+      "mode": "hybrid",
+      "relevantDocIds": ["doc-e2e-agent-memory", "doc-e2e-tag-agents-3", "doc-e2e-agent-archive-2", "doc-e2e-agent-archive-3", "doc-e2e-agent-archive-5"],
+      "relevanceGrades": {"doc-e2e-agent-memory": 3, "doc-e2e-tag-agents-3": 3, "doc-e2e-agent-archive-2": 1, "doc-e2e-agent-archive-3": 1, "doc-e2e-agent-archive-5": 1},
+      "notes": "Exact match: 'Agent Memory Systems in Production' and 'Agent Planning with Memory Compression'"
+    },
+    {
+      "queryId": "q02-rag-search",
+      "query": "RAG retrieval",
+      "language": "en",
+      "category": "abbreviation",
+      "mode": "hybrid",
+      "relevantDocIds": ["doc-e2e-rag-systems", "doc-e2e-tag-rag-1", "doc-e2e-tag-rag-2", "doc-e2e-source-openai", "doc-e2e-search-report"],
+      "relevanceGrades": {"doc-e2e-rag-systems": 3, "doc-e2e-tag-rag-1": 2, "doc-e2e-tag-rag-2": 2, "doc-e2e-source-openai": 1, "doc-e2e-search-report": 1},
+      "notes": "Tests RAG alias expansion. Matches RAG Systems, Caching Patterns, Evaluation Loops"
+    },
+    {
+      "queryId": "q03-multimodal",
+      "query": "multimodal agents",
+      "language": "en",
+      "category": "multi_concept",
+      "mode": "hybrid",
+      "relevantDocIds": ["doc-e2e-multimodal-ops", "doc-e2e-model-gpt4o", "doc-e2e-agent-memory", "doc-e2e-tag-agents-3", "doc-e2e-tag-rag-2"],
+      "notes": "Multi-concept: multimodal + agents. Tests concept combination"
+    },
+    {
+      "queryId": "q04-safety",
+      "query": "safety patterns",
+      "language": "en",
+      "category": "single_keyword",
+      "mode": "keyword",
+      "relevantDocIds": ["doc-e2e-claude-safety", "doc-e2e-year-2025", "doc-e2e-search-report", "doc-e2e-agent-memory"],
+      "notes": "Exact topic match: 'Claude Safety Patterns for Tool Use'"
+    },
+    {
+      "queryId": "q05-planning",
+      "query": "agent planning benchmarks",
+      "language": "en",
+      "category": "multi_concept",
+      "mode": "keyword",
+      "relevantDocIds": ["doc-e2e-tag-agents-1", "doc-e2e-tag-agents-2", "doc-e2e-tag-agents-3", "doc-e2e-agent-archive-1", "doc-e2e-agent-archive-4"],
+      "notes": "Title match: two documents about Agent Planning Benchmarks"
+    },
+    {
+      "queryId": "q06-gpt4-blog",
+      "query": "GPT-4 research",
+      "language": "en",
+      "category": "model_name",
+      "mode": "hybrid",
+      "relevantDocIds": ["doc-e2e-model-gpt4o", "doc-e2e-agent-memory", "doc-e2e-tag-agents-1", "doc-e2e-tag-rag-2", "doc-e2e-year-2025"],
+      "notes": "Model name search. Should match GPT-4o Research Assistant and GPT-4 Memory Systems"
+    },
+    {
+      "queryId": "q07-prompt",
+      "query": "prompt alignment",
+      "language": "en",
+      "category": "semantic",
+      "mode": "hybrid",
+      "relevantDocIds": ["doc-e2e-search-report", "doc-e2e-claude-safety", "doc-e2e-tag-rag-2", "doc-e2e-rag-systems"],
+      "notes": "Tests 'Prompt Alignment Research Memo' with concept matching"
+    },
+    {
+      "queryId": "q08-chinese-agent",
+      "query": "智能体记忆",
+      "language": "zh",
+      "category": "chinese",
+      "mode": "hybrid",
+      "relevantDocIds": ["doc-e2e-agent-memory", "doc-e2e-tag-agents-3", "doc-e2e-agent-archive-2", "doc-e2e-agent-archive-3", "doc-e2e-agent-archive-5"],
+      "notes": "Chinese query for agent memory. Tests CJK recall quality"
+    },
+    {
+      "queryId": "q09-chinese-multi",
+      "query": "多模态评估",
+      "language": "zh",
+      "category": "chinese",
+      "mode": "hybrid",
+      "relevantDocIds": ["doc-e2e-multimodal-ops", "doc-e2e-tag-rag-2", "doc-e2e-model-gpt4o", "doc-e2e-search-report"],
+      "notes": "Chinese query for multimodal evaluation. Tests multi-concept CJK"
+    },
+    {
+      "queryId": "q10-abbreviation-llm",
+      "query": "LLM safety",
+      "language": "en",
+      "category": "abbreviation",
+      "mode": "hybrid",
+      "relevantDocIds": ["doc-e2e-claude-safety", "doc-e2e-search-report", "doc-e2e-year-2025", "doc-e2e-agent-memory"],
+      "notes": "Tests LLM abbreviation expansion to 'large language model' for safety docs"
+    },
+    {
+      "queryId": "q11-source-arxiv",
+      "query": "agent planning",
+      "language": "en",
+      "category": "filter",
+      "mode": "keyword",
+      "relevantDocIds": ["doc-e2e-tag-agents-1", "doc-e2e-tag-agents-2", "doc-e2e-tag-agents-3", "doc-e2e-agent-archive-1", "doc-e2e-agent-archive-4"],
+      "notes": "Tests that arxiv papers about agent planning rank high"
+    },
+    {
+      "queryId": "q12-archive-search",
+      "query": "agent archive",
+      "language": "en",
+      "category": "single_keyword",
+      "mode": "hybrid",
+      "relevantDocIds": ["doc-e2e-agent-archive-1", "doc-e2e-agent-archive-2", "doc-e2e-agent-archive-3", "doc-e2e-agent-archive-4", "doc-e2e-agent-archive-5", "doc-e2e-agent-archive-6", "doc-e2e-agent-archive-7", "doc-e2e-agent-archive-8", "doc-e2e-agent-archive-9", "doc-e2e-agent-archive-10"],
+      "notes": "Tests that archive documents (10 generated Agent Archive Notes) are findable"
+    },
+    {
+      "queryId": "q13-semantic-memory",
+      "query": "compression mechanisms for agent context",
+      "language": "en",
+      "category": "semantic",
+      "mode": "semantic",
+      "relevantDocIds": ["doc-e2e-agent-memory", "doc-e2e-tag-agents-3", "doc-e2e-agent-archive-2", "doc-e2e-agent-archive-3", "doc-e2e-agent-archive-5"],
+      "notes": "Semantic search test: 'compression' should match documents about memory compression"
+    },
+    {
+      "queryId": "q14-year-2025",
+      "query": "agent safety 2025",
+      "language": "en",
+      "category": "filter",
+      "mode": "hybrid",
+      "relevantDocIds": ["doc-e2e-year-2025", "doc-e2e-claude-safety", "doc-e2e-search-report", "doc-e2e-agent-memory"],
+      "notes": "Tests year-based filtering: 2025 Agent Safety Survey"
+    },
+    {
+      "queryId": "q15-openai-source",
+      "query": "OpenAI retrieval",
+      "language": "en",
+      "category": "source",
+      "mode": "keyword",
+      "relevantDocIds": ["doc-e2e-source-openai", "doc-e2e-rag-systems", "doc-e2e-tag-rag-1", "doc-e2e-tag-rag-2"],
+      "notes": "Source-based search: OpenAI Retrieval Notes"
+    }
+  ]
+}

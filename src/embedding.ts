@@ -37,15 +37,15 @@ function ensureEmbeddingCacheDir(): string | null {
   }
 }
 
-function cacheKey(text: string): string {
-  return crypto.createHash("sha256").update(text).digest("hex").slice(0, 16) + ".json";
+function cacheKey(text: string, signature: string): string {
+  return crypto.createHash("sha256").update(`${signature}\n${text}`).digest("hex").slice(0, 24) + ".json";
 }
 
-function getCachedEmbedding(text: string): number[] | null {
+function getCachedEmbedding(text: string, signature: string): number[] | null {
   const dir = ensureEmbeddingCacheDir();
   if (!dir) return null;
 
-  const file = path.join(dir, cacheKey(text));
+  const file = path.join(dir, cacheKey(text, signature));
   try {
     const data = JSON.parse(fs.readFileSync(file, "utf-8")) as number[];
     if (data.length === EMBEDDING_DIMENSION) return data;
@@ -55,11 +55,11 @@ function getCachedEmbedding(text: string): number[] | null {
   }
 }
 
-function setCachedEmbedding(text: string, embedding: number[]): void {
+function setCachedEmbedding(text: string, signature: string, embedding: number[]): void {
   const dir = ensureEmbeddingCacheDir();
   if (!dir) return;
 
-  const file = path.join(dir, cacheKey(text));
+  const file = path.join(dir, cacheKey(text, signature));
   try {
     fs.writeFileSync(file, JSON.stringify(embedding), "utf-8");
   } catch {
@@ -105,20 +105,33 @@ async function generateOpenAIEmbedding(text: string): Promise<number[]> {
 // ---------------------------------------------------------------------------
 
 function generateMockEmbedding(text: string): number[] {
-  // Deterministic pseudo-random based on text hash
-  const seed = crypto.createHash("sha256").update(text).digest("hex");
-  const vec: number[] = [];
-  for (let i = 0; i < EMBEDDING_DIMENSION; i++) {
-    const start = (i * 8) % (seed.length - 8);
-    const hex = seed.slice(start, start + 8);
-    const val = (parseInt(hex, 16) % 2000) / 1000 - 1; // [-1, 1]
-    vec.push(val);
+  // Deterministic feature hashing preserves lexical neighbourhoods, unlike a
+  // random vector per whole string. This makes offline semantic tests useful.
+  const normalized = text.normalize("NFKC").toLowerCase();
+  const words = normalized.match(/[\p{L}\p{N}]+/gu) ?? [];
+  const features = new Set(words);
+
+  for (let index = 0; index < words.length - 1; index++) {
+    features.add(`${words[index]}_${words[index + 1]}`);
   }
-  // Normalize
-  const norm = Math.sqrt(vec.reduce((s, v) => s + v * v, 0));
-  const normalized = norm > 0 ? vec.map((v) => v / norm) : vec.map(() => 0);
-  // Ensure no NaN/Inf — replace with 0
-  return normalized.map((v) => (Number.isFinite(v) ? v : 0));
+  const cjk = [...normalized].filter((char) => /[\u3400-\u9fff]/.test(char));
+  for (let index = 0; index < cjk.length - 1; index++) {
+    features.add(cjk[index]! + cjk[index + 1]!);
+  }
+  for (let index = 0; index < cjk.length - 2; index++) {
+    features.add(cjk[index]! + cjk[index + 1]! + cjk[index + 2]!);
+  }
+
+  const vector = Array<number>(EMBEDDING_DIMENSION).fill(0);
+  for (const feature of features) {
+    const digest = crypto.createHash("sha256").update(feature).digest();
+    const position = digest.readUInt32LE(0) % EMBEDDING_DIMENSION;
+    const sign = digest[4]! % 2 === 0 ? 1 : -1;
+    vector[position] = (vector[position] ?? 0) + sign;
+  }
+
+  const norm = Math.sqrt(vector.reduce((sum, value) => sum + value * value, 0));
+  return norm > 0 ? vector.map((value) => value / norm) : vector;
 }
 
 // ---------------------------------------------------------------------------
@@ -126,10 +139,9 @@ function generateMockEmbedding(text: string): number[] {
 // ---------------------------------------------------------------------------
 
 export async function generateEmbedding(text: string): Promise<number[]> {
-  const cached = getCachedEmbedding(text);
-  if (cached) return cached;
-
   const runtime = getEmbeddingRuntime();
+  const cached = getCachedEmbedding(text, runtime.signature);
+  if (cached) return cached;
 
   let embedding: number[];
   if (runtime.provider === "mock") {
@@ -138,7 +150,7 @@ export async function generateEmbedding(text: string): Promise<number[]> {
     embedding = await generateOpenAIEmbedding(text);
   }
 
-  setCachedEmbedding(text, embedding);
+  setCachedEmbedding(text, runtime.signature, embedding);
   return embedding;
 }
 
@@ -161,8 +173,8 @@ export function getEmbeddingRuntime(): EmbeddingRuntime {
   if (process.env["EMBEDDING_MOCK"] === "1") {
     return {
       provider: "mock",
-      model: "deterministic-test-vector-v1",
-      signature: `mock:deterministic-test-vector-v1:${EMBEDDING_DIMENSION}`,
+      model: "feature-hash-test-vector-v2",
+      signature: `mock:feature-hash-test-vector-v2:${EMBEDDING_DIMENSION}`,
     };
   }
 

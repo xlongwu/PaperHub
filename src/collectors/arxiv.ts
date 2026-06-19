@@ -18,7 +18,9 @@ export const arxivCollector: ContentCollector = {
 
   async fetch(): Promise<RawDocument[]> {
     console.log("[collector/arxiv] Fetching papers...");
-    const data = await fetchArxivData();
+    // Scheduler fetches last 48h to avoid ArXiv's ~1-day publishing delay
+    const twoDaysAgo = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
+    const data = await fetchArxivData({ fromDate: twoDaysAgo });
 
     if (!data.fetchSuccess || data.papers.length === 0) {
       console.log("[collector/arxiv] No papers fetched.");

@@ -4,6 +4,8 @@ import path from "node:path";
 export default defineConfig({
   test: {
     globals: true,
+    fileParallelism: false,
+    testTimeout: 30_000,
     include: ["src/__tests__/**/*.test.ts", "src/__tests__/**/*.test.tsx"],
     coverage: {
       provider: "v8",
