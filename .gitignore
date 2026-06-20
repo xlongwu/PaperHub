@@ -1,10 +1,12 @@
 .env
 .DS_Store
 node_modules/
+.pnpm-store/
 dist/
 dist-ui/
 dist-desktop/
 .tmp/
+*.log
 test-results/
 playwright-report/
 coverage/

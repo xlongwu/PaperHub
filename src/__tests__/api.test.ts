@@ -1,5 +1,6 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
+  app,
   hotRecommendationsResponse,
   indexAllVectors,
   listDocumentsResponse,
@@ -269,5 +270,34 @@ describe("recommendation routes", () => {
     expect(options.useLlmFallback).toBe(true);
     expect(payload.rebuilt).toBeGreaterThan(0);
     expect(payload.terms.every((term) => term.source === "digest")).toBe(true);
+  });
+});
+
+describe("summarization route", () => {
+  it("rejects unsupported summary languages with HTTP 400", async () => {
+    const server = await new Promise<ReturnType<typeof app.listen>>((resolve) => {
+      const instance = app.listen(0, "127.0.0.1", () => resolve(instance));
+    });
+
+    try {
+      const address = server.address();
+      if (!address || typeof address === "string") {
+        throw new Error("Test server did not expose a TCP port");
+      }
+      const response = await fetch(`http://127.0.0.1:${address.port}/api/summarize`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ document_id: "doc-1", lang: "fr" }),
+      });
+      const payload = (await response.json()) as { success: boolean; error?: string };
+
+      expect(response.status).toBe(400);
+      expect(payload.success).toBe(false);
+      expect(payload.error).toContain('"zh" or "en"');
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
   });
 });

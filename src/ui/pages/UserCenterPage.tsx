@@ -2,17 +2,20 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { EmptyBlock, LoadingBlock, SectionHeader } from "../components";
+import { LlmConnectionsPanel } from "../llm-connections";
 import {
   getFavorites,
   getHistory,
-  getLlmSettings,
+  getEmbeddingSettings,
   getUserMemory,
   getUserPreferences,
   rebuildUserMemory,
+  rebuildEmbeddingIndex,
   removeFavorite,
-  saveLlmSettings,
+  saveEmbeddingSettings,
   saveUserPreferences,
-  type LlmProviderName,
+  testEmbeddingConnection,
+  type EmbeddingProviderName,
 } from "../lib/api";
 
 export function UserCenterPage(): JSX.Element {
@@ -21,9 +24,10 @@ export function UserCenterPage(): JSX.Element {
     queryKey: ["user", "preferences"],
     queryFn: getUserPreferences,
   });
-  const llmSettingsQuery = useQuery({
-    queryKey: ["llm", "settings"],
-    queryFn: getLlmSettings,
+  const embeddingSettingsQuery = useQuery({
+    queryKey: ["embedding", "settings"],
+    queryFn: getEmbeddingSettings,
+    refetchInterval: (query) => (query.state.data?.index.status === "rebuilding" ? 2_000 : false),
   });
   const memoryQuery = useQuery({
     queryKey: ["user", "memory"],
@@ -42,10 +46,11 @@ export function UserCenterPage(): JSX.Element {
   const [defaultLanguage, setDefaultLanguage] = useState("zh");
   const [summaryLength, setSummaryLength] = useState("short");
   const [dailyRecommendCount, setDailyRecommendCount] = useState("10");
-  const [llmProvider, setLlmProvider] = useState<LlmProviderName>("deepseek");
-  const [llmApiKeyDraft, setLlmApiKeyDraft] = useState("");
-  const [llmModel, setLlmModel] = useState("");
-  const [llmBaseUrl, setLlmBaseUrl] = useState("");
+  // Embedding form state
+  const [embeddingProvider, setEmbeddingProvider] = useState<EmbeddingProviderName>("openai");
+  const [embeddingModel, setEmbeddingModel] = useState("");
+  const [embeddingBaseUrl, setEmbeddingBaseUrl] = useState("");
+  const [embeddingApiKeyDraft, setEmbeddingApiKeyDraft] = useState("");
 
   useEffect(() => {
     if (!preferencesQuery.data) {
@@ -59,15 +64,17 @@ export function UserCenterPage(): JSX.Element {
   }, [preferencesQuery.data]);
 
   useEffect(() => {
-    if (!llmSettingsQuery.data) {
+    if (!embeddingSettingsQuery.data) {
       return;
     }
-
-    setLlmProvider(llmSettingsQuery.data.provider);
-    setLlmModel(llmSettingsQuery.data.model);
-    setLlmBaseUrl(llmSettingsQuery.data.baseUrl);
-    setLlmApiKeyDraft("");
-  }, [llmSettingsQuery.data]);
+    const data = embeddingSettingsQuery.data;
+    if (data.provider === "openai" || data.provider === "ollama") {
+      setEmbeddingProvider(data.provider);
+    }
+    setEmbeddingModel(data.model ?? "");
+    setEmbeddingBaseUrl(data.baseUrl ?? "");
+    setEmbeddingApiKeyDraft("");
+  }, [embeddingSettingsQuery.data]);
 
   const savePreferencesMutation = useMutation({
     mutationFn: async () =>
@@ -96,31 +103,43 @@ export function UserCenterPage(): JSX.Element {
     },
   });
 
-  const saveLlmSettingsMutation = useMutation({
+  const testEmbeddingMutation = useMutation({
+    mutationFn: testEmbeddingConnection,
+  });
+
+  const saveEmbeddingSettingsMutation = useMutation({
     mutationFn: () =>
-      saveLlmSettings({
-        provider: llmProvider,
-        ...(llmApiKeyDraft.trim() ? { apiKey: llmApiKeyDraft.trim() } : {}),
-        model: llmModel,
-        baseUrl: llmBaseUrl,
+      saveEmbeddingSettings({
+        provider: embeddingProvider,
+        model: embeddingModel || undefined,
+        baseUrl: embeddingBaseUrl || undefined,
+        ...(embeddingApiKeyDraft.trim() ? { apiKey: embeddingApiKeyDraft.trim() } : {}),
       }),
     onSuccess: async () => {
-      setLlmApiKeyDraft("");
-      await queryClient.invalidateQueries({ queryKey: ["llm", "settings"] });
+      setEmbeddingApiKeyDraft("");
+      await queryClient.invalidateQueries({ queryKey: ["embedding", "settings"] });
     },
   });
 
-  const clearLlmApiKeyMutation = useMutation({
+  const clearEmbeddingApiKeyMutation = useMutation({
     mutationFn: () =>
-      saveLlmSettings({
-        provider: llmProvider,
+      saveEmbeddingSettings({
+        provider: embeddingProvider,
+        model: embeddingModel || undefined,
+        baseUrl: embeddingBaseUrl || undefined,
         clearApiKey: true,
-        model: llmModel,
-        baseUrl: llmBaseUrl,
       }),
     onSuccess: async () => {
-      setLlmApiKeyDraft("");
-      await queryClient.invalidateQueries({ queryKey: ["llm", "settings"] });
+      setEmbeddingApiKeyDraft("");
+      await queryClient.invalidateQueries({ queryKey: ["embedding", "settings"] });
+    },
+  });
+
+  const rebuildEmbeddingMutation = useMutation({
+    mutationFn: rebuildEmbeddingIndex,
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["embedding", "settings"] });
+      await queryClient.invalidateQueries({ queryKey: ["search", "coverage"] });
     },
   });
 
@@ -189,102 +208,167 @@ export function UserCenterPage(): JSX.Element {
 
       <section className="content-panel">
         <SectionHeader
-          description="Configure the provider used for summaries, tags, and search reports. API keys stay on this device and are never shown again."
-          kicker="AI"
-          title="LLM connection"
+          description="Configure the embedding model used for semantic search. Changes take effect immediately; rebuild the vector index if you switch models."
+          kicker="Search"
+          title="Embedding connection"
         />
-        {llmSettingsQuery.isLoading ? <LoadingBlock /> : null}
-        <div className="settings-grid">
-          <label className="field">
-            <span>Provider</span>
-            <select
-              className="field-input"
-              onChange={(event) => {
-                setLlmProvider(event.target.value as LlmProviderName);
-                setLlmApiKeyDraft("");
-                setLlmModel("");
-                setLlmBaseUrl("");
-              }}
-              value={llmProvider}
-            >
-              {(
-                llmSettingsQuery.data?.supportedProviders ?? [
-                  "deepseek",
-                  "openai",
-                  "anthropic",
-                  "openrouter",
-                  "github-copilot",
-                ]
-              ).map((provider) => (
-                <option key={provider} value={provider}>
-                  {providerLabel(provider)}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="field">
-            <span>API key</span>
-            <input
-              autoComplete="off"
-              className="field-input"
-              onChange={(event) => setLlmApiKeyDraft(event.target.value)}
-              placeholder={
-                llmSettingsQuery.data?.hasApiKey && llmSettingsQuery.data.provider === llmProvider
-                  ? "A key is already configured; leave blank to keep it"
-                  : "Paste the provider API key"
-              }
-              type="password"
-              value={llmApiKeyDraft}
-            />
-          </label>
-          <label className="field">
-            <span>Model</span>
-            <input
-              className="field-input"
-              onChange={(event) => setLlmModel(event.target.value)}
-              placeholder="Use the provider default"
-              value={llmModel}
-            />
-          </label>
-          <label className="field">
-            <span>API base URL</span>
-            <input
-              className="field-input"
-              onChange={(event) => setLlmBaseUrl(event.target.value)}
-              placeholder="Use the provider default endpoint"
-              type="url"
-              value={llmBaseUrl}
-            />
-          </label>
-          <p className="settings-note" role="status">
-            {llmSettingsStatus(llmSettingsQuery.data, llmProvider)}
-          </p>
-          {saveLlmSettingsMutation.error ? (
-            <p className="settings-error">{saveLlmSettingsMutation.error.message}</p>
-          ) : null}
-          <div className="toolbar-inline">
-            <button
-              className="primary-button"
-              disabled={saveLlmSettingsMutation.isPending}
-              onClick={() => saveLlmSettingsMutation.mutate()}
-              type="button"
-            >
-              {saveLlmSettingsMutation.isPending ? "Saving..." : "Save LLM settings"}
-            </button>
-            {llmSettingsQuery.data?.apiKeySource === "stored" &&
-            llmSettingsQuery.data.provider === llmProvider ? (
+        {embeddingSettingsQuery.isLoading ? <LoadingBlock /> : null}
+        {embeddingSettingsQuery.data ? (
+          <div className="settings-grid">
+            <label className="field">
+              <span>Provider</span>
+              <select
+                className="field-input"
+                id="embedding-provider"
+                onChange={(event) => {
+                  const p = event.target.value as EmbeddingProviderName;
+                  setEmbeddingProvider(p);
+                  setEmbeddingApiKeyDraft("");
+                  // Pre-fill sensible base URL defaults when switching providers
+                  if (p === "ollama") {
+                    setEmbeddingBaseUrl((prev) =>
+                      !prev || prev === "https://api.openai.com/v1"
+                        ? "http://127.0.0.1:11434"
+                        : prev,
+                    );
+                  } else {
+                    setEmbeddingBaseUrl((prev) =>
+                      !prev || prev === "http://127.0.0.1:11434"
+                        ? "https://api.openai.com/v1"
+                        : prev,
+                    );
+                  }
+                }}
+                value={embeddingProvider}
+              >
+                <option value="openai">OpenAI (API)</option>
+                <option value="ollama">Ollama (Local)</option>
+              </select>
+            </label>
+            <label className="field">
+              <span>Model</span>
+              <input
+                className="field-input"
+                id="embedding-model"
+                onChange={(event) => setEmbeddingModel(event.target.value)}
+                placeholder={
+                  embeddingProvider === "ollama"
+                    ? "e.g. qwen3-embedding:0.6b"
+                    : "e.g. text-embedding-3-small"
+                }
+                value={embeddingModel}
+              />
+            </label>
+            <label className="field">
+              <span>Base URL</span>
+              <input
+                className="field-input"
+                id="embedding-base-url"
+                onChange={(event) => setEmbeddingBaseUrl(event.target.value)}
+                placeholder={
+                  embeddingProvider === "ollama"
+                    ? "http://127.0.0.1:11434"
+                    : "https://api.openai.com/v1"
+                }
+                type="url"
+                value={embeddingBaseUrl}
+              />
+            </label>
+            {embeddingProvider === "openai" ? (
+              <label className="field">
+                <span>API key</span>
+                <input
+                  autoComplete="off"
+                  className="field-input"
+                  id="embedding-api-key"
+                  onChange={(event) => setEmbeddingApiKeyDraft(event.target.value)}
+                  placeholder={
+                    embeddingSettingsQuery.data.hasApiKey &&
+                    embeddingSettingsQuery.data.source === "stored"
+                      ? "A key is already configured; leave blank to keep it"
+                      : "Paste your embedding API key"
+                  }
+                  type="password"
+                  value={embeddingApiKeyDraft}
+                />
+              </label>
+            ) : null}
+            <div className="field">
+              <span>Detected dimensions</span>
+              <strong>
+                {testEmbeddingMutation.data?.dimensions ??
+                  embeddingSettingsQuery.data.index.dimensions ??
+                  "Not probed"}
+              </strong>
+            </div>
+            <p className="settings-note" role="status">
+              {embeddingSettingsStatus(embeddingSettingsQuery.data, embeddingProvider)}
+            </p>
+            <p className="settings-note" role="status">
+              Index {embeddingSettingsQuery.data.index.status}: {embeddingSettingsQuery.data.index.ready}/
+              {embeddingSettingsQuery.data.index.total} ready,{" "}
+              {embeddingSettingsQuery.data.index.pending + embeddingSettingsQuery.data.index.running} pending,{" "}
+              {embeddingSettingsQuery.data.index.failed} failed.
+            </p>
+            {embeddingSettingsQuery.data.index.lastError ? (
+              <p className="settings-error">{embeddingSettingsQuery.data.index.lastError}</p>
+            ) : null}
+            {saveEmbeddingSettingsMutation.error ? (
+              <p className="settings-error">{saveEmbeddingSettingsMutation.error.message}</p>
+            ) : null}
+            {testEmbeddingMutation.error ? (
+              <p className="settings-error">{testEmbeddingMutation.error.message}</p>
+            ) : null}
+            {rebuildEmbeddingMutation.error ? (
+              <p className="settings-error">{rebuildEmbeddingMutation.error.message}</p>
+            ) : null}
+            <div className="toolbar-inline">
               <button
-                className="secondary-button"
-                disabled={clearLlmApiKeyMutation.isPending}
-                onClick={() => clearLlmApiKeyMutation.mutate()}
+                className="primary-button"
+                disabled={saveEmbeddingSettingsMutation.isPending}
+                id="save-embedding-settings"
+                onClick={() => saveEmbeddingSettingsMutation.mutate()}
                 type="button"
               >
-                Remove saved key
+                {saveEmbeddingSettingsMutation.isPending ? "Saving..." : "Save embedding settings"}
               </button>
-            ) : null}
+              {embeddingSettingsQuery.data.source === "stored" &&
+              embeddingSettingsQuery.data.hasApiKey &&
+              embeddingProvider === "openai" ? (
+                <button
+                  className="secondary-button"
+                  disabled={clearEmbeddingApiKeyMutation.isPending}
+                  id="clear-embedding-api-key"
+                  onClick={() => clearEmbeddingApiKeyMutation.mutate()}
+                  type="button"
+                >
+                  Remove saved key
+                </button>
+              ) : null}
+              <button
+                className="secondary-button"
+                disabled={testEmbeddingMutation.isPending}
+                id="test-embedding-connection"
+                onClick={() => testEmbeddingMutation.mutate()}
+                type="button"
+              >
+                {testEmbeddingMutation.isPending ? "Testing..." : "Test connection"}
+              </button>
+              <button
+                className="primary-button"
+                disabled={rebuildEmbeddingMutation.isPending}
+                id="rebuild-vector-index"
+                onClick={() => rebuildEmbeddingMutation.mutate()}
+                type="button"
+              >
+                {rebuildEmbeddingMutation.isPending ? "Starting..." : "Rebuild vector index"}
+              </button>
+            </div>
           </div>
-        </div>
+        ) : null}
       </section>
+
+      <LlmConnectionsPanel />
 
       <section className="content-panel">
         <SectionHeader
@@ -372,29 +456,25 @@ export function UserCenterPage(): JSX.Element {
   );
 }
 
-function providerLabel(provider: LlmProviderName): string {
-  const labels: Record<LlmProviderName, string> = {
-    anthropic: "Anthropic",
-    openai: "OpenAI",
-    "github-copilot": "GitHub Models",
-    openrouter: "OpenRouter",
-    deepseek: "DeepSeek",
-  };
-  return labels[provider];
-}
-
-function llmSettingsStatus(
-  settings: Awaited<ReturnType<typeof getLlmSettings>> | undefined,
-  selectedProvider: LlmProviderName,
+function embeddingSettingsStatus(
+  settings: Awaited<ReturnType<typeof getEmbeddingSettings>> | undefined,
+  selectedProvider: "openai" | "ollama",
 ): string {
-  if (!settings || settings.provider !== selectedProvider) {
-    return "Save to activate this provider.";
+  if (!settings) {
+    return "Save to activate this embedding configuration.";
   }
-  if (settings.apiKeySource === "stored") {
-    return "API key configured locally. New LLM requests will use these settings.";
+  if (settings.source === "environment") {
+    return "Configuration is set via environment variables and cannot be overridden here.";
   }
-  if (settings.apiKeySource === "environment") {
-    return "Using an API key from the process environment.";
+  if (settings.source === "stored") {
+    if (selectedProvider === "openai" && !settings.hasApiKey) {
+      return "Saved — but no API key stored. Semantic search will fail until a key is saved.";
+    }
+    return "Embedding settings saved. Rebuild the vector index if you changed the model.";
   }
-  return "No API key configured. LLM requests will fail until a key is saved.";
+  // "default"
+  if (selectedProvider === "ollama") {
+    return "Using built-in defaults. Save to apply your Ollama configuration.";
+  }
+  return "Using built-in defaults. Save to persist your configuration.";
 }

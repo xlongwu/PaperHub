@@ -37,6 +37,8 @@ function toDb(doc: Document): Record<string, unknown> {
     model_tags: JSON.stringify(doc.modelTags),
     summary_zh: doc.summaryZh ?? null,
     summary_en: doc.summaryEn ?? null,
+    summary_zh_level: doc.summaryZhLevel ?? null,
+    summary_en_level: doc.summaryEnLevel ?? null,
     created_at: doc.createdAt,
     updated_at: doc.updatedAt,
     is_summarized: doc.isSummarized ? 1 : 0,
@@ -71,6 +73,12 @@ function fromDb(row: Record<string, unknown>): Document {
     modelTags: safeJsonParse<string[]>(row.model_tags, []),
     summaryZh: row.summary_zh ? String(row.summary_zh) : undefined,
     summaryEn: row.summary_en ? String(row.summary_en) : undefined,
+    summaryZhLevel: row.summary_zh_level
+      ? (String(row.summary_zh_level) as Document["summaryZhLevel"])
+      : undefined,
+    summaryEnLevel: row.summary_en_level
+      ? (String(row.summary_en_level) as Document["summaryEnLevel"])
+      : undefined,
     createdAt: String(row.created_at),
     updatedAt: String(row.updated_at),
     isSummarized: Boolean(row.is_summarized),
@@ -89,11 +97,13 @@ export function insertDocument(doc: Document): string {
       id, title, source, url, published_at, authors, abstract,
       full_text, full_text_path, language, domain_tags, source_tag, type_tag,
       year_tag, model_tags, summary_zh, summary_en,
+      summary_zh_level, summary_en_level,
       created_at, updated_at, is_summarized
     ) VALUES (
       @id, @title, @source, @url, @published_at, @authors, @abstract,
       @full_text, @full_text_path, @language, @domain_tags, @source_tag, @type_tag,
       @year_tag, @model_tags, @summary_zh, @summary_en,
+      @summary_zh_level, @summary_en_level,
       @created_at, @updated_at, @is_summarized
     )
     ON CONFLICT(url) DO UPDATE SET
@@ -105,6 +115,8 @@ export function insertDocument(doc: Document): string {
       model_tags = excluded.model_tags,
       summary_zh = excluded.summary_zh,
       summary_en = excluded.summary_en,
+      summary_zh_level = excluded.summary_zh_level,
+      summary_en_level = excluded.summary_en_level,
       updated_at = excluded.updated_at
   `);
   stmt.run(data);
@@ -193,11 +205,30 @@ export function getAllDocuments(options?: DocumentQueryOptions): Document[] {
   return rows.map(fromDb);
 }
 
-export function getPendingSummaryDocuments(limit = 100): Document[] {
+export function getPendingSummaryDocuments(
+  limit = 100,
+  options: {
+    lang?: "zh" | "en";
+    summaryLevel?: "short" | "detailed";
+  } = {},
+): Document[] {
   const db = getDb();
+  const lang = options.lang ?? "zh";
+  const summaryLevel = options.summaryLevel ?? "short";
+  const summaryColumn = lang === "zh" ? "summary_zh" : "summary_en";
+  const levelColumn =
+    lang === "zh" ? "summary_zh_level" : "summary_en_level";
   const rows = db
-    .prepare("SELECT * FROM documents WHERE is_summarized = 0 ORDER BY published_at DESC LIMIT ?")
-    .all(Math.max(1, limit)) as Record<string, unknown>[];
+    .prepare(
+      `SELECT * FROM documents
+       WHERE ${summaryColumn} IS NULL
+          OR trim(${summaryColumn}) = ''
+          OR ${levelColumn} IS NULL
+          OR ${levelColumn} != ?
+       ORDER BY published_at DESC
+       LIMIT ?`,
+    )
+    .all(summaryLevel, Math.max(1, limit)) as Record<string, unknown>[];
   return rows.map(fromDb);
 }
 
@@ -247,6 +278,14 @@ export function updateDocument(id: string, updates: Partial<Document>): void {
   if (updates.summaryEn !== undefined) {
     sets.push("summary_en = ?");
     values.push(updates.summaryEn);
+  }
+  if (updates.summaryZhLevel !== undefined) {
+    sets.push("summary_zh_level = ?");
+    values.push(updates.summaryZhLevel);
+  }
+  if (updates.summaryEnLevel !== undefined) {
+    sets.push("summary_en_level = ?");
+    values.push(updates.summaryEnLevel);
   }
   if (updates.domainTags !== undefined) {
     sets.push("domain_tags = ?");

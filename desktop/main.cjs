@@ -1,5 +1,7 @@
+const fs = require("node:fs");
 const path = require("node:path");
 const http = require("node:http");
+const { pathToFileURL } = require("node:url");
 const { spawn } = require("node:child_process");
 const { app, BrowserWindow, dialog } = require("electron");
 
@@ -45,7 +47,10 @@ function ensureBackendProcess() {
   const workingDir = getWorkingDir();
   const scriptPath = path.join(appRootDir, "src/index.ts");
 
+  const tsxLoaderUrl = resolveRuntimeImport("tsx/esm", appRootDir, workingDir);
+
   console.log("[desktop] Spawning backend:", nodeExe, scriptPath);
+  console.log("[desktop] tsx loader:", tsxLoaderUrl);
 
   // Build a clean env for the child process.  `NODE_OPTIONS` may contain
   // flags (e.g. `--use-system-ca`) that Electron-in-Node mode forbids.
@@ -53,9 +58,13 @@ function ensureBackendProcess() {
   delete backendEnv.NODE_OPTIONS;
   backendEnv.ELECTRON_RUN_AS_NODE = "1";
   backendEnv.PAPERHUB_APP_ROOT = appRootDir;
+  if (app.isPackaged) {
+    backendEnv.ESBUILD_BINARY_PATH = resolvePackagedEsbuildBinary(appRootDir);
+    console.log("[desktop] esbuild binary:", backendEnv.ESBUILD_BINARY_PATH);
+  }
 
   try {
-    backendProcess = spawn(nodeExe, ["--import", "tsx", scriptPath], {
+    backendProcess = spawn(nodeExe, ["--import", tsxLoaderUrl, scriptPath], {
       cwd: workingDir,
       stdio: "inherit",
       env: backendEnv,
@@ -78,12 +87,18 @@ function ensureBackendProcess() {
     app.quit();
   });
 
-  backendProcess.on("exit", (code) => {
+  backendProcess.on("exit", (code, signal) => {
     backendProcess = null;
-    if (code && code !== 0 && !app.isQuitting) {
+    console.log(`[desktop] Backend process exited: code=${code} signal=${signal}`);
+    if (code !== 0 && code !== null && !app.isQuitting) {
       void dialog.showErrorBox(
         "PaperHub API stopped",
-        `The local API process exited unexpectedly with code ${code}.`,
+        `The local API process exited unexpectedly with code ${code}.\n\n` +
+          `This can happen if:\n` +
+          `  • Port 3000 is already in use (close other PaperHub windows)\n` +
+          `  • The database file is locked by another process\n` +
+          `  • A required module failed to load\n\n` +
+          `Check the log at: %USERPROFILE%\\PaperHub\\logs\\app.log`,
       );
       app.quit();
     }
@@ -137,7 +152,44 @@ function getAppRootDir() {
 }
 
 function getWorkingDir() {
-  return app.isPackaged ? path.dirname(app.getAppPath()) : path.join(__dirname, "..");
+  if (!app.isPackaged) {
+    return path.join(__dirname, "..");
+  }
+
+  const appPath = app.getAppPath();
+  return fs.statSync(appPath).isDirectory() ? appPath : path.dirname(appPath);
+}
+
+function resolveRuntimeImport(moduleId, appRootDir, workingDir) {
+  const resolvedPath = require.resolve(moduleId, {
+    paths: [appRootDir, workingDir, __dirname],
+  });
+
+  if (!fs.existsSync(resolvedPath)) {
+    throw new Error(`Required runtime module was not found: ${moduleId}`);
+  }
+
+  return pathToFileURL(resolvedPath).href;
+}
+
+function resolvePackagedEsbuildBinary(appRootDir) {
+  const relativeBinaryPath = path.join(
+    "node_modules",
+    "@esbuild",
+    `${process.platform}-${process.arch}`,
+    process.platform === "win32" ? "esbuild.exe" : path.join("bin", "esbuild"),
+  );
+  const candidates = [
+    path.join(appRootDir, relativeBinaryPath),
+    path.join(process.resourcesPath, "app.asar.unpacked", relativeBinaryPath),
+  ];
+  const binaryPath = candidates.find((candidate) => fs.existsSync(candidate));
+
+  if (!binaryPath) {
+    throw new Error(`Packaged esbuild binary was not found: ${candidates.join(", ")}`);
+  }
+
+  return binaryPath;
 }
 
 app.whenReady().then(async () => {

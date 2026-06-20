@@ -4,9 +4,22 @@
 
 import { getDb } from "./index";
 import { getDocumentById } from "./documents";
-import { generateEmbedding, EMBEDDING_DIMENSION, getEmbeddingRuntime } from "@/embedding";
+import {
+  buildDocumentEmbeddingTextForRuntime,
+  generateEmbedding,
+  generateEmbeddings,
+  getEmbeddingRuntime,
+  resolveEmbeddingRuntime,
+} from "@/embedding";
 import { analyzeSearchQuery, scoreDocumentAgainstQuery } from "@/search-query";
 import type { Document } from "@/types";
+import {
+  assertEmbeddingIndexReady,
+  ensureEmbeddingIndexRuntime,
+  finalizeEmbeddingIndex,
+  getEmbeddingIndexMetadata,
+  getEmbeddingIndexProgress,
+} from "./embedding-index";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -44,6 +57,13 @@ export interface SearchResult {
 
 const SEARCH_RESULT_LIMIT_CAP = 1000;
 const VECTOR_K_CAP = 800;
+
+export class EmbeddingIndexUnavailableError extends Error {
+  constructor(readonly reason: string) {
+    super(reason);
+    this.name = "EmbeddingIndexUnavailableError";
+  }
+}
 
 // ---------------------------------------------------------------------------
 // FTS5 keyword search
@@ -161,9 +181,17 @@ export async function searchVector(options: VectorSearchOptions): Promise<Search
   const offset = Math.max(options.offset ?? 0, 0);
   const threshold = options.threshold ?? 0.5;
 
+  const totalIndexed = countIndexedVectors();
+  if (totalIndexed === 0) {
+    throw new EmbeddingIndexUnavailableError("embedding_index_empty");
+  }
+
+  const runtime = await resolveEmbeddingRuntime();
+  assertVectorSearchReady(runtime);
+
   // Generate query embedding
   const embedding = await generateEmbedding(options.query);
-  const serializedEmbedding = serializeEmbedding(embedding);
+  const serializedEmbedding = serializeEmbedding(embedding, runtime.dimensions);
 
   // sqlite-vec KNN search — expects compact JSON array string
   const sql = `
@@ -173,11 +201,6 @@ export async function searchVector(options: VectorSearchOptions): Promise<Search
       AND k = ?
     ORDER BY distance
   `;
-
-  const totalIndexed = countIndexedVectors();
-  if (totalIndexed === 0) {
-    return [];
-  }
 
   // Cap K to avoid loading the entire index into memory. For small indexes,
   // use totalIndexed so we don't artificially limit results.
@@ -364,10 +387,14 @@ export async function searchVectorAdaptive(
   const threshold = options.threshold ?? 0.58;
 
   const totalIndexed = countIndexedVectors();
-  if (totalIndexed === 0) return [];
+  if (totalIndexed === 0) {
+    throw new EmbeddingIndexUnavailableError("embedding_index_empty");
+  }
 
+  const runtime = await resolveEmbeddingRuntime();
+  assertVectorSearchReady(runtime);
   const embedding = await generateEmbedding(query);
-  const serializedEmbedding = serializeEmbedding(embedding);
+  const serializedEmbedding = serializeEmbedding(embedding, runtime.dimensions);
 
   const kSteps = [200, 400, 800];
   let bestResults: SearchResult[] = [];
@@ -448,6 +475,12 @@ function rowToDocument(row: Record<string, unknown>): Document {
     modelTags: safeJsonParse<string[]>(row.model_tags, []),
     summaryZh: row.summary_zh ? String(row.summary_zh) : undefined,
     summaryEn: row.summary_en ? String(row.summary_en) : undefined,
+    summaryZhLevel: row.summary_zh_level
+      ? (String(row.summary_zh_level) as Document["summaryZhLevel"])
+      : undefined,
+    summaryEnLevel: row.summary_en_level
+      ? (String(row.summary_en_level) as Document["summaryEnLevel"])
+      : undefined,
     createdAt: String(row.created_at),
     updatedAt: String(row.updated_at),
     isSummarized: Boolean(row.is_summarized),
@@ -458,19 +491,53 @@ function rowToDocument(row: Record<string, unknown>): Document {
 // Vector storage
 // ---------------------------------------------------------------------------
 
-export function storeVector(documentId: string, embedding: number[]): void {
+export function storeVector(documentId: string, embedding: number[], dimensions?: number): void {
   const db = getDb();
+  const runtime = getEmbeddingRuntime();
+  ensureEmbeddingIndexRuntime(runtime);
+  const expectedDimensions = dimensions ?? runtime.dimensions;
   db.prepare("INSERT OR REPLACE INTO document_vectors_v2(document_id, embedding) VALUES (?, ?)").run(
     documentId,
-    serializeEmbedding(embedding),
+    serializeEmbedding(embedding, expectedDimensions),
   );
+  db.prepare(
+    `
+    INSERT INTO document_index_state(
+      document_id, vector_signature, vector_indexed_at,
+      embedding_status, embedding_attempts, last_error, updated_at
+    ) VALUES (?, ?, datetime('now'), 'ready', 0, NULL, datetime('now'))
+    ON CONFLICT(document_id) DO UPDATE SET
+      vector_signature = excluded.vector_signature,
+      vector_indexed_at = excluded.vector_indexed_at,
+      embedding_status = 'ready',
+      embedding_attempts = 0,
+      last_error = NULL,
+      vector_error = NULL,
+      vector_retry_count = 0,
+      updated_at = datetime('now')
+  `,
+  ).run(documentId, runtime.signature);
+  if (getEmbeddingIndexMetadata()?.status === "rebuilding") {
+    finalizeEmbeddingIndex();
+  }
 }
 
 export async function indexDocumentVector(doc: Document): Promise<void> {
+  await indexDocumentVectors([doc]);
+}
+
+export async function indexDocumentVectors(documents: Document[]): Promise<void> {
+  if (documents.length === 0) return;
+
   const db = getDb();
-  const runtime = getEmbeddingRuntime();
-  db.prepare(
-    `
+  const runtime = await resolveEmbeddingRuntime();
+  ensureEmbeddingIndexRuntime(runtime);
+  const metadata = getEmbeddingIndexMetadata();
+  if (!metadata || !["ready", "rebuilding"].includes(metadata.status)) {
+    throw new EmbeddingIndexUnavailableError(`embedding_index_${metadata?.status ?? "unconfigured"}`);
+  }
+
+  const markRunning = db.prepare(`
     INSERT INTO document_index_state (
       document_id, embedding_status, vector_signature, updated_at
     ) VALUES (?, 'running', ?, datetime('now'))
@@ -479,25 +546,8 @@ export async function indexDocumentVector(doc: Document): Promise<void> {
       vector_signature = excluded.vector_signature,
       last_error = NULL,
       updated_at = datetime('now')
-  `,
-  ).run(doc.id, runtime.signature);
-
-  // Include summaries in embedding text for better semantic recall
-  const parts: string[] = [doc.title];
-  if (doc.abstract) parts.push(doc.abstract);
-  if (doc.fullText) parts.push(doc.fullText);
-  if (doc.summaryZh) parts.push(doc.summaryZh);
-  if (doc.summaryEn) parts.push(doc.summaryEn);
-  parts.push(...doc.domainTags);
-  parts.push(...doc.modelTags);
-
-  const text = parts.join("\n").slice(0, 8000); // OpenAI token limit safety
-  const embedding = await generateEmbedding(text);
-  storeVector(doc.id, embedding);
-
-  // Track index state
-  db.prepare(
-    `
+  `);
+  const markReady = db.prepare(`
     INSERT INTO document_index_state (
       document_id, vector_signature, vector_indexed_at,
       embedding_status, embedding_attempts, last_error, updated_at
@@ -512,17 +562,35 @@ export async function indexDocumentVector(doc: Document): Promise<void> {
       vector_error = NULL,
       vector_retry_count = 0,
       updated_at = datetime('now')
-  `,
-  ).run(doc.id, runtime.signature);
-  db.prepare(
-    `
-    INSERT INTO embedding_index_metadata(id, signature, updated_at)
-    VALUES (1, ?, datetime('now'))
-    ON CONFLICT(id) DO UPDATE SET
-      signature = excluded.signature,
-      updated_at = excluded.updated_at
-  `,
-  ).run(runtime.signature);
+  `);
+  const store = db.prepare(
+    "INSERT OR REPLACE INTO document_vectors_v2(document_id, embedding) VALUES (?, ?)",
+  );
+
+  const markBatchRunning = db.transaction(() => {
+    for (const document of documents) markRunning.run(document.id, runtime.signature);
+  });
+  markBatchRunning();
+
+  const texts = documents.map((document) => buildDocumentEmbeddingTextForRuntime(document, runtime));
+  const embeddings = await generateEmbeddings(texts);
+  if (embeddings.length !== documents.length) {
+    throw new Error(
+      `Embedding batch count mismatch: expected ${documents.length}, received ${embeddings.length}`,
+    );
+  }
+
+  const writeBatch = db.transaction(() => {
+    documents.forEach((document, index) => {
+      store.run(document.id, serializeEmbedding(embeddings[index]!, runtime.dimensions));
+      markReady.run(document.id, runtime.signature);
+    });
+  });
+  writeBatch();
+
+  if (metadata.status === "rebuilding") {
+    finalizeEmbeddingIndex();
+  }
 }
 
 export function countIndexedVectors(): number {
@@ -586,48 +654,39 @@ export function getIndexStateStats(): {
   vectorPending: number;
   vectorErrors: number;
 } {
-  const db = getDb();
-  const total = (db.prepare("SELECT COUNT(*) as c FROM documents").get() as { c: number }).c;
-  let vectorIndexed = 0;
-  let vectorErrors = 0;
-  try {
-    vectorIndexed = (
-      db
-        .prepare(
-          `SELECT COUNT(*) as c
-           FROM document_index_state s
-           JOIN document_vectors_v2 v ON v.document_id = s.document_id
-           WHERE s.embedding_status = 'ready'`,
-        )
-        .get() as { c: number }
-    ).c;
-    vectorErrors = (
-      db
-        .prepare("SELECT COUNT(*) as c FROM document_index_state WHERE embedding_status = 'failed'")
-        .get() as { c: number }
-    ).c;
-  } catch {
-    // document_index_state table doesn't exist yet (pre-v8)
-  }
+  const progress = getEmbeddingIndexProgress();
 
   return {
-    total,
+    total: progress.total,
     ftsIndexed: countFtsDocuments(),
-    vectorIndexed,
-    vectorPending: total - vectorIndexed,
-    vectorErrors,
+    vectorIndexed: progress.ready,
+    vectorPending: progress.pending + progress.running,
+    vectorErrors: progress.failed,
   };
 }
 
-function serializeEmbedding(embedding: number[]): Buffer {
-  if (embedding.length !== EMBEDDING_DIMENSION) {
+function serializeEmbedding(embedding: number[], expectedDimensions: number): Buffer {
+  if (embedding.length !== expectedDimensions) {
     throw new Error(
-      `Embedding dimension mismatch: expected ${EMBEDDING_DIMENSION}, received ${embedding.length}`,
+      `Embedding dimension mismatch: expected ${expectedDimensions}, received ${embedding.length}`,
     );
   }
+  if (embedding.some((value) => !Number.isFinite(value))) {
+    throw new Error("Embedding contains a non-finite numeric value");
+  }
 
-  const values = Float32Array.from(embedding.map((value) => (Number.isFinite(value) ? value : 0)));
+  const values = Float32Array.from(embedding);
   return Buffer.from(values.buffer);
+}
+
+function assertVectorSearchReady(runtime: Awaited<ReturnType<typeof resolveEmbeddingRuntime>>): void {
+  try {
+    assertEmbeddingIndexReady(runtime);
+  } catch (error) {
+    throw new EmbeddingIndexUnavailableError(
+      error instanceof Error ? error.message : "embedding_index_unavailable",
+    );
+  }
 }
 
 /**

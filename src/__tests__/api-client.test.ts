@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { getDocument, getDocumentsByTag, searchDocuments } from "@/ui/lib/api";
+import { getDocument, getDocumentsByTag, searchDocuments, summarizeDocument } from "@/ui/lib/api";
 
 afterEach(() => {
   vi.useRealTimers();
@@ -83,6 +83,28 @@ describe("ui api client", () => {
     );
 
     await expect(getDocument("missing")).rejects.toThrow("Document not found");
+  });
+
+  it("requests one document summary in the selected language", async () => {
+    let requestBody = "";
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+        requestBody = String(init?.body ?? "");
+        return jsonResponse({
+          document_id: "doc-1",
+          lang: "en",
+          summarized: true,
+          document: { id: "doc-1", summaryEn: "Generated summary" },
+        });
+      }),
+    );
+
+    const result = await summarizeDocument("doc-1", "en");
+
+    expect(requestBody).toContain('"document_id":"doc-1"');
+    expect(requestBody).toContain('"lang":"en"');
+    expect(result.document.summaryEn).toBe("Generated summary");
   });
 });
 

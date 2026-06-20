@@ -9,6 +9,7 @@
 export type DocumentSource = "arxiv" | "gpt_blog" | "claude_blog";
 export type DocumentType = "paper" | "blog" | "tutorial" | "review";
 export type DocumentLanguage = "zh" | "en";
+export type SummaryLevel = "short" | "detailed";
 
 export interface Document {
   id: string; // hash(source + url)
@@ -32,6 +33,8 @@ export interface Document {
   // summaries
   summaryZh?: string;
   summaryEn?: string;
+  summaryZhLevel?: SummaryLevel;
+  summaryEnLevel?: SummaryLevel;
 
   // metadata
   createdAt: string;
@@ -89,7 +92,7 @@ export interface ApiResponse<T> {
 export interface UserPreferences {
   interestTags: string[];
   defaultLanguage: DocumentLanguage;
-  summaryLength: "short" | "detailed";
+  summaryLength: SummaryLevel;
   dailyRecommendCount: number;
 }
 

@@ -229,6 +229,12 @@ function documentFromRow(row: Record<string, unknown>): Document {
     modelTags: safeJsonParse<string[]>(row.model_tags, []),
     summaryZh: row.summary_zh ? String(row.summary_zh) : undefined,
     summaryEn: row.summary_en ? String(row.summary_en) : undefined,
+    summaryZhLevel: row.summary_zh_level
+      ? (String(row.summary_zh_level) as Document["summaryZhLevel"])
+      : undefined,
+    summaryEnLevel: row.summary_en_level
+      ? (String(row.summary_en_level) as Document["summaryEnLevel"])
+      : undefined,
     createdAt: String(row.created_at),
     updatedAt: String(row.updated_at),
     isSummarized: Boolean(row.is_summarized),

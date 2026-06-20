@@ -13,7 +13,7 @@ import { claudeBlogCollector } from "@/collectors/claude-blog";
 import { ingestDocuments } from "@/services/document-ingestion";
 import { getPendingSummaryDocuments } from "@/db/documents";
 import { withRetry, logError } from "@/utils/retry";
-import type { ApiResponse } from "@/types";
+import type { ApiResponse, DocumentLanguage } from "@/types";
 import {
   getUserPreferences,
   setUserPreference,
@@ -25,18 +25,47 @@ import {
   countHistory,
   countFavorites,
 } from "@/db/user";
-import { summarizeBatch } from "@/summarizer";
+import {
+  getConfiguredSummaryLevel,
+  summarizeBatch,
+  summarizeDocument,
+} from "@/summarizer";
 import { hybridSearch, generateSearchReport } from "@/search";
 import {
+  LLM_PROVIDER_CATALOG,
+  createLlmConnectionInputFromPreset,
+  discoverLlmModels,
   getLlmSettingsState,
+  parseLlmConnectionInput,
+  probeLlmConnection,
+  redactSecrets,
+  resolveLlmRuntime,
   saveLlmSettings,
+  toTestableConnection,
   VALID_PROVIDER_NAMES,
+  type LlmConnectionInput,
   type LlmSettingsUpdate,
   type ProviderName,
 } from "@/providers";
 import { resetLlmProvider } from "@/report";
-import { indexDocumentVector, getIndexStateStats } from "@/db/search";
-import { getIndexerState } from "@/search-indexer";
+import {
+  activateLlmConnection,
+  deleteLlmConnection,
+  getActiveLlmConnectionId,
+  getLlmConnection,
+  listLlmConnections,
+  saveLlmConnection,
+  updateLlmConnectionTest,
+} from "@/db/llm-connections";
+import { getIndexStateStats } from "@/db/search";
+import { getIndexerState, processPending, startIndexer } from "@/search-indexer";
+import { getEmbeddingConfiguration, getEmbeddingConfigurationSource, probeEmbeddingConfiguration, resetEmbeddingRuntime } from "@/embedding";
+import {
+  getStoredEmbeddingSettings,
+  saveStoredEmbeddingSettings,
+  type EmbeddingProviderSetting,
+} from "@/db/embedding-settings";
+import { forceRebuildEmbeddingIndex, getEmbeddingIndexProgress } from "@/db/embedding-index";
 import { getTagCloud, getDocumentsByTag, countDocumentsByTag, refreshTagStats } from "@/db/tags";
 import { getDb, rebuildFtsV2 } from "@/db/index";
 import {
@@ -158,6 +187,25 @@ export function parseLlmSettingsUpdate(body: unknown): LlmSettingsUpdate {
   return update;
 }
 
+export function parseLlmConnectionRequest(body: unknown): LlmConnectionInput {
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return parseLlmConnectionInput(body);
+  }
+  const input = body as Record<string, unknown>;
+  if (
+    input.protocol === undefined &&
+    typeof input.presetId === "string" &&
+    input.presetId.trim()
+  ) {
+    const preset = createLlmConnectionInputFromPreset(
+      input.presetId.trim(),
+      typeof input.name === "string" ? input.name : undefined,
+    );
+    return parseLlmConnectionInput({ ...preset, ...input });
+  }
+  return parseLlmConnectionInput(input);
+}
+
 function normalizeBoundedString(value: unknown, field: string, maxLength: number): string {
   if (typeof value !== "string") {
     throw new LlmSettingsValidationError(`${field} must be a string.`);
@@ -166,6 +214,12 @@ function normalizeBoundedString(value: unknown, field: string, maxLength: number
   if (normalized.length > maxLength) {
     throw new LlmSettingsValidationError(`${field} is too long.`);
   }
+  return normalized;
+}
+
+function readRouteParam(value: string | string[] | undefined, field: string): string {
+  const normalized = Array.isArray(value) ? value[0] : value;
+  if (!normalized) throw new LlmSettingsValidationError(`${field} is required.`);
   return normalized;
 }
 
@@ -249,37 +303,8 @@ export async function searchResponse(options: {
 }
 
 export async function indexAllVectors(): Promise<{ indexed: number; total: number }> {
-  let indexed = 0;
-  let total = 0;
-  let offset = 0;
-  const batchSize = 200;
-
-  while (true) {
-    const docs = getAllDocuments({ limit: batchSize, offset });
-    if (docs.length === 0) {
-      break;
-    }
-
-    total += docs.length;
-
-    for (let index = 0; index < docs.length; index += 4) {
-      const batch = docs.slice(index, index + 4);
-      const results = await Promise.allSettled(batch.map((doc) => indexDocumentVector(doc)));
-      results.forEach((result, resultIndex) => {
-        if (result.status === "fulfilled") {
-          indexed++;
-        } else {
-          console.error(
-            `[api/index-vectors] Failed for ${batch[resultIndex]?.id ?? "unknown"}:`,
-            result.reason,
-          );
-        }
-      });
-    }
-
-    offset += docs.length;
-  }
-
+  const total = countDocuments();
+  const indexed = await processPending(total);
   return { indexed, total };
 }
 
@@ -500,6 +525,124 @@ app.get("/api/stats", (_req, res) => {
 // User preferences
 // ---------------------------------------------------------------------------
 
+app.get("/api/llm/catalog", (_req, res) => {
+  ok(res, LLM_PROVIDER_CATALOG);
+});
+
+app.get("/api/llm/connections", (_req, res) => {
+  try {
+    const runtime = resolveLlmRuntime();
+    ok(res, {
+      connections: listLlmConnections(),
+      activeConnectionId: getActiveLlmConnectionId(),
+      runtimeConnectionId: runtime.connection.id,
+      runtimeSource: runtime.source,
+      environmentOverride:
+        runtime.source === "environment_connection" ||
+        runtime.source === "environment_provider",
+    });
+  } catch (e) {
+    logError("api/llm/connections", e);
+    err(res, 500, "Failed to fetch LLM connections");
+  }
+});
+
+app.post("/api/llm/connections", writeLimiter, (req, res) => {
+  try {
+    const connection = saveLlmConnection(parseLlmConnectionRequest(req.body));
+    ok(res, connection);
+  } catch (e) {
+    err(res, 400, e instanceof Error ? e.message : "Invalid LLM connection");
+  }
+});
+
+app.put("/api/llm/connections/:id", writeLimiter, (req, res) => {
+  try {
+    const connection = saveLlmConnection(
+      parseLlmConnectionRequest({
+        ...(req.body && typeof req.body === "object" ? req.body : {}),
+        id: req.params.id,
+      }),
+    );
+    if (connection.isActive) resetLlmProvider();
+    ok(res, connection);
+  } catch (e) {
+    err(res, 400, e instanceof Error ? e.message : "Invalid LLM connection");
+  }
+});
+
+app.delete("/api/llm/connections/:id", writeLimiter, (req, res) => {
+  try {
+    const connectionId = readRouteParam(req.params.id, "id");
+    if (!deleteLlmConnection(connectionId)) {
+      err(res, 404, "LLM connection not found");
+      return;
+    }
+    ok(res, { deleted: true });
+  } catch (e) {
+    const message = e instanceof Error ? e.message : "Failed to delete LLM connection";
+    err(res, message.includes("active") ? 409 : 400, message);
+  }
+});
+
+app.post("/api/llm/connections/:id/activate", writeLimiter, (req, res) => {
+  try {
+    const connection = activateLlmConnection(readRouteParam(req.params.id, "id"));
+    resetLlmProvider();
+    ok(res, connection);
+  } catch (e) {
+    err(res, 404, e instanceof Error ? e.message : "LLM connection not found");
+  }
+});
+
+app.post("/api/llm/connections/test", llmLimiter, async (req, res) => {
+  const startedAt = Date.now();
+  let connectionId: string | undefined;
+  let apiKey: string | undefined;
+  try {
+    const connection = resolveConnectionRequest(req.body);
+    connectionId = connection.id === "draft" ? undefined : connection.id;
+    apiKey = connection.apiKey;
+      const text = await probeLlmConnection(connection);
+    if (connectionId) {
+      updateLlmConnectionTest(connectionId, "success", "Connection successful");
+    }
+    ok(res, {
+      reachable: true,
+      latencyMs: Date.now() - startedAt,
+      responsePreview: text.slice(0, 160),
+    });
+  } catch (e) {
+    const message = redactSecrets(
+      e instanceof Error ? e.message : "LLM connection test failed",
+      apiKey,
+    );
+    if (connectionId) {
+      updateLlmConnectionTest(connectionId, "failed", message);
+    }
+    err(res, 503, message);
+  }
+});
+
+app.post("/api/llm/connections/models", llmLimiter, async (req, res) => {
+  let apiKey: string | undefined;
+  try {
+    const connection = resolveConnectionRequest(req.body);
+    apiKey = connection.apiKey;
+    const models = await discoverLlmModels(connection);
+    ok(res, { models });
+  } catch (e) {
+    err(
+      res,
+      503,
+      redactSecrets(
+        e instanceof Error ? e.message : "Failed to discover models",
+        apiKey,
+      ),
+    );
+  }
+});
+
 app.get("/api/llm/settings", (_req, res) => {
   try {
     ok(res, getLlmSettingsState());
@@ -659,24 +802,48 @@ app.delete("/api/user/favorites/:id", (req, res) => {
 
 app.post("/api/summarize", llmLimiter, async (req, res) => {
   try {
-    const { document_id, lang } = req.body as { document_id?: string; lang?: "zh" | "en" };
+    const body = req.body as { document_id?: unknown; lang?: unknown };
+    const outputLanguage = parseSummaryLanguage(body.lang);
+    const summaryLevel = getConfiguredSummaryLevel();
+    const documentId = typeof body.document_id === "string" ? body.document_id : undefined;
 
-    if (document_id) {
-      const doc = getDocumentById(document_id);
+    if (documentId) {
+      const doc = getDocumentById(documentId);
       if (!doc) {
         err(res, 404, "Document not found");
         return;
       }
-      await summarizeBatch([doc], lang || "zh");
-      ok(res, { document_id, summarized: true });
+      await summarizeDocument(doc, outputLanguage, {
+        summaryLevel,
+      });
+      const updatedDocument = getDocumentById(documentId);
+      if (!updatedDocument) {
+        err(res, 500, "Summarized document could not be reloaded");
+        return;
+      }
+      ok(res, {
+        document_id: documentId,
+        lang: outputLanguage,
+        summarized: true,
+        document: updatedDocument,
+      });
       return;
     }
 
     // Summarize all pending documents
-    const pending = getPendingSummaryDocuments(100);
-    await summarizeBatch(pending, lang || "zh");
+    const pending = getPendingSummaryDocuments(100, {
+      lang: outputLanguage,
+      summaryLevel,
+    });
+    await summarizeBatch(pending, outputLanguage, undefined, {
+      summaryLevel,
+    });
     ok(res, { pending: pending.length, summarized: true });
   } catch (e) {
+    if (e instanceof SummaryLanguageValidationError) {
+      err(res, 400, e.message);
+      return;
+    }
     logError("api/summarize", e);
     err(res, 500, "Summarization failed");
   }
@@ -880,6 +1047,147 @@ app.get("/api/recommendations/personalized", async (req, res) => {
 // Vector indexing
 // ---------------------------------------------------------------------------
 
+app.get("/api/settings/embedding", (_req, res) => {
+  try {
+    const configuration = getEmbeddingConfiguration();
+    const source = getEmbeddingConfigurationSource();
+    let hasApiKey = false;
+    try {
+      hasApiKey =
+        source === "stored"
+          ? Boolean(getStoredEmbeddingSettings()?.apiKey)
+          : Boolean(
+              process.env["EMBEDDING_API_KEY"] ||
+                process.env["OPENAI_API_KEY"],
+            );
+    } catch {
+      // ignore
+    }
+    ok(res, {
+      provider: configuration.provider,
+      model: configuration.model,
+      baseUrl: configuration.baseUrl,
+      expectedDimensions: configuration.expectedDimensions ?? null,
+      timeoutMs: configuration.timeoutMs,
+      batchSize: configuration.batchSize,
+      keepAlive: configuration.keepAlive ?? null,
+      truncate: configuration.truncate,
+      maxInputChars: configuration.maxInputChars,
+      source,
+      hasApiKey,
+      index: getEmbeddingIndexProgress(),
+    });
+  } catch (e) {
+    logError("api/settings/embedding", e);
+    err(res, 400, e instanceof Error ? e.message : "Invalid embedding configuration");
+  }
+});
+
+/**
+ * PUT /api/settings/embedding — Save embedding provider configuration.
+ *
+ * Accepts: { provider, model?, baseUrl?, apiKey?, clearApiKey? }
+ * - apiKey is stored locally and never returned.
+ * - Resets the embedding runtime cache so next request uses new settings.
+ * - Does NOT trigger an automatic rebuild; the user must do that separately.
+ */
+app.put("/api/settings/embedding", writeLimiter, (req, res) => {
+  try {
+    const body = req.body as {
+      provider?: unknown;
+      model?: unknown;
+      baseUrl?: unknown;
+      apiKey?: unknown;
+      clearApiKey?: unknown;
+    };
+
+    const VALID_PROVIDERS: EmbeddingProviderSetting[] = ["openai", "ollama"];
+    const providerRaw = String(body.provider ?? "").trim().toLowerCase();
+    if (!VALID_PROVIDERS.includes(providerRaw as EmbeddingProviderSetting)) {
+      err(res, 400, `Invalid provider "${providerRaw}". Use: ${VALID_PROVIDERS.join(", ")}`);
+      return;
+    }
+    const provider = providerRaw as EmbeddingProviderSetting;
+
+    const model = typeof body.model === "string" ? body.model.trim() || null : undefined;
+    const baseUrl = typeof body.baseUrl === "string" ? body.baseUrl.trim() || null : undefined;
+    const apiKey = typeof body.apiKey === "string" ? body.apiKey.trim() || null : undefined;
+    const clearApiKey = body.clearApiKey === true || body.clearApiKey === "true";
+
+    saveStoredEmbeddingSettings({ provider, model, baseUrl, apiKey, clearApiKey });
+
+    // Reset runtime cache so the new configuration takes effect immediately
+    resetEmbeddingRuntime();
+
+    // Build safe response — never return the stored API key
+    const configuration = getEmbeddingConfiguration();
+    const source = getEmbeddingConfigurationSource();
+    let hasApiKey = false;
+    try {
+      hasApiKey = Boolean(getStoredEmbeddingSettings()?.apiKey);
+    } catch {
+      // ignore
+    }
+    ok(res, {
+      provider: configuration.provider,
+      model: configuration.model,
+      baseUrl: configuration.baseUrl,
+      expectedDimensions: configuration.expectedDimensions ?? null,
+      timeoutMs: configuration.timeoutMs,
+      batchSize: configuration.batchSize,
+      keepAlive: configuration.keepAlive ?? null,
+      truncate: configuration.truncate,
+      maxInputChars: configuration.maxInputChars,
+      source,
+      hasApiKey,
+      index: getEmbeddingIndexProgress(),
+    });
+  } catch (e) {
+    logError("api/settings/embedding PUT", e);
+    err(res, 500, e instanceof Error ? e.message : "Failed to save embedding settings");
+  }
+});
+
+app.post("/api/settings/embedding/test", writeLimiter, async (_req, res) => {
+  try {
+    const runtime = await probeEmbeddingConfiguration();
+    ok(res, {
+      provider: runtime.provider,
+      model: runtime.model,
+      dimensions: runtime.dimensions,
+      reachable: true,
+      signature: runtime.signature,
+    });
+  } catch (e) {
+    logError("api/settings/embedding/test", e);
+    err(res, 503, e instanceof Error ? e.message : "Embedding provider is unavailable");
+  }
+});
+
+app.post("/api/index/embedding/rebuild", writeLimiter, async (_req, res) => {
+  try {
+    const activation = await forceRebuildEmbeddingIndex();
+    startIndexer();
+    ok(res, {
+      rebuilt: activation.rebuilt,
+      runtime: activation.runtime,
+      index: getEmbeddingIndexProgress(),
+    });
+  } catch (e) {
+    logError("api/index/embedding/rebuild", e);
+    err(res, 503, e instanceof Error ? e.message : "Embedding index rebuild failed");
+  }
+});
+
+app.get("/api/index/embedding/status", (_req, res) => {
+  try {
+    ok(res, getEmbeddingIndexProgress());
+  } catch (e) {
+    logError("api/index/embedding/status", e);
+    err(res, 500, "Failed to fetch embedding index status");
+  }
+});
+
 app.post("/api/index-vectors", writeLimiter, async (_req, res) => {
   try {
     ok(res, await indexAllVectors());
@@ -978,10 +1286,51 @@ export function startServer(): ReturnType<typeof app.listen> {
   const server = app.listen(config.port, "127.0.0.1", () => {
     console.log(`[api] Server listening on http://127.0.0.1:${config.port}`);
   });
+
+  server.on("error", (err: NodeJS.ErrnoException) => {
+    if (err.code === "EADDRINUSE") {
+      console.error(
+        `[api] Port ${config.port} is already in use.\n` +
+          "  Another PaperHub instance may already be running.\n" +
+          "  Fix: close all other PaperHub windows and retry.",
+      );
+    } else {
+      console.error("[api] Server error:", err);
+    }
+    process.exit(1);
+  });
+
   return server;
 }
 
 export { app };
+
+class SummaryLanguageValidationError extends Error {}
+
+function resolveConnectionRequest(body: unknown) {
+  if (body && typeof body === "object" && !Array.isArray(body)) {
+    const input = body as Record<string, unknown>;
+    if (typeof input.id === "string" && Object.keys(input).length === 1) {
+      const stored = getLlmConnection(input.id);
+      if (!stored) throw new Error(`LLM connection "${input.id}" was not found.`);
+      return stored;
+    }
+    if (input.connection !== undefined) {
+      return toTestableConnection(parseLlmConnectionRequest(input.connection));
+    }
+  }
+  return toTestableConnection(parseLlmConnectionRequest(body));
+}
+
+export function parseSummaryLanguage(value: unknown): DocumentLanguage {
+  if (value === undefined || value === null || value === "") {
+    return "zh";
+  }
+  if (value === "zh" || value === "en") {
+    return value;
+  }
+  throw new SummaryLanguageValidationError('Invalid summary language. Use "zh" or "en".');
+}
 
 function parseBooleanQuery(value: unknown): boolean | undefined {
   if (typeof value === "boolean") {

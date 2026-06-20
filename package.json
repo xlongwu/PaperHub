@@ -90,6 +90,7 @@
   "build": {
     "appId": "com.paperhub.desktop",
     "productName": "PaperHub",
+    "asar": false,
     "directories": {
       "output": "dist-desktop"
     },
@@ -98,13 +99,10 @@
       "desktop/**/*",
       "src/**/*",
       "digests/**/*",
+      "总结prompt模版.md",
       "scripts/seed-phase6-fixtures.ts",
       "tsconfig.json",
       "package.json"
-    ],
-    "asarUnpack": [
-      "node_modules/better-sqlite3/**/*",
-      "node_modules/sqlite-vec/**/*"
     ],
     "win": {
       "target": [

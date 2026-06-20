@@ -7,10 +7,11 @@ import "dotenv/config";
 import { initDatabase, closeDb } from "@/db/index";
 import { startServer } from "@/api/server";
 import { startScheduler, stopScheduler, waitForRunningTasks } from "@/scheduler";
-import { getLlmSettingsState } from "@/providers/index";
+import { resolveLlmRuntime } from "@/providers/index";
 import { getLogsDir } from "@/config";
 import { initDefaultPreferences } from "@/db/user";
 import { startIndexer, stopIndexer } from "@/search-indexer";
+import { getEmbeddingConfiguration } from "@/embedding";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -96,26 +97,37 @@ function setupShutdownHandlers(server: ReturnType<typeof startServer>): void {
  * accepts undefined), but runtime calls would fail with confusing errors.
  */
 function validateLlmProvider(): void {
-  const settings = getLlmSettingsState();
-  if (!settings.hasApiKey) {
+  const runtime = resolveLlmRuntime();
+  const requiresApiKey = runtime.connection.auth.type !== "none";
+  if (requiresApiKey && !runtime.connection.apiKey) {
     console.warn(
-      `[app] WARNING: LLM provider "${settings.provider}" has no API key configured. ` +
+      `[app] WARNING: LLM connection "${runtime.connection.name}" has no API key configured. ` +
         "Set one in Profile > LLM connection or through an environment variable.",
     );
   } else {
-    console.log(`[app] LLM provider "${settings.provider}" validated (${settings.apiKeySource} key).`);
+    console.log(
+      `[app] LLM connection "${runtime.connection.name}" validated (${runtime.source}).`,
+    );
   }
 
-  // Also validate embedding provider
-  const embedProvider = process.env["EMBEDDING_PROVIDER"]?.trim().toLowerCase() ?? "openai";
-  if (embedProvider !== "local") {
-    const hasApiKey = process.env["EMBEDDING_API_KEY"] || process.env["OPENAI_API_KEY"];
-    if (!hasApiKey) {
+  // Embeddings initialize in the background so an unavailable local model
+  // never prevents the API, FTS search, or desktop shell from starting.
+  try {
+    const embedding = getEmbeddingConfiguration();
+    if (embedding.provider === "openai" && !embedding.apiKey) {
       console.warn(
         "[app] WARNING: OpenAI embedding configured but no API key found. " +
           "Semantic search will fail. Set EMBEDDING_API_KEY or OPENAI_API_KEY.",
       );
+    } else {
+      console.log(`[app] Embedding provider configured: ${embedding.provider}/${embedding.model}.`);
     }
+  } catch (error) {
+    console.warn(
+      `[app] WARNING: Invalid embedding configuration. Keyword search remains available. ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
   }
 }
 
@@ -128,12 +140,47 @@ async function main(): Promise<void> {
 
   setupLogging();
 
+  // Log exit code for post-mortem debugging
+  process.on("exit", (code) => {
+    if (code !== 0) {
+      try {
+        const dir = getLogsDir();
+        const file = path.join(dir, "app.log");
+        fs.appendFileSync(
+          file,
+          `[${new Date().toISOString()}] [app] Process exited with code ${code}\n`,
+          "utf-8",
+        );
+      } catch {
+        /* ignore */
+      }
+    }
+  });
+
   // 1. Init database
   try {
     initDatabase();
     console.log("[app] Database initialized.");
   } catch (e) {
-    console.error("[app] Database initialization failed:", e);
+    const msg = e instanceof Error ? e.message : String(e);
+    // ABI mismatch — better-sqlite3 compiled for a different Node version
+    if (msg.includes("NODE_MODULE_VERSION") || msg.includes("ERR_DLOPEN_FAILED")) {
+      console.error(
+        "[app] Database initialization failed: native module ABI mismatch.\n" +
+          "  The 'better-sqlite3' module was compiled for a different Node.js version.\n" +
+          "  Fix: run 'pnpm rebuild better-sqlite3' and rebuild the app.\n" +
+          "  Error detail:", e,
+      );
+    } else if (msg.includes("SQLITE_BUSY") || msg.includes("database is locked")) {
+      console.error(
+        "[app] Database initialization failed: database is locked.\n" +
+          "  Another PaperHub instance may still be running.\n" +
+          "  Fix: close all other PaperHub windows, then restart.\n" +
+          "  Error detail:", e,
+      );
+    } else {
+      console.error("[app] Database initialization failed:", e);
+    }
     throw e;
   }
 

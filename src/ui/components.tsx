@@ -1,6 +1,12 @@
 import { Link } from "react-router-dom";
 import type { Document, RecommendationEntry } from "@/types";
 import type { ReactNode } from "react";
+import { useSummaryLanguage, type SummaryLanguage } from "./summary-language";
+
+/** Returns the selected summary language, falling back only to the original abstract. */
+export function pickSummary(doc: Document, lang: SummaryLanguage): string {
+  return (lang === "zh" ? doc.summaryZh : doc.summaryEn) ?? doc.abstract;
+}
 
 export function SectionHeader(props: {
   kicker: string;
@@ -27,6 +33,7 @@ export function SectionHeader(props: {
 
 export function RecommendationCard(props: { entry: RecommendationEntry }): JSX.Element {
   const { document, reason, score } = props.entry;
+  const { language } = useSummaryLanguage();
 
   return (
     <article className="paper-card paper-card-featured">
@@ -38,7 +45,7 @@ export function RecommendationCard(props: { entry: RecommendationEntry }): JSX.E
       <Link className="paper-title-link" to={`/documents/${document.id}`}>
         <h3 className="paper-title">{document.title}</h3>
       </Link>
-      <p className="paper-abstract">{document.summaryZh ?? document.abstract}</p>
+      <p className="paper-abstract">{pickSummary(document, language)}</p>
       <div className="chip-row">
         {reason.matchedTags?.slice(0, 4).map((tag) => (
           <span className="chip chip-accent" key={tag}>
@@ -58,6 +65,7 @@ export function DocumentCard(props: {
   onOpen?: () => void;
 }): JSX.Element {
   const { document } = props;
+  const { language } = useSummaryLanguage();
   return (
     <article className="paper-card">
       <div className="paper-meta-row">
@@ -71,7 +79,7 @@ export function DocumentCard(props: {
       <p className="paper-abstract">
         {props.snippet
           ? renderHighlightedSnippet(props.snippet)
-          : (props.emphasis ?? document.summaryZh ?? document.abstract)}
+          : (props.emphasis ?? pickSummary(document, language))}
       </p>
       <div className="chip-row">
         {document.domainTags.slice(0, 4).map((tag) => (

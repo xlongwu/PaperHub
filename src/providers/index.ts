@@ -5,13 +5,43 @@
  *   import { createProvider, type LlmProvider } from "./providers/index";
  */
 
-export type { LlmProvider, ProviderFactory, ProviderOptions } from "./types";
+export type {
+  JsonTemplate,
+  LlmAuthConfig,
+  LlmAuthType,
+  LlmConnectionConfig,
+  LlmConnectionPublic,
+  LlmModelDiscoveryTemplate,
+  LlmProtocol,
+  LlmProvider,
+  LlmProviderPreset,
+  LlmRequestMethod,
+  LlmRequestTemplate,
+  ProviderFactory,
+  ProviderOptions,
+} from "./types";
 export { OpenAICompatibleProvider } from "./openai-compatible";
 export { AnthropicProvider } from "./anthropic";
 export { OpenAIProvider } from "./openai";
 export { GitHubCopilotProvider } from "./github-copilot";
 export { OpenRouterProvider } from "./openrouter";
 export { DeepSeekProvider } from "./deepseek";
+export { LLM_PROVIDER_CATALOG, getLlmProviderPreset } from "./catalog";
+export {
+  DeclarativeLlmProvider,
+  callLlmConnection,
+  discoverLlmModels,
+  probeLlmConnection,
+  redactSecrets,
+  resolveLlmRuntime,
+  validateHttpUrl,
+} from "./runtime";
+export {
+  createLlmConnectionInputFromPreset,
+  parseLlmConnectionInput,
+  toTestableConnection,
+  type LlmConnectionInput,
+} from "./connections";
 
 import type { LlmProvider, ProviderFactory, ProviderOptions } from "./types";
 import { AnthropicProvider } from "./anthropic";
@@ -21,6 +51,13 @@ import { OpenRouterProvider } from "./openrouter";
 import { DeepSeekProvider } from "./deepseek";
 import { getStoredLlmProviderSettings, saveStoredLlmProviderSettings } from "@/db/llm-settings";
 import { getUserPreference, setUserPreference } from "@/db/user";
+import {
+  activateLlmConnection,
+  getLlmConnection,
+  saveLlmConnection,
+} from "@/db/llm-connections";
+import { getLlmProviderPreset } from "./catalog";
+import { DeclarativeLlmProvider, resolveLegacyProvider, resolveLlmRuntime } from "./runtime";
 
 // ---------------------------------------------------------------------------
 // Single source of truth — add new providers here only.
@@ -103,6 +140,14 @@ export interface LlmSettingsUpdate {
  * endpoint URLs.
  */
 export function createProvider(name?: ProviderName): LlmProvider {
+  if (!name) {
+    const runtime = resolveLlmRuntime();
+    if (runtime.source === "stored" || runtime.source === "environment_connection") {
+      console.log(`[providers] Using LLM connection: ${runtime.connection.id}`);
+      return new DeclarativeLlmProvider(runtime.connection);
+    }
+    name = runtime.connection.presetId as ProviderName;
+  }
   const runtime = resolveRuntimeSettings(name);
   const providerName = runtime.provider;
 
@@ -124,13 +169,14 @@ export function createProvider(name?: ProviderName): LlmProvider {
 }
 
 export function getLlmSettingsState(provider?: ProviderName): LlmSettingsState {
-  const runtime = resolveRuntimeSettings(provider);
+  const resolved = provider ? resolveLegacyProvider(provider) : resolveLlmRuntime();
+  const providerName = toLegacyProviderName(resolved.connection.presetId);
   return {
-    provider: runtime.provider,
-    model: runtime.model,
-    baseUrl: runtime.baseUrl ?? "",
-    hasApiKey: Boolean(runtime.apiKey),
-    apiKeySource: runtime.apiKeySource,
+    provider: providerName,
+    model: resolved.connection.model,
+    baseUrl: resolved.connection.baseUrl,
+    hasApiKey: Boolean(resolved.connection.apiKey),
+    apiKeySource: resolved.apiKeySource,
     supportedProviders: [...VALID_PROVIDER_NAMES],
   };
 }
@@ -144,6 +190,26 @@ export function saveLlmSettings(update: LlmSettingsUpdate): LlmSettingsState {
     model: update.model,
     baseUrl: update.baseUrl,
   });
+
+  const preset = getLlmProviderPreset(update.provider);
+  if (preset) {
+    const id = `legacy-${update.provider}`;
+    const existing = safeReadConnection(id);
+    saveLlmConnection({
+      id,
+      name: preset.label,
+      presetId: preset.id,
+      protocol: preset.protocol,
+      baseUrl: update.baseUrl ?? existing?.baseUrl ?? preset.baseUrl,
+      model: update.model ?? existing?.model ?? preset.defaultModel,
+      apiKey: update.apiKey,
+      clearApiKey: update.clearApiKey,
+      auth: existing?.auth ?? structuredClone(preset.auth),
+      request: existing?.request ?? structuredClone(preset.request),
+      models: existing?.models ?? (preset.models ? structuredClone(preset.models) : null),
+    });
+    activateLlmConnection(id);
+  }
 
   return getLlmSettingsState(update.provider);
 }
@@ -209,4 +275,19 @@ function readStoredSettings(provider: ProviderName) {
   } catch {
     return null;
   }
+}
+
+function safeReadConnection(id: string) {
+  try {
+    return getLlmConnection(id);
+  } catch {
+    return null;
+  }
+}
+
+function toLegacyProviderName(presetId: string | null): ProviderName {
+  const candidate = presetId === "github-models" ? "github-copilot" : presetId;
+  return VALID_PROVIDER_NAMES.includes(candidate as ProviderName)
+    ? (candidate as ProviderName)
+    : "deepseek";
 }

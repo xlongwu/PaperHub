@@ -35,6 +35,8 @@ export interface SearchResponse {
   appliedTags?: string[];
   topicTerms?: string[];
   searchEventId?: number;
+  degraded?: boolean;
+  reason?: string;
 }
 
 export interface IndexCoverage {
@@ -55,6 +57,92 @@ export interface PagedResult<T> {
 
 export type TimeRangePreset = "all" | "7d" | "30d" | "90d" | "365d";
 export type LlmProviderName = "anthropic" | "openai" | "github-copilot" | "openrouter" | "deepseek";
+export type EmbeddingProviderName = "openai" | "ollama";
+export type LlmProtocol =
+  | "openai_chat"
+  | "anthropic_messages"
+  | "gemini_generate_content"
+  | "custom_json";
+export type LlmAuthType = "bearer" | "header" | "query" | "none";
+
+export interface LlmAuthConfig {
+  type: LlmAuthType;
+  headerName?: string;
+  queryParam?: string;
+}
+
+export interface LlmRequestTemplate {
+  method: "POST" | "PUT";
+  path: string;
+  headers: Record<string, string>;
+  body: unknown;
+  responsePath: string;
+}
+
+export interface LlmModelDiscoveryTemplate {
+  method: "GET" | "POST" | "PUT";
+  path: string;
+  headers: Record<string, string>;
+  body?: unknown;
+  listPath: string;
+  idPath: string;
+}
+
+export interface LlmProviderPreset {
+  id: string;
+  label: string;
+  protocol: LlmProtocol;
+  baseUrl: string;
+  defaultModel: string;
+  auth: LlmAuthConfig;
+  request: LlmRequestTemplate;
+  models: LlmModelDiscoveryTemplate | null;
+}
+
+export interface LlmConnection {
+  id: string;
+  name: string;
+  presetId: string | null;
+  protocol: LlmProtocol;
+  baseUrl: string;
+  model: string;
+  auth: LlmAuthConfig;
+  request: LlmRequestTemplate;
+  models: LlmModelDiscoveryTemplate | null;
+  hasApiKey: boolean;
+  isActive: boolean;
+  lastTestStatus: "success" | "failed" | null;
+  lastTestMessage: string | null;
+  lastTestAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface LlmConnectionPayload {
+  id?: string;
+  name: string;
+  presetId: string | null;
+  protocol: LlmProtocol;
+  baseUrl: string;
+  model: string;
+  apiKey?: string;
+  clearApiKey?: boolean;
+  auth: LlmAuthConfig;
+  request: LlmRequestTemplate;
+  models: LlmModelDiscoveryTemplate | null;
+}
+
+export interface LlmConnectionsState {
+  connections: LlmConnection[];
+  activeConnectionId: string | null;
+  runtimeConnectionId: string;
+  runtimeSource:
+    | "environment_connection"
+    | "environment_provider"
+    | "stored"
+    | "default";
+  environmentOverride: boolean;
+}
 
 export interface LlmSettings {
   provider: LlmProviderName;
@@ -63,6 +151,47 @@ export interface LlmSettings {
   hasApiKey: boolean;
   apiKeySource: "stored" | "environment" | "missing";
   supportedProviders: LlmProviderName[];
+}
+
+export interface EmbeddingIndexProgress {
+  signature: string | null;
+  provider: string | null;
+  model: string | null;
+  dimensions: number | null;
+  status: "unconfigured" | "probing" | "ready" | "rebuild_required" | "rebuilding" | "failed";
+  lastError: string | null;
+  rebuildStartedAt: string | null;
+  rebuildCompletedAt: string | null;
+  updatedAt: string | null;
+  total: number;
+  ready: number;
+  pending: number;
+  running: number;
+  failed: number;
+}
+
+export interface EmbeddingSettings {
+  provider: "openai" | "ollama" | "mock";
+  model: string;
+  baseUrl?: string;
+  expectedDimensions: number | null;
+  timeoutMs: number;
+  batchSize: number;
+  keepAlive: string | null;
+  truncate: boolean;
+  maxInputChars: number;
+  /** Where the config came from: "environment" (env vars) | "stored" (UI-saved DB) | "default" */
+  source: "environment" | "stored" | "default";
+  /** Whether an API key is stored (key itself is never returned). */
+  hasApiKey: boolean;
+  index: EmbeddingIndexProgress;
+}
+
+export interface SummarizeDocumentResponse {
+  document_id: string;
+  lang: "zh" | "en";
+  summarized: boolean;
+  document: Document;
 }
 
 export async function getHotRecommendations(): Promise<RecommendationEntry[]> {
@@ -84,6 +213,20 @@ export async function getDocument(documentId: string): Promise<Document> {
   const response = await apiGet<Document>(`/api/documents/${documentId}`);
   if (!response.data) {
     throw new Error("Document not found");
+  }
+  return response.data;
+}
+
+export async function summarizeDocument(
+  documentId: string,
+  lang: "zh" | "en",
+): Promise<SummarizeDocumentResponse> {
+  const response = await apiPost<SummarizeDocumentResponse>("/api/summarize", {
+    document_id: documentId,
+    lang,
+  });
+  if (!response.data) {
+    throw new Error("Summary generation returned no document");
   }
   return response.data;
 }
@@ -224,6 +367,120 @@ export async function saveLlmSettings(payload: {
   return response.data;
 }
 
+export async function getLlmCatalog(): Promise<LlmProviderPreset[]> {
+  const response = await apiGet<LlmProviderPreset[]>("/api/llm/catalog");
+  return response.data ?? [];
+}
+
+export async function getLlmConnections(): Promise<LlmConnectionsState> {
+  const response = await apiGet<LlmConnectionsState>("/api/llm/connections");
+  if (!response.data) throw new Error("LLM connections are unavailable");
+  return response.data;
+}
+
+export async function createLlmConnection(
+  payload: LlmConnectionPayload,
+): Promise<LlmConnection> {
+  const response = await apiPost<LlmConnection>("/api/llm/connections", payload);
+  if (!response.data) throw new Error("LLM connection was not created");
+  return response.data;
+}
+
+export async function updateLlmConnection(
+  id: string,
+  payload: LlmConnectionPayload,
+): Promise<LlmConnection> {
+  const response = await apiPut<LlmConnection>(
+    `/api/llm/connections/${encodeURIComponent(id)}`,
+    payload,
+  );
+  if (!response.data) throw new Error("LLM connection was not updated");
+  return response.data;
+}
+
+export async function deleteLlmConnection(id: string): Promise<void> {
+  await apiDelete(`/api/llm/connections/${encodeURIComponent(id)}`);
+}
+
+export async function activateLlmConnection(id: string): Promise<LlmConnection> {
+  const response = await apiPost<LlmConnection>(
+    `/api/llm/connections/${encodeURIComponent(id)}/activate`,
+    {},
+  );
+  if (!response.data) throw new Error("LLM connection was not activated");
+  return response.data;
+}
+
+export async function testLlmConnection(
+  connection: LlmConnectionPayload,
+): Promise<{ reachable: boolean; latencyMs: number; responsePreview: string }> {
+  const response = await apiPost<{
+    reachable: boolean;
+    latencyMs: number;
+    responsePreview: string;
+  }>("/api/llm/connections/test", { connection });
+  if (!response.data) throw new Error("LLM connection test failed");
+  return response.data;
+}
+
+export async function discoverLlmConnectionModels(
+  connection: LlmConnectionPayload,
+): Promise<string[]> {
+  const response = await apiPost<{ models: string[] }>(
+    "/api/llm/connections/models",
+    { connection },
+  );
+  return response.data?.models ?? [];
+}
+
+export async function getEmbeddingSettings(): Promise<EmbeddingSettings> {
+  const response = await apiGet<EmbeddingSettings>("/api/settings/embedding");
+  if (!response.data) throw new Error("Embedding settings are unavailable");
+  return response.data;
+}
+
+export async function saveEmbeddingSettings(payload: {
+  provider: EmbeddingProviderName;
+  model?: string;
+  baseUrl?: string;
+  apiKey?: string;
+  clearApiKey?: boolean;
+}): Promise<EmbeddingSettings> {
+  const response = await apiPut<EmbeddingSettings>("/api/settings/embedding", payload);
+  if (!response.data) throw new Error("Embedding settings were not saved");
+  return response.data;
+}
+
+export async function testEmbeddingConnection(): Promise<{
+  provider: string;
+  model: string;
+  dimensions: number;
+  reachable: boolean;
+  signature: string;
+}> {
+  const response = await apiPost<{
+    provider: string;
+    model: string;
+    dimensions: number;
+    reachable: boolean;
+    signature: string;
+  }>("/api/settings/embedding/test", {});
+  if (!response.data) throw new Error("Embedding connection test failed");
+  return response.data;
+}
+
+export async function rebuildEmbeddingIndex(): Promise<{
+  rebuilt: boolean;
+  index: EmbeddingIndexProgress;
+}> {
+  const response = await apiPost<{ rebuilt: boolean; index: EmbeddingIndexProgress }>(
+    "/api/index/embedding/rebuild",
+    {},
+  );
+  if (!response.data) throw new Error("Embedding index rebuild failed");
+  return response.data;
+}
+
 export async function getUserMemory(): Promise<MemoryTerm[]> {
   const response = await apiGet<MemoryTerm[]>("/api/user/memory?limit=24");
   return response.data ?? [];
@@ -284,6 +541,14 @@ async function apiPost<T>(endpoint: string, body: unknown): Promise<ApiEnvelope<
 
 async function apiDelete<T>(endpoint: string): Promise<ApiEnvelope<T>> {
   return apiRequest<T>(endpoint, { method: "DELETE" });
+}
+
+async function apiPut<T>(endpoint: string, body: unknown): Promise<ApiEnvelope<T>> {
+  return apiRequest<T>(endpoint, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
 }
 
 async function apiRequest<T>(endpoint: string, init: RequestInit): Promise<ApiEnvelope<T>> {

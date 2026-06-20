@@ -1,6 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
+import { SUMMARY_UI } from "@/i18n";
+import type { Document } from "@/types";
 import { EmptyBlock, LoadingBlock, SectionHeader, formatDate } from "../components";
 import {
   addFavorite,
@@ -9,11 +11,26 @@ import {
   getHistory,
   recordHistory as sendHistory,
   removeFavorite,
+  summarizeDocument,
 } from "../lib/api";
+import { useSummaryLanguage, type SummaryLanguage } from "../summary-language";
+
+type SummaryView = "summary" | "abstract";
 
 export function DocumentPage(): JSX.Element {
   const { id } = useParams();
   const queryClient = useQueryClient();
+  const { language } = useSummaryLanguage();
+  const labels = {
+    summaryTab: SUMMARY_UI.summaryTab[language],
+    abstractTab: SUMMARY_UI.abstractTab[language],
+    summaryHeading: SUMMARY_UI.summaryHeading[language],
+    generating: SUMMARY_UI.generating[language],
+    generationFailed: SUMMARY_UI.generationFailed[language],
+    retry: SUMMARY_UI.retry[language],
+  };
+  const [summaryView, setSummaryView] = useState<SummaryView>("summary");
+  const attemptedSummaries = useRef(new Set<string>());
 
   const documentQuery = useQuery({
     queryKey: ["document", id],
@@ -54,7 +71,35 @@ export function DocumentPage(): JSX.Element {
     },
   });
 
+  const summaryMutation = useMutation({
+    mutationFn: (targetLanguage: SummaryLanguage) => summarizeDocument(id!, targetLanguage),
+    onSuccess: async (result) => {
+      queryClient.setQueryData(["document", id], result.document);
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["home"] }),
+        queryClient.invalidateQueries({ queryKey: ["search"] }),
+        queryClient.invalidateQueries({ queryKey: ["tag-documents"] }),
+      ]);
+    },
+  });
+
   const document = documentQuery.data;
+  const selectedSummary = document ? getSummary(document, language) : undefined;
+
+  useEffect(() => {
+    if (!document || summaryView !== "summary" || selectedSummary) {
+      return;
+    }
+
+    const attemptKey = `${document.id}:${language}`;
+    if (attemptedSummaries.current.has(attemptKey)) {
+      return;
+    }
+
+    attemptedSummaries.current.add(attemptKey);
+    summaryMutation.mutate(language);
+  }, [document, language, selectedSummary, summaryMutation, summaryView]);
+
   const favoriteIds = favoritesQuery.data?.map((item) => item.documentId) ?? [];
   const isFavorite = id ? favoriteIds.includes(id) : false;
   const historyIds = historyQuery.data?.map((item) => item.documentId) ?? [];
@@ -126,19 +171,67 @@ export function DocumentPage(): JSX.Element {
           </article>
         </div>
 
-        <article className="story-block">
-          <h3>Chinese summary</h3>
-          <p>{document.summaryZh ?? "No Chinese summary has been generated yet."}</p>
-        </article>
-        <article className="story-block">
-          <h3>English summary</h3>
-          <p>{document.summaryEn ?? document.abstract}</p>
-        </article>
-        <article className="story-block">
-          <h3>Abstract</h3>
-          <p>{document.abstract}</p>
+        <div className="lang-tab-bar" role="tablist" aria-label={labels.summaryTab}>
+          <button
+            aria-selected={summaryView === "summary"}
+            className={`lang-tab${summaryView === "summary" ? " lang-tab-active" : ""}`}
+            id="tab-summary"
+            onClick={() => setSummaryView("summary")}
+            role="tab"
+            type="button"
+          >
+            {labels.summaryTab}
+          </button>
+          <button
+            aria-selected={summaryView === "abstract"}
+            className={`lang-tab${summaryView === "abstract" ? " lang-tab-active" : ""}`}
+            id="tab-abstract"
+            onClick={() => setSummaryView("abstract")}
+            role="tab"
+            type="button"
+          >
+            {labels.abstractTab}
+          </button>
+        </div>
+
+        <article className="story-block" aria-labelledby={`tab-${summaryView}`} role="tabpanel">
+          {summaryView === "summary" ? (
+            <>
+              <h3>{labels.summaryHeading}</h3>
+              {selectedSummary ? (
+                <p>{selectedSummary}</p>
+              ) : summaryMutation.isPending && summaryMutation.variables === language ? (
+                <p className="summary-status" role="status">
+                  {labels.generating}
+                </p>
+              ) : summaryMutation.isError && summaryMutation.variables === language ? (
+                <div className="summary-error" role="alert">
+                  <p>{labels.generationFailed}</p>
+                  <button
+                    className="secondary-button"
+                    disabled={summaryMutation.isPending}
+                    onClick={() => summaryMutation.mutate(language)}
+                    type="button"
+                  >
+                    {labels.retry}
+                  </button>
+                </div>
+              ) : (
+                <LoadingBlock />
+              )}
+            </>
+          ) : (
+            <>
+              <h3>{labels.abstractTab}</h3>
+              <p>{document.abstract}</p>
+            </>
+          )}
         </article>
       </section>
     </div>
   );
+}
+
+function getSummary(document: Document, language: SummaryLanguage): string | undefined {
+  return language === "zh" ? document.summaryZh : document.summaryEn;
 }

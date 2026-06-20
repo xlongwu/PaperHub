@@ -11,6 +11,7 @@ import {
   getDocumentsBySource,
   getDocumentsByTimeRange,
   getAllDocuments,
+  getPendingSummaryDocuments,
   countDocuments,
   updateDocument,
   documentExists,
@@ -165,6 +166,31 @@ describe("updateDocument", () => {
     const fetched = getDocumentById(doc.id);
     expect(fetched?.summaryZh).toBe("中文摘要");
     expect(fetched?.isSummarized).toBe(true);
+  });
+
+  it("tracks the summary level and selects documents needing regeneration", () => {
+    const doc = makeDoc();
+    insertDocument(doc);
+
+    updateDocument(doc.id, {
+      summaryZh: "短摘要",
+      summaryZhLevel: "short",
+      isSummarized: true,
+    });
+
+    expect(
+      getPendingSummaryDocuments(10, {
+        lang: "zh",
+        summaryLevel: "short",
+      }),
+    ).toHaveLength(0);
+    expect(
+      getPendingSummaryDocuments(10, {
+        lang: "zh",
+        summaryLevel: "detailed",
+      }).map((item) => item.id),
+    ).toEqual([doc.id]);
+    expect(getDocumentById(doc.id)?.summaryZhLevel).toBe("short");
   });
 });
 

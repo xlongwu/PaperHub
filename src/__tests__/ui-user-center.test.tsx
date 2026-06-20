@@ -41,27 +41,23 @@ describe("UserCenterPage", () => {
           });
         }
 
-        if (url.endsWith("/api/llm/settings") && method === "GET") {
+        if (url.endsWith("/api/llm/catalog") && method === "GET") {
+          return jsonResponse([deepseekPreset(), openrouterPreset()]);
+        }
+
+        if (url.endsWith("/api/llm/connections") && method === "GET") {
           return jsonResponse({
-            provider: "deepseek",
-            model: "deepseek-chat",
-            baseUrl: "https://api.deepseek.com",
-            hasApiKey: false,
-            apiKeySource: "missing",
-            supportedProviders: ["anthropic", "openai", "github-copilot", "openrouter", "deepseek"],
+            connections: [deepseekConnection(), openrouterConnection()],
+            activeConnectionId: "default-deepseek",
+            runtimeConnectionId: "default-deepseek",
+            runtimeSource: "stored",
+            environmentOverride: false,
           });
         }
 
-        if (url.endsWith("/api/llm/settings") && method === "POST") {
+        if (url.endsWith("/api/llm/connections/default-deepseek") && method === "PUT") {
           savedLlmBodies.push(String(init?.body ?? ""));
-          return jsonResponse({
-            provider: "deepseek",
-            model: "deepseek-chat",
-            baseUrl: "https://api.deepseek.com",
-            hasApiKey: true,
-            apiKeySource: "stored",
-            supportedProviders: ["anthropic", "openai", "github-copilot", "openrouter", "deepseek"],
-          });
+          return jsonResponse({ ...deepseekConnection(), hasApiKey: true });
         }
 
         if (url.includes("/api/user/memory")) {
@@ -104,10 +100,22 @@ describe("UserCenterPage", () => {
     });
     expect(savedBodies[0]).toContain("RAG");
 
-    fireEvent.change(screen.getByLabelText("API key"), {
+    fireEvent.click(screen.getByRole("button", { name: /OpenRouter/ }));
+    await waitFor(() => {
+      expect(screen.getByLabelText("连接名称")).toHaveValue("OpenRouter");
+      expect(screen.getByLabelText("API 根地址")).toHaveValue("https://openrouter.ai/api/v1");
+      expect(screen.getByLabelText("模型 ID")).toHaveValue("openai/gpt-oss-120b:free");
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /DeepSeek/ }));
+    await waitFor(() => {
+      expect(screen.getByLabelText("连接名称")).toHaveValue("DeepSeek");
+    });
+
+    fireEvent.change(await screen.findByLabelText("API 密钥"), {
       target: { value: "sk-ui-test" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Save LLM settings" }));
+    fireEvent.click(screen.getByRole("button", { name: /^保存$/ }));
 
     await waitFor(() => {
       expect(savedLlmBodies).toHaveLength(1);
@@ -118,6 +126,93 @@ describe("UserCenterPage", () => {
 
 function getUrl(input: string | URL | Request): string {
   return typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+}
+
+function deepseekPreset() {
+  return {
+    id: "deepseek",
+    label: "DeepSeek",
+    protocol: "openai_chat",
+    baseUrl: "https://api.deepseek.com",
+    defaultModel: "deepseek-chat",
+    auth: { type: "bearer" },
+    request: {
+      method: "POST",
+      path: "/chat/completions",
+      headers: {},
+      body: {
+        model: "{{model}}",
+        max_tokens: "{{maxTokens}}",
+        messages: [{ role: "user", content: "{{prompt}}" }],
+      },
+      responsePath: "$.choices[0].message.content",
+    },
+    models: {
+      method: "GET",
+      path: "/models",
+      headers: {},
+      listPath: "$.data",
+      idPath: "$.id",
+    },
+  };
+}
+
+function deepseekConnection() {
+  const preset = deepseekPreset();
+  return {
+    id: "default-deepseek",
+    name: preset.label,
+    presetId: preset.id,
+    protocol: preset.protocol,
+    baseUrl: preset.baseUrl,
+    model: preset.defaultModel,
+    auth: preset.auth,
+    request: preset.request,
+    models: preset.models,
+    hasApiKey: false,
+    isActive: true,
+    lastTestStatus: null,
+    lastTestMessage: null,
+    lastTestAt: null,
+    createdAt: "2026-06-20T00:00:00Z",
+    updatedAt: "2026-06-20T00:00:00Z",
+  };
+}
+
+function openrouterPreset() {
+  return {
+    ...deepseekPreset(),
+    id: "openrouter",
+    label: "OpenRouter",
+    baseUrl: "https://openrouter.ai/api/v1",
+    defaultModel: "openai/gpt-4o-mini",
+    request: {
+      ...deepseekPreset().request,
+      headers: { "X-OpenRouter-Title": "PaperHub" },
+    },
+  };
+}
+
+function openrouterConnection() {
+  const preset = openrouterPreset();
+  return {
+    id: "legacy-openrouter",
+    name: preset.label,
+    presetId: preset.id,
+    protocol: preset.protocol,
+    baseUrl: preset.baseUrl,
+    model: "openai/gpt-oss-120b:free",
+    auth: preset.auth,
+    request: preset.request,
+    models: preset.models,
+    hasApiKey: true,
+    isActive: false,
+    lastTestStatus: "failed",
+    lastTestMessage: "fetch failed",
+    lastTestAt: "2026-06-20T00:00:00Z",
+    createdAt: "2026-06-20T00:00:00Z",
+    updatedAt: "2026-06-20T00:00:00Z",
+  };
 }
 
 function jsonResponse(data: unknown): Response {

@@ -11,7 +11,11 @@ import { claudeBlogCollector } from "@/collectors/claude-blog";
 import { ingestDocuments } from "@/services/document-ingestion";
 import { getPendingSummaryDocuments } from "@/db/documents";
 import { withRetry, logError } from "@/utils/retry";
-import { summarizeBatch } from "@/summarizer";
+import {
+  getConfiguredSummaryLanguage,
+  getConfiguredSummaryLevel,
+  summarizeBatch,
+} from "@/summarizer";
 import fs from "node:fs";
 import path from "node:path";
 import { rebuildUserMemoryFromDigests, refreshHotRecommendations } from "@/recommendation";
@@ -85,18 +89,28 @@ async function runSummarization(): Promise<void> {
   logScheduler("[scheduler] Running summarization...");
 
   try {
-    const pending = getPendingSummaryDocuments(100);
+    const summaryLanguage = getConfiguredSummaryLanguage();
+    const summaryLevel = getConfiguredSummaryLevel();
+    const pending = getPendingSummaryDocuments(100, {
+      lang: summaryLanguage,
+      summaryLevel,
+    });
 
     if (pending.length === 0) {
       logScheduler("[scheduler] No pending documents to summarize.");
       return;
     }
 
-    await summarizeBatch(pending, "zh", (done, total) => {
-      if (done % 5 === 0 || done === total) {
-        logScheduler(`[scheduler] Summarization progress: ${done}/${total}`);
-      }
-    });
+    await summarizeBatch(
+      pending,
+      summaryLanguage,
+      (done, total) => {
+        if (done % 5 === 0 || done === total) {
+          logScheduler(`[scheduler] Summarization progress: ${done}/${total}`);
+        }
+      },
+      { summaryLevel },
+    );
 
     logScheduler(`[scheduler] Summarization done.`);
   } catch (e) {

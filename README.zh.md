@@ -70,7 +70,40 @@ export GITHUB_TOKEN=your_token_here
 export PAPERHUB_PORT=3000
 ```
 
-如果需要真实语义向量检索，请提供 `OPENAI_API_KEY` 或 `EMBEDDING_API_KEY`。
+语义搜索支持 OpenAI 与本机 Ollama。
+
+OpenAI：
+
+```bash
+export EMBEDDING_PROVIDER=openai
+export EMBEDDING_API_KEY=your_key_here
+```
+
+Ollama（不需要 OpenAI Key）：
+
+```bash
+ollama pull qwen3-embedding:0.6b
+
+export EMBEDDING_PROVIDER=ollama
+export OLLAMA_BASE_URL=http://127.0.0.1:11434
+export OLLAMA_EMBEDDING_MODEL=qwen3-embedding:0.6b
+export EMBEDDING_TIMEOUT_MS=30000
+export EMBEDDING_BATCH_SIZE=8
+export EMBEDDING_KEEP_ALIVE=5m
+export EMBEDDING_TRUNCATE=true
+export EMBEDDING_MAX_INPUT_CHARS=24000
+```
+
+`EMBEDDING_EXPECTED_DIMENSIONS` 为可选校验项。未设置时，PaperHub 会自动探测模型的真实输出维度。
+模型、维度、端点或文档向量文本规则变化时，系统会安全重建 sqlite-vec 索引。重建期间或 Ollama
+离线时，关键词搜索仍保持可用，混合搜索会自动回退到 FTS5。
+
+桌面端“个人中心”可以测试当前 Embedding 连接、查看索引进度并手动重建。对应 API：
+
+- `GET /api/settings/embedding`
+- `POST /api/settings/embedding/test`
+- `POST /api/index/embedding/rebuild`
+- `GET /api/index/embedding/status`
 
 ## 本地开发
 

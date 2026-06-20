@@ -329,9 +329,8 @@ describe("createProvider", () => {
     }
   });
 
-  it("defaults to deepseek when LLM_PROVIDER is not set", () => {
-    delete process.env["LLM_PROVIDER"];
-    const p = createProvider();
+  it("creates deepseek provider explicitly", () => {
+    const p = createProvider("deepseek");
     expect(p.name).toBe("deepseek");
     expect(p).toBeInstanceOf(DeepSeekProvider);
   });

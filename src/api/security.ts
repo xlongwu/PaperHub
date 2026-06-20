@@ -21,7 +21,7 @@ export function corsMiddleware(req: Request, res: Response, next: NextFunction):
   // The response is still served (same-origin requests work), but browsers
   // will block cross-origin access.
 
-  res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+  res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
   res.setHeader("Access-Control-Max-Age", "600"); // 10 min preflight cache
 

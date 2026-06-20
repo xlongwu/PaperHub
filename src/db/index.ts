@@ -8,12 +8,13 @@ import path from "node:path";
 import Database from "better-sqlite3";
 import * as sqliteVec from "sqlite-vec";
 import { getDbPath } from "@/config";
+import { getLlmProviderPreset } from "@/providers/catalog";
 
 // ---------------------------------------------------------------------------
 // Migration tracking
 // ---------------------------------------------------------------------------
 
-const CURRENT_SCHEMA_VERSION = 9;
+const CURRENT_SCHEMA_VERSION = 13;
 
 interface Migration {
   version: number;
@@ -453,6 +454,93 @@ const MIGRATIONS: Migration[] = [
       initIndexState(db);
     },
   },
+  {
+    version: 10,
+    name: "summary-level-cache",
+    sql: `
+      ALTER TABLE documents ADD COLUMN summary_zh_level TEXT
+        CHECK (summary_zh_level IN ('short', 'detailed'));
+      ALTER TABLE documents ADD COLUMN summary_en_level TEXT
+        CHECK (summary_en_level IN ('short', 'detailed'));
+
+      UPDATE documents
+      SET summary_zh_level = 'short'
+      WHERE summary_zh IS NOT NULL AND trim(summary_zh) != '';
+
+      UPDATE documents
+      SET summary_en_level = 'short'
+      WHERE summary_en IS NOT NULL AND trim(summary_en) != '';
+    `,
+  },
+  {
+    version: 11,
+    name: "dynamic-embedding-index",
+    sql: `
+      ALTER TABLE embedding_index_metadata ADD COLUMN provider TEXT;
+      ALTER TABLE embedding_index_metadata ADD COLUMN model TEXT;
+      ALTER TABLE embedding_index_metadata ADD COLUMN dimensions INTEGER;
+      ALTER TABLE embedding_index_metadata ADD COLUMN status TEXT NOT NULL DEFAULT 'unconfigured'
+        CHECK (status IN (
+          'unconfigured', 'probing', 'ready', 'rebuild_required', 'rebuilding', 'failed'
+        ));
+      ALTER TABLE embedding_index_metadata ADD COLUMN last_error TEXT;
+      ALTER TABLE embedding_index_metadata ADD COLUMN rebuild_started_at TEXT;
+      ALTER TABLE embedding_index_metadata ADD COLUMN rebuild_completed_at TEXT;
+
+      UPDATE embedding_index_metadata
+      SET dimensions = 1536,
+          status = 'rebuild_required'
+      WHERE dimensions IS NULL;
+    `,
+  },
+  {
+    version: 12,
+    name: "embedding-provider-settings",
+    sql: `
+      -- Stores user-configured embedding provider settings from the Profile UI.
+      -- Priority: this table > environment variables > built-in defaults.
+      CREATE TABLE IF NOT EXISTS embedding_provider_settings (
+        provider TEXT PRIMARY KEY,      -- 'openai' | 'ollama'
+        model     TEXT,
+        base_url  TEXT,
+        api_key   TEXT,                 -- stored locally; never returned in API responses
+        updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+      );
+    `,
+  },
+  {
+    version: 13,
+    name: "llm-connections",
+    sql: `
+      CREATE TABLE IF NOT EXISTS llm_connections (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        preset_id TEXT,
+        protocol TEXT NOT NULL CHECK (
+          protocol IN ('openai_chat', 'anthropic_messages', 'gemini_generate_content', 'custom_json')
+        ),
+        base_url TEXT NOT NULL,
+        model TEXT NOT NULL,
+        api_key TEXT,
+        auth_json TEXT NOT NULL,
+        request_json TEXT NOT NULL,
+        models_json TEXT,
+        last_test_status TEXT CHECK (last_test_status IN ('success', 'failed')),
+        last_test_message TEXT,
+        last_test_at TEXT,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE TABLE IF NOT EXISTS llm_runtime_settings (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        active_connection_id TEXT,
+        updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (active_connection_id) REFERENCES llm_connections(id) ON DELETE SET NULL
+      );
+    `,
+    postMigrate: migrateLegacyLlmConnections,
+  },
 ];
 
 // ---------------------------------------------------------------------------
@@ -506,6 +594,87 @@ function getCurrentVersion(db: Database.Database): number {
   } catch {
     return 0;
   }
+}
+
+function migrateLegacyLlmConnections(db: Database.Database): void {
+  const legacyRows = db
+    .prepare("SELECT provider, api_key, model, base_url FROM llm_provider_settings")
+    .all() as Array<{
+    provider: string;
+    api_key: string | null;
+    model: string | null;
+    base_url: string | null;
+  }>;
+
+  const insert = db.prepare(
+    `INSERT OR IGNORE INTO llm_connections(
+       id, name, preset_id, protocol, base_url, model, api_key,
+       auth_json, request_json, models_json
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  );
+
+  for (const row of legacyRows) {
+    const preset = getLlmProviderPreset(row.provider);
+    if (!preset) continue;
+    const id = `legacy-${row.provider}`;
+    insert.run(
+      id,
+      preset.label,
+      preset.id,
+      preset.protocol,
+      row.base_url?.trim() || preset.baseUrl,
+      row.model?.trim() || preset.defaultModel,
+      row.api_key,
+      JSON.stringify(preset.auth),
+      JSON.stringify(preset.request),
+      preset.models ? JSON.stringify(preset.models) : null,
+    );
+  }
+
+  const count = db.prepare("SELECT COUNT(*) AS count FROM llm_connections").get() as {
+    count: number;
+  };
+  if (count.count === 0) {
+    const preset = getLlmProviderPreset("deepseek");
+    if (!preset) throw new Error("Built-in DeepSeek preset is missing.");
+    insert.run(
+      "default-deepseek",
+      preset.label,
+      preset.id,
+      preset.protocol,
+      preset.baseUrl,
+      preset.defaultModel,
+      null,
+      JSON.stringify(preset.auth),
+      JSON.stringify(preset.request),
+      preset.models ? JSON.stringify(preset.models) : null,
+    );
+  }
+
+  const selected = db
+    .prepare("SELECT value FROM user_preferences WHERE key = 'llm_provider'")
+    .get() as { value: string } | undefined;
+  const preferredId = selected
+    ? `legacy-${selected.value}`
+    : legacyRows.some((row) => row.provider === "deepseek")
+      ? "legacy-deepseek"
+      : "default-deepseek";
+  const preferredExists = db
+    .prepare("SELECT 1 FROM llm_connections WHERE id = ?")
+    .get(preferredId);
+  const fallback = db
+    .prepare(
+      `SELECT id FROM llm_connections
+       ORDER BY CASE WHEN preset_id = 'deepseek' THEN 0 ELSE 1 END, created_at, id
+       LIMIT 1`,
+    )
+    .get() as { id: string } | undefined;
+
+  db.prepare(
+    `INSERT INTO llm_runtime_settings(id, active_connection_id)
+     VALUES (1, ?)
+     ON CONFLICT(id) DO UPDATE SET active_connection_id = excluded.active_connection_id`,
+  ).run(preferredExists ? preferredId : fallback?.id ?? null);
 }
 
 export function runMigrations(): void {
@@ -625,10 +794,30 @@ function ensureVectorSchema(db: Database.Database): void {
     db.loadExtension(sqliteVec.getLoadablePath());
     vectorReadyConnections.add(db);
   }
+  const hasMetadataTable = Boolean(
+    db
+      .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'embedding_index_metadata'")
+      .get(),
+  );
+  const metadata = hasMetadataTable
+    ? (db
+        .prepare(
+          `SELECT dimensions
+           FROM embedding_index_metadata
+           WHERE id = 1`,
+        )
+        .get() as { dimensions?: number | null } | undefined)
+    : undefined;
+  const dimensions =
+    Number.isSafeInteger(metadata?.dimensions) &&
+    Number(metadata?.dimensions) >= 32 &&
+    Number(metadata?.dimensions) <= 8192
+      ? Number(metadata?.dimensions)
+      : 1536;
   db.exec(`
     CREATE VIRTUAL TABLE IF NOT EXISTS document_vectors_v2 USING vec0(
       document_id TEXT PRIMARY KEY,
-      embedding float[1536] distance_metric=cosine
+      embedding float[${dimensions}] distance_metric=cosine
     );
   `);
   console.log("[db] sqlite-vec schema ready");

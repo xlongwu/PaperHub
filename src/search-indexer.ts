@@ -11,8 +11,18 @@
  * No external message queue dependency — uses setTimeout for scheduling.
  */
 
-import { indexDocumentVector, getPendingVectorDocuments, markVectorIndexFailed } from "@/db/search";
+import {
+  indexDocumentVector,
+  indexDocumentVectors,
+  getPendingVectorDocuments,
+  markVectorIndexFailed,
+} from "@/db/search";
 import { getDocumentById } from "@/db/documents";
+import {
+  activateEmbeddingRuntime,
+  finalizeEmbeddingIndex,
+  getEmbeddingIndexMetadata,
+} from "@/db/embedding-index";
 
 // ---------------------------------------------------------------------------
 // State
@@ -36,12 +46,16 @@ const state: IndexerState = {
 
 const queue: string[] = [];
 let processingTimer: ReturnType<typeof setTimeout> | null = null;
+let activationPromise: Promise<void> | null = null;
+let stopped = false;
 
-const MAX_RETRIES = 3;
-const BATCH_SIZE = 10;
+const MAX_RETRIES = 5;
 const PROCESS_INTERVAL_MS = 2000; // Process one batch every 2 seconds
-const RATE_LIMIT_PER_SECOND = 5;
-const INDEX_CONCURRENCY = 3;
+
+function getBatchSize(): number {
+  const configured = Number(process.env["EMBEDDING_BATCH_SIZE"] ?? 8);
+  return Number.isSafeInteger(configured) ? Math.min(32, Math.max(1, configured)) : 8;
+}
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -63,12 +77,35 @@ export function enqueueVectorIndexing(documentIds: string[]): void {
   if (added > 0) {
     console.log(`[search-indexer] Enqueued ${added} documents for vector indexing`);
   }
-  ensureProcessing();
+  startIndexer();
 }
 
 /** Start the indexer and recover pending/stale work from the database. */
 export function startIndexer(): void {
-  ensureProcessing();
+  if (activationPromise || state.running) return;
+  stopped = false;
+  activationPromise = activateEmbeddingRuntime()
+    .then((activation) => {
+      if (stopped) return;
+      console.log(
+        `[search-indexer] Embedding runtime ready: ${activation.runtime.provider}/${activation.runtime.model} ` +
+          `(${activation.runtime.dimensions} dimensions, index=${activation.status})`,
+      );
+      ensureProcessing();
+    })
+    .catch((error) => {
+      console.warn(
+        `[search-indexer] Embeddings unavailable; keyword search remains active: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+      if (!stopped) {
+        processingTimer = setTimeout(startIndexer, 30_000);
+      }
+    })
+    .finally(() => {
+      activationPromise = null;
+    });
 }
 
 /**
@@ -76,27 +113,25 @@ export function startIndexer(): void {
  * Used for bulk catch-up (e.g. after migration or backfill).
  */
 export async function processPending(count = 50): Promise<number> {
+  await activateEmbeddingRuntime();
   const docs = getPendingVectorDocuments(count);
   if (docs.length === 0) return 0;
 
   let processed = 0;
-  for (const doc of docs) {
+  const batchSize = getBatchSize();
+  for (let offset = 0; offset < docs.length; offset += batchSize) {
+    const batch = docs.slice(offset, offset + batchSize);
     try {
-      await indexDocumentVector(doc);
-      processed++;
-      state.processedToday++;
-
-      // Rate limiting
-      if (processed % RATE_LIMIT_PER_SECOND === 0) {
-        await new Promise((resolve) => setTimeout(resolve, 1000));
-      }
-    } catch (e) {
-      state.errorsToday++;
-      markVectorIndexFailed(doc.id, e);
-      console.error(`[search-indexer] Failed for ${doc.id}:`, e);
+      await indexDocumentVectors(batch);
+      processed += batch.length;
+      state.processedToday += batch.length;
+    } catch {
+      const recovered = await retryDocumentsIndividually(batch);
+      processed += recovered;
     }
   }
 
+  if (getEmbeddingIndexMetadata()?.status === "rebuilding") finalizeEmbeddingIndex();
   state.lastProcessedAt = new Date().toISOString();
   return processed;
 }
@@ -113,6 +148,7 @@ export function getIndexerState(): IndexerState {
  * (they'll be picked up from the database on next startup).
  */
 export function stopIndexer(): void {
+  stopped = true;
   if (processingTimer) {
     clearTimeout(processingTimer);
     processingTimer = null;
@@ -137,7 +173,7 @@ function ensureProcessing(): void {
     if (queue.length === 0) {
       let pending;
       try {
-        pending = getPendingVectorDocuments(BATCH_SIZE);
+        pending = getPendingVectorDocuments(getBatchSize());
       } catch (error) {
         state.running = false;
         console.warn(
@@ -161,44 +197,27 @@ function ensureProcessing(): void {
     }
 
     // Process one batch
-    const batch = queue.splice(0, BATCH_SIZE);
+    const batch = queue.splice(0, getBatchSize());
     state.queueSize = queue.length;
+    const documents = batch
+      .map((documentId) => getDocumentById(documentId))
+      .filter((document): document is NonNullable<typeof document> => Boolean(document));
 
-    const pendingBatch = [...batch];
-    const worker = async (): Promise<void> => {
-      while (pendingBatch.length > 0) {
-        const docId = pendingBatch.shift();
-        if (!docId) return;
-        const doc = getDocumentById(docId);
-        if (!doc) {
-          // Document was deleted — skip
-          continue;
-        }
-
-        let success = false;
-        for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
-          try {
-            await indexDocumentVector(doc);
-            state.processedToday++;
-            success = true;
-            break;
-          } catch (e) {
-            const delay = Math.pow(2, attempt) * 1000;
-            console.error(`[search-indexer] Retry ${attempt + 1}/${MAX_RETRIES} for ${docId}:`, e);
-            await new Promise((resolve) => setTimeout(resolve, delay));
-          }
-        }
-
-        if (!success) {
-          state.errorsToday++;
-          markVectorIndexFailed(docId, `Failed after ${MAX_RETRIES} retries`);
-        }
-
-        // Rate limit between documents
-        await new Promise((resolve) => setTimeout(resolve, 200));
+    if (documents.length > 0) {
+      try {
+        await indexDocumentVectors(documents);
+        state.processedToday += documents.length;
+      } catch (error) {
+        console.warn(
+          `[search-indexer] Batch embedding failed; retrying ${documents.length} documents individually: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+        await retryDocumentsIndividually(documents);
       }
-    };
-    await Promise.all(Array.from({ length: Math.min(INDEX_CONCURRENCY, batch.length) }, () => worker()));
+    }
+
+    if (getEmbeddingIndexMetadata()?.status === "rebuilding") finalizeEmbeddingIndex();
 
     state.lastProcessedAt = new Date().toISOString();
 
@@ -208,4 +227,39 @@ function ensureProcessing(): void {
 
   // Delay startup slightly to avoid thundering herd
   processingTimer = setTimeout(tick, 100);
+}
+
+async function retryDocumentsIndividually(
+  documents: Array<NonNullable<ReturnType<typeof getDocumentById>>>,
+): Promise<number> {
+  let recovered = 0;
+  for (const document of documents) {
+    let lastError: unknown = "Unknown embedding failure";
+    let success = false;
+    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+      try {
+        await indexDocumentVector(document);
+        state.processedToday++;
+        recovered++;
+        success = true;
+        break;
+      } catch (error) {
+        lastError = error;
+        if (attempt < MAX_RETRIES) {
+          const delay = Math.min(20_000, 1000 * 2 ** (attempt - 1));
+          console.warn(
+            `[search-indexer] Retry ${attempt}/${MAX_RETRIES} for ${document.id} after ${delay}ms: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+          );
+          await new Promise((resolve) => setTimeout(resolve, delay));
+        }
+      }
+    }
+    if (!success) {
+      state.errorsToday++;
+      markVectorIndexFailed(document.id, lastError);
+    }
+  }
+  return recovered;
 }

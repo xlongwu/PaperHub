@@ -9,6 +9,13 @@ const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 const outputDir = path.resolve(rootDir, "dist-desktop");
 const isWindows = process.platform === "win32";
 const args = process.argv.slice(2);
+const targetArgs = args.includes("--dir")
+  ? ["--dir", "--win", "--x64"]
+  : args.includes("--portable")
+    ? ["--win", "portable", "--x64"]
+    : args.includes("--nsis")
+      ? ["--win", "nsis", "--x64"]
+      : ["--win", "nsis", "portable", "--x64"];
 const electronVersion = readPackageJson().devDependencies.electron.replace(/^[^\d]*/, "");
 const electronDist = resolveElectronDist();
 const require = createRequire(import.meta.url);
@@ -32,22 +39,34 @@ await runPnpm(["ui:build"], {
   },
 });
 
-await runNode(["node_modules/electron-builder/install-app-deps.js", "--arch=x64"], {
-  cwd: rootDir,
-  env: buildEnv,
-});
+await ensureHostBetterSqlite();
+const hostBetterSqliteSnapshot = snapshotHostBetterSqlite();
+let electronBetterSqliteSnapshot = null;
 
-await runNode(
-  [
-    "node_modules/electron-builder/cli.js",
-    ...(electronDist ? [`--config.electronDist=${electronDist}`] : []),
-    ...(args.includes("--dir") ? ["--dir", "--win", "--x64"] : ["--win", "nsis", "portable", "--x64"]),
-  ],
-  {
-    cwd: rootDir,
-    env: buildEnv,
-  },
-);
+try {
+  await rebuildBetterSqliteForElectron();
+  electronBetterSqliteSnapshot = snapshotBetterSqlite(
+    path.join(rootDir, ".tmp", "native-electron", "better_sqlite3.node"),
+  );
+
+  await runNode(
+    [
+      "node_modules/electron-builder/cli.js",
+      "--config.npmRebuild=false",
+      ...(electronDist ? [`--config.electronDist=${electronDist}`] : []),
+      ...targetArgs,
+    ],
+    {
+      cwd: rootDir,
+      env: buildEnv,
+    },
+  );
+} finally {
+  restoreHostBetterSqlite(hostBetterSqliteSnapshot);
+  if (electronBetterSqliteSnapshot) {
+    restorePackagedBetterSqlite(electronBetterSqliteSnapshot);
+  }
+}
 
 verifyPackagedUi();
 copyQuickTestLauncher();
@@ -74,6 +93,118 @@ function cleanOutputDirectory() {
   fs.rmSync(outputDir, { recursive: true, force: true });
 }
 
+async function ensureHostBetterSqlite() {
+  try {
+    await verifyHostBetterSqlite();
+    return;
+  } catch {
+    console.warn("[desktop-build] Restoring better-sqlite3 for the host Node runtime...");
+  }
+
+  const packageDir = path.dirname(require.resolve("better-sqlite3/package.json"));
+  const prebuildInstaller = require.resolve("prebuild-install/bin.js", {
+    paths: [packageDir, rootDir],
+  });
+  await runNode([prebuildInstaller], {
+    cwd: packageDir,
+    env: process.env,
+  });
+  await verifyHostBetterSqlite();
+}
+
+function verifyHostBetterSqlite() {
+  return runNode(
+    [
+      "-e",
+      "const Database=require('better-sqlite3');const db=new Database(':memory:');db.close();",
+    ],
+    {
+      cwd: rootDir,
+      env: process.env,
+      stdio: "ignore",
+    },
+  );
+}
+
+async function rebuildBetterSqliteForElectron() {
+  const electronRebuildMain = require.resolve("@electron/rebuild", {
+    paths: [path.dirname(require.resolve("electron-builder/package.json"))],
+  });
+  const electronRebuildCli = path.join(path.dirname(electronRebuildMain), "cli.js");
+
+  await runNode(
+    [
+      electronRebuildCli,
+      "--version",
+      electronVersion,
+      "--arch",
+      "x64",
+      "--module-dir",
+      rootDir,
+      "--force",
+      "--which-module",
+      "better-sqlite3",
+    ],
+    {
+      cwd: rootDir,
+      env: buildEnv,
+    },
+  );
+}
+
+function snapshotHostBetterSqlite() {
+  return snapshotBetterSqlite(path.join(rootDir, ".tmp", "native-host", "better_sqlite3.node"));
+}
+
+function snapshotBetterSqlite(snapshotPath) {
+  fs.mkdirSync(path.dirname(snapshotPath), { recursive: true });
+  fs.copyFileSync(getBetterSqliteNativeModulePath(), snapshotPath);
+  return snapshotPath;
+}
+
+function restoreHostBetterSqlite(snapshotPath) {
+  const nativeModule = getBetterSqliteNativeModulePath();
+  fs.copyFileSync(snapshotPath, nativeModule);
+  console.log(`[desktop-build] Restored better-sqlite3 for host Node ${process.version}.`);
+}
+
+function restorePackagedBetterSqlite(snapshotPath) {
+  const resourcesDir = path.join(outputDir, "win-unpacked", "resources");
+  const candidates = [
+    path.join(
+      resourcesDir,
+      "app",
+      "node_modules",
+      "better-sqlite3",
+      "build",
+      "Release",
+      "better_sqlite3.node",
+    ),
+    path.join(
+      resourcesDir,
+      "app.asar.unpacked",
+      "node_modules",
+      "better-sqlite3",
+      "build",
+      "Release",
+      "better_sqlite3.node",
+    ),
+  ];
+  const packagedNativeModule = candidates.find((candidate) => fs.existsSync(candidate));
+
+  if (!packagedNativeModule) {
+    throw new Error("Packaged better-sqlite3 native module was not found.");
+  }
+
+  fs.copyFileSync(snapshotPath, packagedNativeModule);
+  console.log("[desktop-build] Installed Electron-compatible better-sqlite3 in packaged app.");
+}
+
+function getBetterSqliteNativeModulePath() {
+  const packageDir = path.dirname(require.resolve("better-sqlite3/package.json"));
+  return path.join(packageDir, "build", "Release", "better_sqlite3.node");
+}
+
 function verifyPackagedUi() {
   const resourcesDir = path.join(outputDir, "win-unpacked", "resources");
   const appDir = path.join(resourcesDir, "app");
@@ -90,11 +221,15 @@ function verifyPackagedUi() {
 
   const bundlePath = path.join("dist-ui", "assets", scriptMatch[1]);
   const bundle = readPackagedFile(bundlePath).toString("utf-8");
-  if (!bundle.includes("LLM connection") || !bundle.includes("Save LLM settings")) {
-    throw new Error("Packaged UI does not contain the LLM settings interface.");
+  if (
+    !bundle.includes("/api/llm/connections") ||
+    !bundle.includes("LLM 连接管理") ||
+    !bundle.includes("保存并启用")
+  ) {
+    throw new Error("Packaged UI does not contain the multi-provider LLM connection manager.");
   }
 
-  console.log(`[desktop-build] Verified packaged LLM settings UI: ${bundlePath}`);
+  console.log(`[desktop-build] Verified packaged LLM connection manager: ${bundlePath}`);
 }
 
 function copyQuickTestLauncher() {

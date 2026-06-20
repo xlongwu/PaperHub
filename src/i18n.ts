@@ -182,3 +182,73 @@ export const NOTIFY_LABELS: Record<string, Record<Lang, string>> = {
   "ai-weekly": t("AI 工具生态周报", "AI Tools Weekly"),
   "ai-monthly": t("AI 工具生态月报", "AI Tools Monthly"),
 };
+
+// ---------------------------------------------------------------------------
+// PaperHub summary UI
+// ---------------------------------------------------------------------------
+
+export const SUMMARY_UI = {
+  switchLabel: t("摘要语言", "Summary language"),
+  chinese: t("中文", "Chinese"),
+  english: t("英文", "English"),
+  summaryTab: t("总结", "Summary"),
+  abstractTab: t("原始摘要", "Original abstract"),
+  summaryHeading: t("中文总结", "English summary"),
+  generating: t("正在生成中文总结…", "Generating English summary…"),
+  generationFailed: t("中文总结生成失败。", "English summary generation failed."),
+  retry: t("重试", "Retry"),
+} as const;
+
+export const LLM_CONNECTION_UI = {
+  kicker: t("AI 配置", "AI settings"),
+  title: t("LLM 连接管理", "LLM connection manager"),
+  description: t(
+    "保存多个厂商或自定义 API 连接，并选择一个用于摘要、标签和搜索报告。",
+    "Save multiple provider or custom API connections and choose one for summaries, tags, and search reports.",
+  ),
+  connectionList: t("连接列表", "Connections"),
+  newConnection: t("新增连接", "New connection"),
+  active: t("当前启用", "Active"),
+  environmentOverride: t(
+    "环境变量正在覆盖本地启用连接；本地切换仍会保存，但需移除环境变量后才会生效。",
+    "Environment variables currently override the locally active connection.",
+  ),
+  connectionName: t("连接名称", "Connection name"),
+  providerPreset: t("厂商预设", "Provider preset"),
+  apiKey: t("API 密钥", "API key"),
+  keepKey: t("已保存密钥；留空可继续使用", "A key is saved; leave blank to keep it"),
+  pasteKey: t("由用户自行填入 API 密钥", "Enter an API key"),
+  removeKey: t("删除已保存密钥", "Remove saved key"),
+  baseUrl: t("API 根地址", "API base URL"),
+  insecureHttp: t(
+    "该远程地址使用明文 HTTP，API 密钥可能被窃听。",
+    "This remote endpoint uses plain HTTP; API credentials may be exposed.",
+  ),
+  model: t("模型 ID", "Model ID"),
+  discoverModels: t("获取模型", "Fetch models"),
+  noModelDiscovery: t(
+    "该连接未配置模型发现接口，可直接手填模型 ID。",
+    "This connection has no model discovery request; enter a model ID manually.",
+  ),
+  test: t("测试连接", "Test connection"),
+  save: t("保存", "Save"),
+  saveActivate: t("保存并启用", "Save and activate"),
+  activate: t("设为启用", "Activate"),
+  duplicate: t("复制连接", "Duplicate"),
+  delete: t("删除连接", "Delete"),
+  advanced: t("高级协议配置", "Advanced protocol settings"),
+  protocol: t("协议", "Protocol"),
+  authType: t("鉴权方式", "Authentication"),
+  authHeader: t("密钥 Header 名称", "API key header"),
+  authQuery: t("密钥 Query 参数", "API key query parameter"),
+  requestMethod: t("请求方法", "Request method"),
+  requestPath: t("生成请求路径", "Generation path"),
+  requestHeaders: t("附加请求头（JSON）", "Additional headers (JSON)"),
+  requestBody: t("请求体模板（JSON）", "Request body template (JSON)"),
+  responsePath: t("文本响应路径", "Text response path"),
+  modelsTemplate: t("模型发现模板（JSON，null 表示关闭）", "Model discovery template (JSON or null)"),
+  structuralError: t("请修正高级配置中的 JSON 或必填字段。", "Fix invalid JSON or required fields."),
+  testSuccess: t("连接测试成功", "Connection test succeeded"),
+  unsaved: t("尚未保存", "Unsaved"),
+  lastTest: t("最近测试", "Last test"),
+} as const;

@@ -50,6 +50,8 @@ export interface SearchResponseV2 {
   nextOffset?: number;
   nextCursor?: string;
   modeUsed: "keyword" | "semantic" | "hybrid" | "keyword_fallback";
+  degraded?: boolean;
+  reason?: string;
   analysis?: {
     language: string;
     concepts: string[];
@@ -106,13 +108,15 @@ export async function hybridSearchV2(options: SearchOptions): Promise<SearchResp
   }
 
   // Path 4: CJK n-gram (if query has CJK characters)
-  if (analysis.cjkNgrams && analysis.cjkNgrams.length > 0) {
+  if (mode !== "semantic" && analysis.cjkNgrams && analysis.cjkNgrams.length > 0) {
     rankedLists.set("cjk", searchCjkNgram(analysis.cjkNgrams, { ...recallOptions, limit: 150 }));
   }
 
   // Path 5: Vector semantic recall (semantic + hybrid mode)
   let modeUsed: SearchResponseV2["modeUsed"] =
     mode === "semantic" ? "semantic" : mode === "hybrid" ? "keyword_fallback" : "keyword";
+  let degraded = false;
+  let degradedReason: string | undefined;
   if (mode === "semantic" || mode === "hybrid") {
     try {
       const vectorResults = await searchVectorAdaptive(query, {
@@ -123,15 +127,15 @@ export async function hybridSearchV2(options: SearchOptions): Promise<SearchResp
       if (vectorResults.length > 0) {
         rankedLists.set("vector", vectorResults);
         modeUsed = mode === "semantic" ? "semantic" : "hybrid";
-      } else if (mode === "semantic") {
-        rankedLists.set("broad", searchFts5Broad(analysis.broadFtsQuery, { ...recallOptions, limit: 300 }));
-        modeUsed = "keyword_fallback";
+      } else {
+        modeUsed = mode === "semantic" ? "semantic" : "keyword_fallback";
+        degraded = true;
+        degradedReason = "embedding_index_empty";
       }
-    } catch {
-      if (mode === "semantic") {
-        rankedLists.set("broad", searchFts5Broad(analysis.broadFtsQuery, { ...recallOptions, limit: 300 }));
-      }
-      modeUsed = "keyword_fallback";
+    } catch (error) {
+      modeUsed = mode === "semantic" ? "semantic" : "keyword_fallback";
+      degraded = true;
+      degradedReason = error instanceof Error ? error.message : "embedding_unavailable";
     }
   }
 
@@ -170,6 +174,8 @@ export async function hybridSearchV2(options: SearchOptions): Promise<SearchResp
     nextOffset: hasMore ? offset + limit : undefined,
     nextCursor: hasMore ? encodeCursor(originalQuery, offset + limit) : undefined,
     modeUsed,
+    degraded,
+    reason: degradedReason,
     analysis: {
       language: analysis.language,
       concepts: analysis.concepts.map((c) => c.canonical),

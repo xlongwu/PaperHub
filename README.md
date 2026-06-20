@@ -70,7 +70,42 @@ export GITHUB_TOKEN=your_token_here
 export PAPERHUB_PORT=3000
 ```
 
-For semantic search with real embeddings, provide `OPENAI_API_KEY` or `EMBEDDING_API_KEY`.
+For semantic search, PaperHub supports OpenAI and a local Ollama runtime.
+
+OpenAI:
+
+```bash
+export EMBEDDING_PROVIDER=openai
+export EMBEDDING_API_KEY=your_key_here
+```
+
+Ollama (no OpenAI key required):
+
+```bash
+ollama pull qwen3-embedding:0.6b
+
+export EMBEDDING_PROVIDER=ollama
+export OLLAMA_BASE_URL=http://127.0.0.1:11434
+export OLLAMA_EMBEDDING_MODEL=qwen3-embedding:0.6b
+export EMBEDDING_TIMEOUT_MS=30000
+export EMBEDDING_BATCH_SIZE=8
+export EMBEDDING_KEEP_ALIVE=5m
+export EMBEDDING_TRUNCATE=true
+export EMBEDDING_MAX_INPUT_CHARS=24000
+```
+
+`EMBEDDING_EXPECTED_DIMENSIONS` is optional. When omitted, PaperHub probes the model and uses its
+actual output dimension. A model, dimension, endpoint, or document-text profile change safely
+rebuilds the sqlite-vec index. During rebuilds or when Ollama is offline, keyword search remains
+available and hybrid search falls back to FTS5.
+
+The desktop profile page can test the active embedding connection and show/rebuild index progress.
+Equivalent API endpoints are:
+
+- `GET /api/settings/embedding`
+- `POST /api/settings/embedding/test`
+- `POST /api/index/embedding/rebuild`
+- `GET /api/index/embedding/status`
 
 ## Development
 

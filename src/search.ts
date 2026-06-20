@@ -39,6 +39,8 @@ export interface SearchResponse {
   nextCursor?: string;
   appliedTags?: string[];
   topicTerms?: string[];
+  degraded?: boolean;
+  reason?: string;
 }
 // ---------------------------------------------------------------------------
 
@@ -67,6 +69,8 @@ export interface HybridSearchResponse {
   nextCursor?: string;
   appliedTags?: string[];
   topicTerms?: string[];
+  degraded?: boolean;
+  reason?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -88,6 +92,7 @@ export async function hybridSearch(options: HybridSearchOptions): Promise<Hybrid
 
   let ftsResults: SearchResult[] = [];
   let vecResults: SearchResult[] = [];
+  let degradedReason: string | undefined;
 
   // Parallel execution
   if (mode === "keyword" || mode === "hybrid") {
@@ -114,6 +119,7 @@ export async function hybridSearch(options: HybridSearchOptions): Promise<Hybrid
       });
     } catch (e) {
       console.error("[search] Vector search failed:", e);
+      degradedReason = e instanceof Error ? e.message : "embedding_unavailable";
       // Continue with FTS only
     }
   }
@@ -139,7 +145,13 @@ export async function hybridSearch(options: HybridSearchOptions): Promise<Hybrid
   const page = filtered.slice(offset, offset + limit);
 
   // Report generation moved to POST /api/search/report — no blocking here.
-  return { results: page, total, mode };
+  return {
+    results: page,
+    total,
+    mode: degradedReason ? "keyword_fallback" : mode,
+    degraded: Boolean(degradedReason),
+    reason: degradedReason,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -252,5 +264,7 @@ async function hybridSearchV2Wrapper(options: HybridSearchOptions): Promise<Hybr
     nextCursor: v2Response.nextCursor,
     appliedTags: v2Response.appliedTags,
     topicTerms: v2Response.topicTerms,
+    degraded: v2Response.degraded,
+    reason: v2Response.reason,
   };
 }
