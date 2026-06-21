@@ -22,6 +22,14 @@ export interface EvaluationQuery {
   category?: string;
   /** Optional per-document relevance grades (3=high, 2=medium, 1=low, 0=not-relevant). */
   relevanceGrades?: Record<string, number>;
+  allTags?: string[];
+  anyTags?: string[];
+  excludeTags?: string[];
+  sources?: string[];
+  dateRange?: { start: string; end: string };
+  mustConcepts?: string[];
+  shouldConcepts?: string[];
+  excludeConcepts?: string[];
 }
 
 /** Result for one query in an evaluation run. */
@@ -43,6 +51,11 @@ export interface QueryResult {
     precisionAt5: number;
   };
   zeroResult: boolean;
+  constraintViolations?: number;
+  allTagMatches?: number;
+  mustConceptCoverage?: number;
+  relaxedResultCount?: number;
+  conjunctive?: boolean;
 }
 
 /** Aggregate metrics across all queries. */
@@ -61,6 +74,11 @@ export interface SearchMetrics {
   p95LatencyMs: number;
   totalQueries: number;
   queriesWithResults: number;
+  constraintViolationRate: number;
+  allTagAccuracy: number;
+  conjunctivePrecisionAt5: number;
+  mustConceptCoverage: number;
+  relaxedResultRatio: number;
 }
 
 /** Full evaluation report persisted to disk. */
@@ -186,6 +204,17 @@ export function computeMetricsForSubset(
 export function computeAllMetrics(queryResults: QueryResult[]): SearchMetrics {
   const latencies = queryResults.map((q) => q.latencyMs).sort((a, b) => a - b);
   const nonZero = queryResults.filter((q) => !q.zeroResult);
+  const totalResults = queryResults.reduce((sum, result) => sum + result.results.length, 0);
+  const constraintViolations = queryResults.reduce(
+    (sum, result) => sum + (result.constraintViolations ?? 0),
+    0,
+  );
+  const allTagQueries = queryResults.filter((result) => result.allTagMatches !== undefined);
+  const allTagResults = allTagQueries.reduce((sum, result) => sum + result.results.length, 0);
+  const allTagMatches = allTagQueries.reduce((sum, result) => sum + (result.allTagMatches ?? 0), 0);
+  const conjunctiveQueries = queryResults.filter((result) => result.conjunctive);
+  const mustCoverageQueries = queryResults.filter((result) => result.mustConceptCoverage !== undefined);
+  const relaxedResultCount = queryResults.reduce((sum, result) => sum + (result.relaxedResultCount ?? 0), 0);
 
   return {
     recallAt5: computeRecallAtK(queryResults, 5),
@@ -202,7 +231,28 @@ export function computeAllMetrics(queryResults: QueryResult[]): SearchMetrics {
     p95LatencyMs: percentile(latencies, 0.95),
     totalQueries: queryResults.length,
     queriesWithResults: nonZero.length,
+    constraintViolationRate: totalResults > 0 ? constraintViolations / totalResults : 0,
+    allTagAccuracy: allTagResults > 0 ? allTagMatches / allTagResults : 1,
+    conjunctivePrecisionAt5:
+      conjunctiveQueries.length > 0 ? computeConjunctivePrecisionAt5(conjunctiveQueries) : 1,
+    mustConceptCoverage:
+      mustCoverageQueries.length > 0
+        ? mustCoverageQueries.reduce((sum, result) => sum + (result.mustConceptCoverage ?? 0), 0) /
+          mustCoverageQueries.length
+        : 1,
+    relaxedResultRatio: totalResults > 0 ? relaxedResultCount / totalResults : 0,
   };
+}
+
+function computeConjunctivePrecisionAt5(queryResults: QueryResult[]): number {
+  const precisions = queryResults.map((result) => {
+    const relevant = relevantSet(result);
+    const denominator = Math.min(5, relevant.size);
+    if (denominator === 0) return 0;
+    const relevantResults = result.results.slice(0, 5).filter((item) => relevant.has(item.documentId)).length;
+    return relevantResults / denominator;
+  });
+  return precisions.reduce((sum, value) => sum + value, 0) / precisions.length;
 }
 
 /**
@@ -310,6 +360,11 @@ export function compareMetrics(
     "mrrAt10",
     "precisionAt5",
     "zeroResultRate",
+    "constraintViolationRate",
+    "allTagAccuracy",
+    "conjunctivePrecisionAt5",
+    "mustConceptCoverage",
+    "relaxedResultRatio",
   ];
 
   const comparison: Record<string, { before: number; after: number; delta: number }> = {};

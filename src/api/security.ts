@@ -9,7 +9,7 @@ import type { Request, Response, NextFunction } from "express";
 // CORS — restrict to localhost origins only
 // ---------------------------------------------------------------------------
 
-const LOCAL_ORIGIN_RE = /^https?:\/\/localhost(:\d+)?$/i;
+const LOCAL_ORIGIN_RE = /^https?:\/\/(?:localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/i;
 
 export function corsMiddleware(req: Request, res: Response, next: NextFunction): void {
   const origin = req.headers["origin"] as string | undefined;
@@ -30,6 +30,32 @@ export function corsMiddleware(req: Request, res: Response, next: NextFunction):
     return;
   }
 
+  next();
+}
+
+export function securityHeadersMiddleware(
+  _req: Request,
+  res: Response,
+  next: NextFunction,
+): void {
+  res.setHeader(
+    "Content-Security-Policy",
+    [
+      "default-src 'self'",
+      "base-uri 'none'",
+      "object-src 'none'",
+      "frame-ancestors 'none'",
+      "form-action 'self'",
+      "script-src 'self'",
+      "style-src 'self' 'unsafe-inline'",
+      "img-src 'self' data: https:",
+      "connect-src 'self' http://127.0.0.1:* http://localhost:*",
+    ].join("; "),
+  );
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("Referrer-Policy", "no-referrer");
+  res.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=(), notifications=()");
+  res.setHeader("Cross-Origin-Opener-Policy", "same-origin");
   next();
 }
 

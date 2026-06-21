@@ -131,6 +131,64 @@ describe("searchResponse", () => {
     expect(ids).toContain("search-tag-a");
     expect(ids).not.toContain("search-tag-b");
   });
+
+  it("returns a structured HTTP 400 for unknown tags", async () => {
+    const server = await new Promise<ReturnType<typeof app.listen>>((resolve) => {
+      const instance = app.listen(0, "127.0.0.1", () => resolve(instance));
+    });
+
+    try {
+      const address = server.address();
+      if (!address || typeof address === "string") {
+        throw new Error("Test server did not expose a TCP port");
+      }
+      const response = await fetch(
+        `http://127.0.0.1:${address.port}/api/search?q=agents&allTags=definitely-unknown`,
+      );
+      const payload = (await response.json()) as {
+        success: boolean;
+        errorCode?: string;
+        details?: { unknownTags?: string[] };
+      };
+
+      expect(response.status).toBe(400);
+      expect(payload.success).toBe(false);
+      expect(payload.errorCode).toBe("UNKNOWN_TAG");
+      expect(payload.details?.unknownTags).toEqual(["definitely-unknown"]);
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+
+  it("returns a structured HTTP 400 for conflicting date filters", async () => {
+    const server = await new Promise<ReturnType<typeof app.listen>>((resolve) => {
+      const instance = app.listen(0, "127.0.0.1", () => resolve(instance));
+    });
+
+    try {
+      const address = server.address();
+      if (!address || typeof address === "string") {
+        throw new Error("Test server did not expose a TCP port");
+      }
+      const response = await fetch(
+        `http://127.0.0.1:${address.port}/api/search?q=agents&from=2026-06-30&to=2026-06-01`,
+      );
+      const payload = (await response.json()) as {
+        success: boolean;
+        errorCode?: string;
+      };
+
+      expect(response.status).toBe(400);
+      expect(payload.success).toBe(false);
+      expect(payload.errorCode).toBe("FILTER_CONFLICT");
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
 });
 
 describe("indexAllVectors", () => {

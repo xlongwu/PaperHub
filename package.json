@@ -1,6 +1,6 @@
 {
   "name": "paperhub",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "productName": "PaperHub",
   "main": "desktop/main.cjs",
   "type": "module",
@@ -9,12 +9,15 @@
     "start": "node --import tsx src/index.ts",
     "dev": "node --watch --import tsx src/index.ts",
     "api:dev": "node scripts/dev-api.mjs",
+    "mcp:stdio": "node --import tsx src/mcp/index.ts",
     "ui:dev": "node node_modules/vite/bin/vite.js --config vite.ui.config.ts",
     "ui:build": "node node_modules/vite/bin/vite.js build --config vite.ui.config.ts",
     "ui:preview": "node node_modules/vite/bin/vite.js preview --config vite.ui.config.ts",
     "desktop:dev": "node scripts/dev-desktop.mjs",
     "desktop:start": "node scripts/start-desktop.mjs",
     "desktop:build": "node scripts/build-desktop.mjs",
+    "desktop:build:nsis": "node scripts/build-desktop.mjs --nsis",
+    "desktop:build:portable": "node scripts/build-desktop.mjs --portable",
     "desktop:build:dir": "node scripts/build-desktop.mjs --dir",
     "typecheck": "node node_modules/typescript/bin/tsc --noEmit",
     "lint": "node node_modules/eslint/bin/eslint.js src",
@@ -35,7 +38,7 @@
     "test:e2e": "node --import tsx scripts/run-phase6-e2e.mjs",
     "test:watch": "node node_modules/vitest/vitest.mjs",
     "test:coverage": "node node_modules/vitest/vitest.mjs run --coverage",
-    "release:verify": "node node_modules/typescript/bin/tsc --noEmit && node node_modules/vitest/vitest.mjs run && node --import tsx scripts/run-phase6-e2e.mjs",
+    "release:verify": "node node_modules/typescript/bin/tsc --noEmit && node node_modules/eslint/bin/eslint.js src && node node_modules/vitest/vitest.mjs run && node node_modules/vite/bin/vite.js build --config vite.ui.config.ts && node --check desktop/main.cjs && node --check scripts/build-desktop.mjs && node --import tsx scripts/run-phase6-e2e.mjs",
     "search:eval": "node --import tsx scripts/evaluate-search.ts --engine v2 --corpus full",
     "search:eval:baseline": "node --import tsx scripts/evaluate-search.ts --engine v1 --corpus full --save",
     "search:eval:save": "node --import tsx scripts/evaluate-search.ts --engine v2 --corpus full --save",
@@ -58,7 +61,8 @@
     "react-dom": "^18.3.1",
     "react-router-dom": "^7.6.2",
     "sqlite-vec": "^0.1.9",
-    "tsx": "^4.19.0"
+    "tsx": "^4.19.0",
+    "undici": "^6.27.0"
   },
   "devDependencies": {
     "@eslint/js": "^9",
@@ -101,6 +105,7 @@
       "digests/**/*",
       "总结prompt模版.md",
       "scripts/seed-phase6-fixtures.ts",
+      "skills/**/*",
       "tsconfig.json",
       "package.json"
     ],

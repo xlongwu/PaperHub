@@ -8,6 +8,8 @@
 import { searchFts5, searchVector, matchesSearchFilters, type SearchResult } from "@/db/search";
 import { callLlm } from "@/report";
 import { analyzeSearchQuery, scoreDocumentAgainstQuery } from "@/search-query";
+import type { SearchFallbackPolicy, SearchMatchExplanation, SearchQueryPlan } from "@/search-contract";
+import type { SearchRerankerMetadata } from "@/search-reranker";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -22,6 +24,13 @@ export interface SearchOptions {
   sources?: string[];
   tags?: string[];
   tagMatchMode?: "any" | "all";
+  allTags?: string[];
+  anyTags?: string[];
+  excludeTags?: string[];
+  mustConcepts?: string[];
+  shouldConcepts?: string[];
+  excludeConcepts?: string[];
+  fallbackPolicy?: SearchFallbackPolicy;
   dateRange?: { start: string; end: string };
 }
 
@@ -39,6 +48,9 @@ export interface SearchResponse {
   nextCursor?: string;
   appliedTags?: string[];
   topicTerms?: string[];
+  explanations?: SearchMatchExplanation[];
+  queryPlan?: SearchQueryPlan;
+  reranker?: SearchRerankerMetadata;
   degraded?: boolean;
   reason?: string;
 }
@@ -53,6 +65,13 @@ export interface HybridSearchOptions {
   sources?: string[];
   tags?: string[];
   tagMatchMode?: "any" | "all";
+  allTags?: string[];
+  anyTags?: string[];
+  excludeTags?: string[];
+  mustConcepts?: string[];
+  shouldConcepts?: string[];
+  excludeConcepts?: string[];
+  fallbackPolicy?: SearchFallbackPolicy;
   dateRange?: { start: string; end: string };
 }
 
@@ -69,6 +88,9 @@ export interface HybridSearchResponse {
   nextCursor?: string;
   appliedTags?: string[];
   topicTerms?: string[];
+  explanations?: SearchMatchExplanation[];
+  queryPlan?: SearchQueryPlan;
+  reranker?: SearchRerankerMetadata;
   degraded?: boolean;
   reason?: string;
 }
@@ -102,6 +124,9 @@ export async function hybridSearch(options: HybridSearchOptions): Promise<Hybrid
       sources: options.sources,
       tags: options.tags,
       tagMatchMode: options.tagMatchMode,
+      allTags: options.allTags,
+      anyTags: options.anyTags,
+      excludeTags: options.excludeTags,
       dateRange: options.dateRange,
     });
   }
@@ -115,6 +140,9 @@ export async function hybridSearch(options: HybridSearchOptions): Promise<Hybrid
         sources: options.sources,
         tags: options.tags,
         tagMatchMode: options.tagMatchMode,
+        allTags: options.allTags,
+        anyTags: options.anyTags,
+        excludeTags: options.excludeTags,
         dateRange: options.dateRange,
       });
     } catch (e) {
@@ -134,6 +162,9 @@ export async function hybridSearch(options: HybridSearchOptions): Promise<Hybrid
       sources: options.sources,
       tags: options.tags,
       tagMatchMode: options.tagMatchMode,
+      allTags: options.allTags,
+      anyTags: options.anyTags,
+      excludeTags: options.excludeTags,
       dateRange: options.dateRange,
     }),
   );
@@ -199,32 +230,55 @@ function mergeResults(fts: SearchResult[], vec: SearchResult[], mode: string, qu
 // LLM report generation (exported for async /api/search/report endpoint)
 // ---------------------------------------------------------------------------
 
-export async function generateSearchReport(results: SearchResult[], query: string): Promise<string> {
-  const summaries = results
-    .slice(0, 10)
+export async function generateSearchReport(
+  results: SearchResult[],
+  query: string,
+  maxTokens = 8_192,
+): Promise<string> {
+  const count = results.length;
+  const catalog = results
+    .slice(0, count)
     .map(
       (r, i) =>
-        `${i + 1}. ${r.document.title}\n   ${r.document.abstract.slice(0, 200)}...\n   来源: ${r.document.sourceTag}`,
+        `${i + 1}. [${r.document.id}] ${r.document.title}\n   来源: ${r.document.sourceTag} | 发布: ${r.document.publishedAt?.slice(0, 10) ?? "未知"}\n   作者: ${(r.document.authors ?? []).slice(0, 5).join(", ")}${(r.document.authors ?? []).length > 5 ? " 等" : ""}\n   ${r.document.abstract?.slice(0, 400) ?? "无摘要"}`,
     )
     .join("\n\n");
 
-  const prompt = `用户搜索主题: "${query}"
+  const prompt = `你是一位学术研究分析师。用户搜索主题: "${query}"
 
-找到以下相关文档:
+找到以下 ${count} 篇相关文档:
 
-${summaries}
+${catalog}
 
-请用中文生成一段 200-300 字的综述摘要，概括这些文档的核心内容和共同主题。不要编造文档中未提及的信息。`;
+请用中文生成一份**按方法类型组织的深度研究综述报告**，结构如下：
+
+1. **方法类型总览**：先用一个表格列出识别到的主要方法/技术类型，每行包含：方法类型、核心控制信号、主要目标、代表论文编号。
+2. **各方法类型深度分析**（至少 2 个主要类型）：
+   - 设计逻辑（为什么这种方法有效）
+   - 方法论与具体流程（关键步骤）
+   - 为什么有效（核心优势）
+   - 实施中如何应用（工程建议）
+3. **方法横向比较**：一个对比表，列维度包括：是否依赖种子、难度来源、正确性来源、诊断性、主要用途。
+4. **核心结论**：3-5 条带引用编号的要点式结论。
+5. **推荐的方法组合/实施建议**：3-5 条可操作建议。
+6. **论文清单与链接**：按方法类型分组列出全部论文编号和标题。
+
+要求：
+- 不要逐篇复述摘要，要按方法族整合分析
+- 每条结论引用论文编号，如 [1][3]
+- 如果文档不足以分类，则按主题领域分组
+- 控制在 2000 字以内
+- 不要编造文档中未提及的信息`;
 
   try {
-    const report = await callLlm(prompt, 2048);
+    const report = await callLlm(prompt, maxTokens);
     if (!report || report.trim().length === 0) {
       throw new Error("Empty response from LLM");
     }
     return report;
   } catch (e) {
     console.error("[search] Report generation failed:", e);
-    return "Summary generation failed. You can still browse individual results below.\n综述生成失败，您仍可浏览下方的各项结果。";
+    return "Report generation failed. You can still browse individual results below.\n深度综述生成失败，您仍可浏览下方的各项结果。";
   }
 }
 
@@ -244,6 +298,13 @@ async function hybridSearchV2Wrapper(options: HybridSearchOptions): Promise<Hybr
     sources: options.sources,
     tags: options.tags,
     tagMatchMode: options.tagMatchMode,
+    allTags: options.allTags,
+    anyTags: options.anyTags,
+    excludeTags: options.excludeTags,
+    mustConcepts: options.mustConcepts,
+    shouldConcepts: options.shouldConcepts,
+    excludeConcepts: options.excludeConcepts,
+    fallbackPolicy: options.fallbackPolicy,
     dateRange: options.dateRange,
   });
 
@@ -253,6 +314,7 @@ async function hybridSearchV2Wrapper(options: HybridSearchOptions): Promise<Hybr
       score: r.score,
       matchType: "hybrid",
       snippet: r.snippet,
+      explanation: r.explanation,
     })),
     total: v2Response.candidateTotal,
     mode: v2Response.modeUsed,
@@ -264,6 +326,9 @@ async function hybridSearchV2Wrapper(options: HybridSearchOptions): Promise<Hybr
     nextCursor: v2Response.nextCursor,
     appliedTags: v2Response.appliedTags,
     topicTerms: v2Response.topicTerms,
+    explanations: v2Response.results.map((r) => r.explanation),
+    queryPlan: v2Response.queryPlan,
+    reranker: v2Response.reranker,
     degraded: v2Response.degraded,
     reason: v2Response.reason,
   };

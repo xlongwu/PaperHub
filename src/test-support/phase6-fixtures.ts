@@ -21,7 +21,8 @@ export function createPhase6FixtureDocuments(): Document[] {
       domainTags: ["Agents", "Memory"],
       modelTags: ["GPT-4"],
       summaryZh: "系统化整理生产环境中的 Agent 记忆架构、压缩策略与回放机制。",
-      summaryEn: "A practical overview of memory architectures for agentic systems in production.",
+      summaryEn:
+        "A practical overview of memory compression architectures for agentic systems in production.",
     }),
     makeDocument({
       id: "doc-e2e-rag-systems",
@@ -54,7 +55,7 @@ export function createPhase6FixtureDocuments(): Document[] {
       typeTag: "blog",
       url: "https://example.com/claude-safety",
       publishedAt: "2026-06-14T16:00:00.000Z",
-      domainTags: ["Safety", "Agents"],
+      domainTags: ["Safety", "Agents", "LLM"],
       modelTags: ["Claude 3"],
       summaryZh: "围绕工具调用的防误触、权限边界和降级路径进行总结。",
     }),

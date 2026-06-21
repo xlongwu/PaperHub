@@ -5,7 +5,10 @@ node_modules/
 dist/
 dist-ui/
 dist-desktop/
+dist-desktop-*/
+PaperHub-build/
 .tmp/
+nul
 *.log
 test-results/
 playwright-report/

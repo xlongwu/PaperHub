@@ -28,7 +28,7 @@ describe("search query analysis", () => {
   it("expands LLM and ignores connector words", () => {
     const analysis = analyzeSearchQuery("synthetic data for LLMs");
 
-    expect(analysis.concepts.map((concept) => concept.canonical)).toEqual(["synthetic data", "llm"]);
+    expect(analysis.concepts.map((concept) => concept.canonical)).toEqual(["synthetic-data", "llm"]);
     expect(analysis.broadFtsQuery).toContain('"large language model"*');
     // No more minimumLexicalMatches — concept coverage is now a ranking signal
     expect(analysis.concepts.length).toBe(2);
@@ -59,7 +59,7 @@ describe("search query analysis", () => {
     const analysis = analyzeSearchQuery("帮我搜集一些与大模型数据合成相关的论文和博客");
 
     expect(new Set(analysis.concepts.map((concept) => concept.canonical))).toEqual(
-      new Set(["llm", "synthetic data"]),
+      new Set(["llm", "synthetic-data"]),
     );
     expect(analysis.strictFtsQuery).toContain('"synthetic data"*');
   });

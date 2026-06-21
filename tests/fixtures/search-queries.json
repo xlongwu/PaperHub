@@ -9,8 +9,20 @@
       "language": "en",
       "category": "multi_concept",
       "mode": "hybrid",
-      "relevantDocIds": ["doc-e2e-agent-memory", "doc-e2e-tag-agents-3", "doc-e2e-agent-archive-2", "doc-e2e-agent-archive-3", "doc-e2e-agent-archive-5"],
-      "relevanceGrades": {"doc-e2e-agent-memory": 3, "doc-e2e-tag-agents-3": 3, "doc-e2e-agent-archive-2": 1, "doc-e2e-agent-archive-3": 1, "doc-e2e-agent-archive-5": 1},
+      "relevantDocIds": [
+        "doc-e2e-agent-memory",
+        "doc-e2e-tag-agents-3",
+        "doc-e2e-agent-archive-2",
+        "doc-e2e-agent-archive-3",
+        "doc-e2e-agent-archive-5"
+      ],
+      "relevanceGrades": {
+        "doc-e2e-agent-memory": 3,
+        "doc-e2e-tag-agents-3": 3,
+        "doc-e2e-agent-archive-2": 1,
+        "doc-e2e-agent-archive-3": 1,
+        "doc-e2e-agent-archive-5": 1
+      },
       "notes": "Exact match: 'Agent Memory Systems in Production' and 'Agent Planning with Memory Compression'"
     },
     {
@@ -19,8 +31,14 @@
       "language": "en",
       "category": "abbreviation",
       "mode": "hybrid",
-      "relevantDocIds": ["doc-e2e-rag-systems", "doc-e2e-tag-rag-1", "doc-e2e-tag-rag-2", "doc-e2e-source-openai", "doc-e2e-search-report"],
-      "relevanceGrades": {"doc-e2e-rag-systems": 3, "doc-e2e-tag-rag-1": 2, "doc-e2e-tag-rag-2": 2, "doc-e2e-source-openai": 1, "doc-e2e-search-report": 1},
+      "relevantDocIds": ["doc-e2e-rag-systems", "doc-e2e-tag-rag-1", "doc-e2e-tag-rag-2"],
+      "relevanceGrades": {
+        "doc-e2e-rag-systems": 3,
+        "doc-e2e-tag-rag-1": 2,
+        "doc-e2e-tag-rag-2": 2
+      },
+      "mustConcepts": ["RAG"],
+      "shouldConcepts": ["retrieval"],
       "notes": "Tests RAG alias expansion. Matches RAG Systems, Caching Patterns, Evaluation Loops"
     },
     {
@@ -29,7 +47,7 @@
       "language": "en",
       "category": "multi_concept",
       "mode": "hybrid",
-      "relevantDocIds": ["doc-e2e-multimodal-ops", "doc-e2e-model-gpt4o", "doc-e2e-agent-memory", "doc-e2e-tag-agents-3", "doc-e2e-tag-rag-2"],
+      "relevantDocIds": ["doc-e2e-multimodal-ops", "doc-e2e-model-gpt4o"],
       "notes": "Multi-concept: multimodal + agents. Tests concept combination"
     },
     {
@@ -38,7 +56,9 @@
       "language": "en",
       "category": "single_keyword",
       "mode": "keyword",
-      "relevantDocIds": ["doc-e2e-claude-safety", "doc-e2e-year-2025", "doc-e2e-search-report", "doc-e2e-agent-memory"],
+      "relevantDocIds": ["doc-e2e-claude-safety", "doc-e2e-year-2025"],
+      "mustConcepts": ["safety"],
+      "shouldConcepts": ["patterns"],
       "notes": "Exact topic match: 'Claude Safety Patterns for Tool Use'"
     },
     {
@@ -47,7 +67,7 @@
       "language": "en",
       "category": "multi_concept",
       "mode": "keyword",
-      "relevantDocIds": ["doc-e2e-tag-agents-1", "doc-e2e-tag-agents-2", "doc-e2e-tag-agents-3", "doc-e2e-agent-archive-1", "doc-e2e-agent-archive-4"],
+      "relevantDocIds": ["doc-e2e-tag-agents-1", "doc-e2e-tag-agents-2"],
       "notes": "Title match: two documents about Agent Planning Benchmarks"
     },
     {
@@ -56,7 +76,9 @@
       "language": "en",
       "category": "model_name",
       "mode": "hybrid",
-      "relevantDocIds": ["doc-e2e-model-gpt4o", "doc-e2e-agent-memory", "doc-e2e-tag-agents-1", "doc-e2e-tag-rag-2", "doc-e2e-year-2025"],
+      "relevantDocIds": ["doc-e2e-model-gpt4o"],
+      "mustConcepts": ["GPT-4"],
+      "shouldConcepts": ["research"],
       "notes": "Model name search. Should match GPT-4o Research Assistant and GPT-4 Memory Systems"
     },
     {
@@ -65,7 +87,7 @@
       "language": "en",
       "category": "semantic",
       "mode": "hybrid",
-      "relevantDocIds": ["doc-e2e-search-report", "doc-e2e-claude-safety", "doc-e2e-tag-rag-2", "doc-e2e-rag-systems"],
+      "relevantDocIds": ["doc-e2e-search-report"],
       "notes": "Tests 'Prompt Alignment Research Memo' with concept matching"
     },
     {
@@ -74,7 +96,13 @@
       "language": "zh",
       "category": "chinese",
       "mode": "hybrid",
-      "relevantDocIds": ["doc-e2e-agent-memory", "doc-e2e-tag-agents-3", "doc-e2e-agent-archive-2", "doc-e2e-agent-archive-3", "doc-e2e-agent-archive-5"],
+      "relevantDocIds": [
+        "doc-e2e-agent-memory",
+        "doc-e2e-tag-agents-3",
+        "doc-e2e-agent-archive-2",
+        "doc-e2e-agent-archive-3",
+        "doc-e2e-agent-archive-5"
+      ],
       "notes": "Chinese query for agent memory. Tests CJK recall quality"
     },
     {
@@ -83,7 +111,7 @@
       "language": "zh",
       "category": "chinese",
       "mode": "hybrid",
-      "relevantDocIds": ["doc-e2e-multimodal-ops", "doc-e2e-tag-rag-2", "doc-e2e-model-gpt4o", "doc-e2e-search-report"],
+      "relevantDocIds": ["doc-e2e-multimodal-ops"],
       "notes": "Chinese query for multimodal evaluation. Tests multi-concept CJK"
     },
     {
@@ -92,7 +120,7 @@
       "language": "en",
       "category": "abbreviation",
       "mode": "hybrid",
-      "relevantDocIds": ["doc-e2e-claude-safety", "doc-e2e-search-report", "doc-e2e-year-2025", "doc-e2e-agent-memory"],
+      "relevantDocIds": ["doc-e2e-claude-safety"],
       "notes": "Tests LLM abbreviation expansion to 'large language model' for safety docs"
     },
     {
@@ -101,7 +129,13 @@
       "language": "en",
       "category": "filter",
       "mode": "keyword",
-      "relevantDocIds": ["doc-e2e-tag-agents-1", "doc-e2e-tag-agents-2", "doc-e2e-tag-agents-3", "doc-e2e-agent-archive-1", "doc-e2e-agent-archive-4"],
+      "relevantDocIds": [
+        "doc-e2e-tag-agents-1",
+        "doc-e2e-tag-agents-2",
+        "doc-e2e-tag-agents-3",
+        "doc-e2e-agent-archive-1",
+        "doc-e2e-agent-archive-4"
+      ],
       "notes": "Tests that arxiv papers about agent planning rank high"
     },
     {
@@ -110,7 +144,18 @@
       "language": "en",
       "category": "single_keyword",
       "mode": "hybrid",
-      "relevantDocIds": ["doc-e2e-agent-archive-1", "doc-e2e-agent-archive-2", "doc-e2e-agent-archive-3", "doc-e2e-agent-archive-4", "doc-e2e-agent-archive-5", "doc-e2e-agent-archive-6", "doc-e2e-agent-archive-7", "doc-e2e-agent-archive-8", "doc-e2e-agent-archive-9", "doc-e2e-agent-archive-10"],
+      "relevantDocIds": [
+        "doc-e2e-agent-archive-1",
+        "doc-e2e-agent-archive-2",
+        "doc-e2e-agent-archive-3",
+        "doc-e2e-agent-archive-4",
+        "doc-e2e-agent-archive-5",
+        "doc-e2e-agent-archive-6",
+        "doc-e2e-agent-archive-7",
+        "doc-e2e-agent-archive-8",
+        "doc-e2e-agent-archive-9",
+        "doc-e2e-agent-archive-10"
+      ],
       "notes": "Tests that archive documents (10 generated Agent Archive Notes) are findable"
     },
     {
@@ -119,7 +164,9 @@
       "language": "en",
       "category": "semantic",
       "mode": "semantic",
-      "relevantDocIds": ["doc-e2e-agent-memory", "doc-e2e-tag-agents-3", "doc-e2e-agent-archive-2", "doc-e2e-agent-archive-3", "doc-e2e-agent-archive-5"],
+      "relevantDocIds": ["doc-e2e-agent-memory", "doc-e2e-tag-agents-3"],
+      "mustConcepts": ["agent", "compression"],
+      "shouldConcepts": ["mechanisms", "context"],
       "notes": "Semantic search test: 'compression' should match documents about memory compression"
     },
     {
@@ -128,7 +175,7 @@
       "language": "en",
       "category": "filter",
       "mode": "hybrid",
-      "relevantDocIds": ["doc-e2e-year-2025", "doc-e2e-claude-safety", "doc-e2e-search-report", "doc-e2e-agent-memory"],
+      "relevantDocIds": ["doc-e2e-year-2025"],
       "notes": "Tests year-based filtering: 2025 Agent Safety Survey"
     },
     {
@@ -137,8 +184,63 @@
       "language": "en",
       "category": "source",
       "mode": "keyword",
-      "relevantDocIds": ["doc-e2e-source-openai", "doc-e2e-rag-systems", "doc-e2e-tag-rag-1", "doc-e2e-tag-rag-2"],
+      "relevantDocIds": ["doc-e2e-source-openai"],
       "notes": "Source-based search: OpenAI Retrieval Notes"
+    },
+    {
+      "queryId": "q16-all-tag-intersection",
+      "query": "agent memory",
+      "language": "en",
+      "category": "conjunctive_filter",
+      "mode": "keyword",
+      "allTags": ["Agents", "Memory"],
+      "relevantDocIds": [
+        "doc-e2e-agent-memory",
+        "doc-e2e-tag-agents-3",
+        "doc-e2e-agent-archive-2",
+        "doc-e2e-agent-archive-3",
+        "doc-e2e-agent-archive-5",
+        "doc-e2e-agent-archive-6",
+        "doc-e2e-agent-archive-8",
+        "doc-e2e-agent-archive-9"
+      ],
+      "notes": "Every result must contain both canonical tags."
+    },
+    {
+      "queryId": "q17-exclude-tag",
+      "query": "agent planning benchmarks",
+      "language": "en",
+      "category": "constraint_filter",
+      "mode": "keyword",
+      "allTags": ["Agents", "Planning"],
+      "excludeTags": ["GPT-4"],
+      "relevantDocIds": ["doc-e2e-tag-agents-2"],
+      "notes": "GPT-family documents must be excluded after every recall path."
+    },
+    {
+      "queryId": "q18-any-tag",
+      "query": "evaluation",
+      "language": "en",
+      "category": "constraint_filter",
+      "mode": "keyword",
+      "anyTags": ["Multimodal", "RAG"],
+      "relevantDocIds": ["doc-e2e-multimodal-ops", "doc-e2e-tag-rag-2"],
+      "notes": "At least one requested canonical tag must match."
+    },
+    {
+      "queryId": "q19-source-date-combination",
+      "query": "agent planning",
+      "language": "en",
+      "category": "constraint_filter",
+      "mode": "keyword",
+      "allTags": ["Agents", "Planning"],
+      "sources": ["arxiv"],
+      "dateRange": {
+        "start": "2026-06-12T00:00:00.000Z",
+        "end": "2026-06-14T23:59:59.999Z"
+      },
+      "relevantDocIds": ["doc-e2e-tag-agents-1", "doc-e2e-tag-agents-2"],
+      "notes": "Combined tag, source, and date constraints."
     }
   ]
 }

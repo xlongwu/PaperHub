@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { getDb } from "./index";
+import { getSecretStore } from "@/security/secret-store";
 import type {
   LlmAuthConfig,
   LlmConnectionConfig,
@@ -17,6 +18,7 @@ interface LlmConnectionRow {
   base_url: string;
   model: string;
   api_key: string | null;
+  secret_ref: string | null;
   auth_json: string;
   request_json: string;
   models_json: string | null;
@@ -95,25 +97,30 @@ export function getActiveLlmConnectionId(): string | null {
 export function saveLlmConnection(input: LlmConnectionWrite): LlmConnectionPublic {
   const db = getDb();
   const id = input.id?.trim() || randomUUID();
-  const existing = getLlmConnection(id);
-  const apiKey = input.clearApiKey
-    ? null
-    : input.apiKey === undefined
-      ? existing?.apiKey ?? null
-      : normalizeNullable(input.apiKey);
+  const secretStore = getSecretStore();
+  const secretReference = `llm-connection:${id}`;
+  if (input.clearApiKey) {
+    secretStore.delete(secretReference);
+  } else if (input.apiKey !== undefined) {
+    const apiKey = normalizeNullable(input.apiKey);
+    if (apiKey) secretStore.set(secretReference, apiKey);
+    else secretStore.delete(secretReference);
+  }
+  const hasApiKey = secretStore.has(secretReference);
 
   db.prepare(
     `INSERT INTO llm_connections(
-       id, name, preset_id, protocol, base_url, model, api_key,
+       id, name, preset_id, protocol, base_url, model, api_key, secret_ref,
        auth_json, request_json, models_json, created_at, updated_at
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+     ) VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
      ON CONFLICT(id) DO UPDATE SET
        name = excluded.name,
        preset_id = excluded.preset_id,
        protocol = excluded.protocol,
        base_url = excluded.base_url,
        model = excluded.model,
-       api_key = excluded.api_key,
+       api_key = NULL,
+       secret_ref = excluded.secret_ref,
        auth_json = excluded.auth_json,
        request_json = excluded.request_json,
        models_json = excluded.models_json,
@@ -125,7 +132,7 @@ export function saveLlmConnection(input: LlmConnectionWrite): LlmConnectionPubli
     input.protocol,
     input.baseUrl.trim(),
     input.model.trim(),
-    apiKey,
+    hasApiKey ? secretReference : null,
     JSON.stringify(input.auth),
     JSON.stringify(input.request),
     input.models ? JSON.stringify(input.models) : null,
@@ -158,7 +165,9 @@ export function deleteLlmConnection(id: string): boolean {
   if (getActiveLlmConnectionId() === id) {
     throw new Error("The active LLM connection cannot be deleted.");
   }
-  return getDb().prepare("DELETE FROM llm_connections WHERE id = ?").run(id).changes > 0;
+  const deleted = getDb().prepare("DELETE FROM llm_connections WHERE id = ?").run(id).changes > 0;
+  if (deleted) getSecretStore().delete(`llm-connection:${id}`);
+  return deleted;
 }
 
 export function updateLlmConnectionTest(
@@ -184,7 +193,10 @@ function toPrivateConnection(row: LlmConnectionRow): LlmConnectionConfig {
     protocol: row.protocol as LlmProtocol,
     baseUrl: row.base_url,
     model: row.model,
-    apiKey: row.api_key ?? undefined,
+    apiKey:
+      (row.secret_ref ? getSecretStore().get(row.secret_ref) : undefined) ??
+      row.api_key ??
+      undefined,
     auth: JSON.parse(row.auth_json) as LlmAuthConfig,
     request: JSON.parse(row.request_json) as LlmRequestTemplate,
     models: row.models_json
@@ -198,7 +210,9 @@ function toPublicConnection(row: LlmConnectionRow): LlmConnectionPublic {
   const { apiKey: _apiKey, ...safe } = connection;
   return {
     ...safe,
-    hasApiKey: Boolean(row.api_key),
+    hasApiKey: Boolean(
+      (row.secret_ref && getSecretStore().has(row.secret_ref)) || row.api_key,
+    ),
     isActive: row.is_active === 1,
     lastTestStatus: row.last_test_status,
     lastTestMessage: row.last_test_message,

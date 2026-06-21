@@ -9,18 +9,169 @@ import Database from "better-sqlite3";
 import * as sqliteVec from "sqlite-vec";
 import { getDbPath } from "@/config";
 import { getLlmProviderPreset } from "@/providers/catalog";
+import { getSecretStore } from "@/security/secret-store";
+import { rebuildDocumentSearchTags } from "./search-tags";
 
 // ---------------------------------------------------------------------------
 // Migration tracking
 // ---------------------------------------------------------------------------
 
-const CURRENT_SCHEMA_VERSION = 13;
+export const CURRENT_SCHEMA_VERSION = 24;
 
 interface Migration {
   version: number;
   name: string;
   sql: string;
   postMigrate?: (db: Database.Database) => void;
+}
+
+function rebuildCanonicalTagStats(db: Database.Database): void {
+  const rebuild = db.transaction(() => {
+    db.prepare("DELETE FROM tag_stats").run();
+    db.prepare(
+      `INSERT INTO tag_stats(tag, category, count, last_updated)
+       SELECT canonical_tag, category, COUNT(DISTINCT document_id), CURRENT_TIMESTAMP
+       FROM document_search_tags
+       GROUP BY canonical_tag, category`,
+    ).run();
+  });
+  rebuild();
+}
+
+function ensureWebSaveDocumentSchema(db: Database.Database): void {
+  const documentsTable = db
+    .prepare(
+      "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'documents'",
+    )
+    .get();
+  if (!documentsTable) return;
+
+  const columns = new Set(
+    (
+      db.prepare("PRAGMA table_info(documents)").all() as Array<{ name: string }>
+    ).map((column) => column.name),
+  );
+  const additions = [
+    ["external_ids", "TEXT"],
+    ["canonical_url", "TEXT"],
+    ["origin_json", "TEXT"],
+    ["discovery_json", "TEXT"],
+  ] as const;
+  for (const [name, type] of additions) {
+    if (!columns.has(name)) {
+      db.exec(`ALTER TABLE documents ADD COLUMN ${name} ${type}`);
+    }
+  }
+
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_documents_canonical_url ON documents(canonical_url);
+    CREATE INDEX IF NOT EXISTS idx_documents_doi
+      ON documents(json_extract(external_ids, '$.doi'));
+    CREATE INDEX IF NOT EXISTS idx_documents_arxiv_id
+      ON documents(json_extract(external_ids, '$.arxivId'));
+    CREATE INDEX IF NOT EXISTS idx_documents_openalex_id
+      ON documents(json_extract(external_ids, '$.openAlexId'));
+
+    CREATE TABLE IF NOT EXISTS web_search_saved_results (
+      session_id TEXT NOT NULL,
+      result_id TEXT NOT NULL,
+      document_id TEXT NOT NULL,
+      save_mode TEXT NOT NULL CHECK (
+        save_mode IN ('metadata_only', 'save_content', 'download_pdf')
+      ),
+      pdf_source_url TEXT,
+      saved_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY (session_id, result_id),
+      FOREIGN KEY (document_id) REFERENCES documents(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_web_search_saved_results_document
+      ON web_search_saved_results(document_id);
+  `);
+}
+
+function migrateSecretsToStore(db: Database.Database): void {
+  const secretStore = getSecretStore();
+  const migrations = [
+    {
+      table: "llm_provider_settings",
+      idColumn: "provider",
+      prefix: "llm-provider",
+    },
+    {
+      table: "llm_connections",
+      idColumn: "id",
+      prefix: "llm-connection",
+    },
+    {
+      table: "embedding_provider_settings",
+      idColumn: "provider",
+      prefix: "embedding-provider",
+    },
+    {
+      table: "web_search_connections",
+      idColumn: "id",
+      prefix: "web-search-connection",
+    },
+  ] as const;
+
+  for (const migration of migrations) {
+    const tableExists = db
+      .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?")
+      .get(migration.table);
+    if (!tableExists) continue;
+    const rows = db
+      .prepare(
+        `SELECT ${migration.idColumn} AS id, api_key, secret_ref
+         FROM ${migration.table}
+         WHERE api_key IS NOT NULL AND trim(api_key) != ''`,
+      )
+      .all() as Array<{ id: string; api_key: string; secret_ref: string | null }>;
+    const update = db.prepare(
+      `UPDATE ${migration.table}
+       SET secret_ref = ?, api_key = NULL
+       WHERE ${migration.idColumn} = ?`,
+    );
+    for (const row of rows) {
+      const reference = row.secret_ref || `${migration.prefix}:${row.id}`;
+      secretStore.set(reference, row.api_key);
+      update.run(reference, row.id);
+    }
+  }
+}
+
+function ensureW7Schema(db: Database.Database): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS embedding_provider_settings (
+      provider TEXT PRIMARY KEY,
+      model TEXT,
+      base_url TEXT,
+      api_key TEXT,
+      updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+    );
+  `);
+  const columns = [
+    ["llm_provider_settings", "secret_ref", "TEXT"],
+    ["llm_connections", "secret_ref", "TEXT"],
+    ["embedding_provider_settings", "secret_ref", "TEXT"],
+    ["web_search_connections", "secret_ref", "TEXT"],
+    ["web_search_summaries", "latency_ms", "INTEGER"],
+    ["web_search_summaries", "estimated_tokens", "INTEGER"],
+    ["web_search_summaries", "cited_claims", "INTEGER NOT NULL DEFAULT 0"],
+    ["web_search_summaries", "uncited_claims", "INTEGER NOT NULL DEFAULT 0"],
+    ["web_search_summaries", "evidence_insufficient", "INTEGER NOT NULL DEFAULT 0"],
+  ] as const;
+  for (const [table, column, definition] of columns) {
+    const tableExists = db
+      .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?")
+      .get(table);
+    if (!tableExists) continue;
+    const existing = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+    if (!existing.some((item) => item.name === column)) {
+      db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+    }
+  }
+  migrateSecretsToStore(db);
 }
 
 const MIGRATIONS: Migration[] = [
@@ -541,6 +692,296 @@ const MIGRATIONS: Migration[] = [
     `,
     postMigrate: migrateLegacyLlmConnections,
   },
+  {
+    version: 14,
+    name: "canonical-document-search-tags",
+    sql: `
+      CREATE TABLE document_search_tags (
+        document_id TEXT NOT NULL,
+        canonical_tag TEXT NOT NULL,
+        raw_tag TEXT NOT NULL,
+        category TEXT NOT NULL,
+        confidence REAL NOT NULL DEFAULT 1.0,
+        PRIMARY KEY (document_id, canonical_tag, category),
+        FOREIGN KEY (document_id) REFERENCES documents(id) ON DELETE CASCADE
+      );
+
+      CREATE INDEX idx_search_tags_tag_doc
+        ON document_search_tags(canonical_tag, document_id);
+
+      CREATE INDEX idx_search_tags_doc_tag
+        ON document_search_tags(document_id, canonical_tag);
+    `,
+    postMigrate: rebuildDocumentSearchTags,
+  },
+  {
+    version: 15,
+    name: "search-event-query-type",
+    sql: "",
+    postMigrate: ensureSearchEventQueryType,
+  },
+  {
+    version: 16,
+    name: "multi-vector-search-fields",
+    sql: "",
+    postMigrate: (db) => ensureMultiVectorSchema(db, true),
+  },
+  {
+    version: 17,
+    name: "search-event-result-diagnostics",
+    sql: `
+      CREATE TABLE IF NOT EXISTS search_event_results (
+        event_id INTEGER NOT NULL,
+        document_id TEXT NOT NULL,
+        rank INTEGER NOT NULL,
+        PRIMARY KEY (event_id, document_id),
+        FOREIGN KEY (event_id) REFERENCES search_events(id) ON DELETE CASCADE,
+        FOREIGN KEY (document_id) REFERENCES documents(id) ON DELETE CASCADE
+      );
+      CREATE INDEX IF NOT EXISTS idx_search_event_results_event_rank
+        ON search_event_results(event_id, rank);
+      CREATE INDEX IF NOT EXISTS idx_search_event_results_document
+        ON search_event_results(document_id);
+    `,
+  },
+  {
+    version: 18,
+    name: "canonical-tag-stats-sync",
+    sql: `
+      CREATE TABLE IF NOT EXISTS tag_stats (
+        tag TEXT NOT NULL,
+        category TEXT NOT NULL,
+        count INTEGER DEFAULT 0,
+        last_updated TEXT DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (tag, category)
+      );
+      CREATE INDEX IF NOT EXISTS idx_tag_stats_category ON tag_stats(category);
+      CREATE INDEX IF NOT EXISTS idx_tag_stats_count ON tag_stats(count);
+
+      CREATE TRIGGER IF NOT EXISTS document_search_tags_stats_insert
+      AFTER INSERT ON document_search_tags BEGIN
+        INSERT INTO tag_stats(tag, category, count, last_updated)
+        VALUES (new.canonical_tag, new.category, 1, CURRENT_TIMESTAMP)
+        ON CONFLICT(tag, category) DO UPDATE SET
+          count = count + 1,
+          last_updated = CURRENT_TIMESTAMP;
+      END;
+
+      CREATE TRIGGER IF NOT EXISTS document_search_tags_stats_delete
+      AFTER DELETE ON document_search_tags BEGIN
+        UPDATE tag_stats
+        SET count = count - 1,
+            last_updated = CURRENT_TIMESTAMP
+        WHERE tag = old.canonical_tag
+          AND category = old.category;
+
+        DELETE FROM tag_stats
+        WHERE tag = old.canonical_tag
+          AND category = old.category
+          AND count <= 0;
+      END;
+    `,
+    postMigrate: rebuildCanonicalTagStats,
+  },
+  {
+    version: 19,
+    name: "canonical-content-tag-backfill",
+    sql: "",
+    postMigrate: rebuildDocumentSearchTags,
+  },
+  {
+    version: 20,
+    name: "web-search-session-foundation",
+    sql: `
+      CREATE TABLE web_search_sessions (
+        id TEXT PRIMARY KEY,
+        request_json TEXT NOT NULL,
+        plan_json TEXT,
+        status TEXT NOT NULL CHECK (
+          status IN (
+            'created', 'planning', 'searching', 'aggregating', 'summarizing',
+            'completed', 'partial', 'failed', 'cancelled', 'expired'
+          )
+        ),
+        error TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        expires_at TEXT NOT NULL
+      );
+      CREATE INDEX idx_web_search_sessions_expires
+        ON web_search_sessions(expires_at, status);
+
+      CREATE TABLE web_search_provider_runs (
+        session_id TEXT NOT NULL,
+        provider_id TEXT NOT NULL,
+        status TEXT NOT NULL,
+        result_count INTEGER NOT NULL DEFAULT 0,
+        latency_ms INTEGER,
+        warning TEXT,
+        started_at TEXT,
+        completed_at TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        PRIMARY KEY (session_id, provider_id),
+        FOREIGN KEY (session_id) REFERENCES web_search_sessions(id) ON DELETE CASCADE
+      );
+      CREATE INDEX idx_web_search_provider_runs_expires
+        ON web_search_provider_runs(expires_at);
+
+      CREATE TABLE web_search_results (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL,
+        result_json TEXT NOT NULL,
+        rank_order INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        FOREIGN KEY (session_id) REFERENCES web_search_sessions(id) ON DELETE CASCADE
+      );
+      CREATE INDEX idx_web_search_results_session_rank
+        ON web_search_results(session_id, rank_order);
+      CREATE INDEX idx_web_search_results_expires
+        ON web_search_results(expires_at);
+
+      CREATE TABLE web_search_events (
+        session_id TEXT NOT NULL,
+        event_id INTEGER NOT NULL,
+        event_type TEXT NOT NULL,
+        data_json TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        PRIMARY KEY (session_id, event_id),
+        FOREIGN KEY (session_id) REFERENCES web_search_sessions(id) ON DELETE CASCADE
+      );
+      CREATE INDEX idx_web_search_events_created
+        ON web_search_events(session_id, created_at);
+    `,
+  },
+  {
+    version: 21,
+    name: "openalex-web-search-connection",
+    sql: `
+      CREATE TABLE web_search_connections (
+        id TEXT PRIMARY KEY,
+        provider TEXT NOT NULL CHECK (provider IN ('openalex', 'tavily', 'brave', 'mcp')),
+        name TEXT NOT NULL,
+        enabled INTEGER NOT NULL DEFAULT 1,
+        is_primary INTEGER NOT NULL DEFAULT 0,
+        settings_json TEXT NOT NULL DEFAULT '{}',
+        api_key TEXT,
+        last_test_status TEXT CHECK (last_test_status IN ('success', 'failed')),
+        last_test_message TEXT,
+        last_tested_at TEXT,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+      CREATE INDEX idx_web_search_connections_provider
+        ON web_search_connections(provider, enabled, is_primary);
+
+      ALTER TABLE web_search_provider_runs ADD COLUMN estimated_credits REAL;
+      ALTER TABLE web_search_provider_runs ADD COLUMN request_id TEXT;
+    `,
+  },
+  {
+    version: 22,
+    name: "web-search-evidence-and-summaries",
+    sql: `
+      CREATE TABLE web_search_result_evidence (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL,
+        result_id TEXT NOT NULL,
+        evidence_json TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        FOREIGN KEY (session_id) REFERENCES web_search_sessions(id) ON DELETE CASCADE,
+        FOREIGN KEY (result_id) REFERENCES web_search_results(id) ON DELETE CASCADE
+      );
+      CREATE INDEX idx_web_search_evidence_result
+        ON web_search_result_evidence(session_id, result_id);
+      CREATE INDEX idx_web_search_evidence_expires
+        ON web_search_result_evidence(expires_at);
+
+      CREATE TABLE web_search_summaries (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL,
+        result_id TEXT,
+        kind TEXT NOT NULL CHECK (kind IN ('synthesis', 'result')),
+        status TEXT NOT NULL CHECK (status IN ('completed', 'failed')),
+        summary_json TEXT,
+        citations_json TEXT NOT NULL DEFAULT '[]',
+        evidence_count INTEGER NOT NULL DEFAULT 0,
+        error TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        FOREIGN KEY (session_id) REFERENCES web_search_sessions(id) ON DELETE CASCADE,
+        FOREIGN KEY (result_id) REFERENCES web_search_results(id) ON DELETE CASCADE
+      );
+      CREATE UNIQUE INDEX idx_web_search_summary_cache
+        ON web_search_summaries(session_id, kind, COALESCE(result_id, ''));
+      CREATE INDEX idx_web_search_summaries_expires
+        ON web_search_summaries(expires_at);
+
+      CREATE TABLE web_content_cache (
+        cache_key TEXT PRIMARY KEY,
+        url TEXT NOT NULL,
+        canonical_url TEXT,
+        content_type TEXT NOT NULL,
+        title TEXT,
+        author TEXT,
+        published_at TEXT,
+        text_content TEXT NOT NULL,
+        content_hash TEXT NOT NULL,
+        fetched_at TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        expires_at TEXT NOT NULL
+      );
+      CREATE INDEX idx_web_content_cache_expires
+        ON web_content_cache(expires_at);
+    `,
+  },
+  {
+    version: 23,
+    name: "web-search-save-and-document-origin",
+    sql: "",
+    postMigrate: ensureWebSaveDocumentSchema,
+  },
+  {
+    version: 24,
+    name: "secure-secrets-web-search-observability",
+    sql: `
+      CREATE TABLE web_search_usage_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        session_id TEXT,
+        event_type TEXT NOT NULL CHECK (
+          event_type IN (
+            'search', 'result_open', 'summary_synthesis', 'summary_result',
+            'save', 'favorite', 'pdf_download', 'aggregation'
+          )
+        ),
+        success INTEGER NOT NULL DEFAULT 1,
+        duration_ms INTEGER,
+        estimated_tokens INTEGER,
+        metadata_json TEXT NOT NULL DEFAULT '{}',
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+      CREATE INDEX idx_web_search_usage_events_created
+        ON web_search_usage_events(created_at, event_type);
+      CREATE INDEX idx_web_search_usage_events_session
+        ON web_search_usage_events(session_id, created_at);
+
+      CREATE TABLE web_search_maintenance_state (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        last_cleanup_at TEXT,
+        last_cleanup_json TEXT,
+        last_recovery_at TEXT,
+        last_recovery_json TEXT
+      );
+    `,
+    postMigrate: ensureW7Schema,
+  },
 ];
 
 // ---------------------------------------------------------------------------
@@ -651,17 +1092,15 @@ function migrateLegacyLlmConnections(db: Database.Database): void {
     );
   }
 
-  const selected = db
-    .prepare("SELECT value FROM user_preferences WHERE key = 'llm_provider'")
-    .get() as { value: string } | undefined;
+  const selected = db.prepare("SELECT value FROM user_preferences WHERE key = 'llm_provider'").get() as
+    | { value: string }
+    | undefined;
   const preferredId = selected
     ? `legacy-${selected.value}`
     : legacyRows.some((row) => row.provider === "deepseek")
       ? "legacy-deepseek"
       : "default-deepseek";
-  const preferredExists = db
-    .prepare("SELECT 1 FROM llm_connections WHERE id = ?")
-    .get(preferredId);
+  const preferredExists = db.prepare("SELECT 1 FROM llm_connections WHERE id = ?").get(preferredId);
   const fallback = db
     .prepare(
       `SELECT id FROM llm_connections
@@ -674,7 +1113,20 @@ function migrateLegacyLlmConnections(db: Database.Database): void {
     `INSERT INTO llm_runtime_settings(id, active_connection_id)
      VALUES (1, ?)
      ON CONFLICT(id) DO UPDATE SET active_connection_id = excluded.active_connection_id`,
-  ).run(preferredExists ? preferredId : fallback?.id ?? null);
+  ).run(preferredExists ? preferredId : (fallback?.id ?? null));
+}
+
+function ensureSearchEventQueryType(db: Database.Database): void {
+  const searchEventsTable = db
+    .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'search_events'")
+    .get();
+  if (!searchEventsTable) return;
+
+  const columns = db.prepare("PRAGMA table_info(search_events)").all() as Array<{ name: string }>;
+  if (!columns.some((column) => column.name === "query_type")) {
+    db.exec("ALTER TABLE search_events ADD COLUMN query_type TEXT NOT NULL DEFAULT 'unknown'");
+  }
+  db.exec("CREATE INDEX IF NOT EXISTS idx_search_events_query_type ON search_events(query_type, created_at)");
 }
 
 export function runMigrations(): void {
@@ -683,28 +1135,62 @@ export function runMigrations(): void {
 
   if (current >= CURRENT_SCHEMA_VERSION) {
     console.log(`[db] Schema up to date (v${current})`);
+    assertDatabaseIntegrity(db);
     return;
   }
 
-  for (const migration of MIGRATIONS) {
-    if (migration.version > current) {
-      console.log(`[db] Applying migration v${migration.version}: ${migration.name}`);
-      const applyMigration = db.transaction(() => {
-        db.exec(migration.sql);
-        migration.postMigrate?.(db);
-        db.prepare("INSERT INTO schema_version (version) VALUES (?)").run(migration.version);
-      });
-      applyMigration();
+  const backupPath = current > 0 ? createMigrationBackup(db, current) : undefined;
+  try {
+    for (const migration of MIGRATIONS) {
+      if (migration.version > current) {
+        console.log(`[db] Applying migration v${migration.version}: ${migration.name}`);
+        const applyMigration = db.transaction(() => {
+          db.exec(migration.sql);
+          migration.postMigrate?.(db);
+          db.prepare("INSERT INTO schema_version (version) VALUES (?)").run(migration.version);
+        });
+        applyMigration();
+      }
     }
-  }
 
-  const finalVersion = getCurrentVersion(db);
-  if (finalVersion !== CURRENT_SCHEMA_VERSION) {
+    const finalVersion = getCurrentVersion(db);
+    if (finalVersion !== CURRENT_SCHEMA_VERSION) {
+      throw new Error(
+        `Database migration incomplete: expected v${CURRENT_SCHEMA_VERSION}, got v${finalVersion}`,
+      );
+    }
+    assertDatabaseIntegrity(db);
+    console.log(`[db] Migrations complete. Now at v${finalVersion}`);
+  } catch (error) {
+    const backupMessage = backupPath ? ` Backup retained at ${backupPath}.` : "";
     throw new Error(
-      `Database migration incomplete: expected v${CURRENT_SCHEMA_VERSION}, got v${finalVersion}`,
+      `Database migration failed.${backupMessage} ${
+        error instanceof Error ? error.message : String(error)
+      }`,
     );
   }
-  console.log(`[db] Migrations complete. Now at v${finalVersion}`);
+}
+
+function createMigrationBackup(db: Database.Database, version: number): string | undefined {
+  const dbPath = customDbPath ?? getDbPath();
+  if (dbPath === ":memory:" || !fs.existsSync(dbPath)) return undefined;
+  try {
+    db.pragma("wal_checkpoint(TRUNCATE)");
+  } catch {
+    // DELETE journal mode and read-only test fixtures do not require a checkpoint.
+  }
+  const backupPath = `${dbPath}.pre-v${CURRENT_SCHEMA_VERSION}-from-v${version}.bak`;
+  fs.copyFileSync(dbPath, backupPath);
+  return backupPath;
+}
+
+function assertDatabaseIntegrity(db: Database.Database): void {
+  const rows = db.pragma("quick_check") as Array<{ quick_check: string }>;
+  if (rows.length !== 1 || rows[0]?.quick_check !== "ok") {
+    throw new Error(
+      `Database quick_check failed: ${rows.map((row) => row.quick_check).join(", ") || "unknown"}`,
+    );
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -820,7 +1306,83 @@ function ensureVectorSchema(db: Database.Database): void {
       embedding float[${dimensions}] distance_metric=cosine
     );
   `);
+  ensureMultiVectorSchema(db, false, dimensions);
   console.log("[db] sqlite-vec schema ready");
+}
+
+function ensureMultiVectorSchema(
+  db: Database.Database,
+  resetIndexState: boolean,
+  requestedDimensions?: number,
+): void {
+  const documentsTable = db
+    .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'documents'")
+    .get();
+  if (!documentsTable) return;
+
+  const metadataTable = db
+    .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'embedding_index_metadata'")
+    .get();
+  const metadata =
+    requestedDimensions === undefined && metadataTable
+      ? (db.prepare("SELECT dimensions FROM embedding_index_metadata WHERE id = 1").get() as
+          | { dimensions?: number | null }
+          | undefined)
+      : undefined;
+  const dimensions =
+    requestedDimensions ??
+    (Number.isSafeInteger(metadata?.dimensions) &&
+    Number(metadata?.dimensions) >= 32 &&
+    Number(metadata?.dimensions) <= 8192
+      ? Number(metadata?.dimensions)
+      : 1536);
+
+  db.exec(`
+    CREATE VIRTUAL TABLE IF NOT EXISTS document_title_abstract_vectors_v2 USING vec0(
+      document_id TEXT PRIMARY KEY,
+      embedding float[${dimensions}] distance_metric=cosine
+    );
+    CREATE VIRTUAL TABLE IF NOT EXISTS document_tag_vectors_v2 USING vec0(
+      document_id TEXT PRIMARY KEY,
+      embedding float[${dimensions}] distance_metric=cosine
+    );
+
+    CREATE TRIGGER IF NOT EXISTS document_multivectors_update
+    AFTER UPDATE OF title, abstract, summary_zh, summary_en, authors,
+      domain_tags, model_tags, source, source_tag, type_tag, year_tag, full_text
+    ON documents BEGIN
+      DELETE FROM document_title_abstract_vectors_v2 WHERE document_id = new.id;
+      DELETE FROM document_tag_vectors_v2 WHERE document_id = new.id;
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS document_multivectors_delete
+    AFTER DELETE ON documents BEGIN
+      DELETE FROM document_title_abstract_vectors_v2 WHERE document_id = old.id;
+      DELETE FROM document_tag_vectors_v2 WHERE document_id = old.id;
+    END;
+  `);
+
+  if (resetIndexState) {
+    const indexStateTable = db
+      .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'document_index_state'")
+      .get();
+    if (indexStateTable) {
+      db.exec(`
+        UPDATE document_index_state
+        SET embedding_status = 'pending',
+            vector_indexed_at = NULL,
+            updated_at = datetime('now')
+      `);
+    }
+    if (metadataTable) {
+      db.prepare(
+        `UPDATE embedding_index_metadata
+         SET status = CASE WHEN status = 'unconfigured' THEN status ELSE 'rebuilding' END,
+             updated_at = datetime('now')
+         WHERE id = 1`,
+      ).run();
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------

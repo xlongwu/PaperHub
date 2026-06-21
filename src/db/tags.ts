@@ -4,6 +4,11 @@
 
 import { getDb } from "./index";
 import type { Document } from "@/types";
+import {
+  getCanonicalTagAlternatives,
+  getCanonicalTagDisplayName,
+} from "@/canonical-tags";
+import { resolveKnownSearchTag } from "./search-tags";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -11,8 +16,10 @@ import type { Document } from "@/types";
 
 export interface TagInfo {
   tag: string;
-  category: "domain" | "source" | "model" | "type" | "year";
+  category: "domain" | "model" | "method" | "task" | "source" | "type" | "year";
   count: number;
+  canonicalTag?: string;
+  aliases?: string[];
 }
 
 // ---------------------------------------------------------------------------
@@ -21,7 +28,23 @@ export interface TagInfo {
 
 export function getTagCloud(options?: { category?: string; limit?: number }): TagInfo[] {
   const db = getDb();
-  let sql = "SELECT tag, category, count FROM tag_stats WHERE 1=1";
+  let sql = `
+    SELECT
+      ts.tag,
+      ts.category,
+      ts.count,
+      COALESCE(
+        (
+          SELECT st.raw_tag
+          FROM document_search_tags st
+          WHERE st.canonical_tag = ts.tag AND st.category = ts.category
+          ORDER BY st.raw_tag
+          LIMIT 1
+        ),
+        ts.tag
+      ) AS display_tag
+    FROM tag_stats ts
+    WHERE 1=1`;
   const params: (string | number)[] = [];
 
   if (options?.category) {
@@ -36,8 +59,19 @@ export function getTagCloud(options?: { category?: string; limit?: number }): Ta
     params.push(options.limit);
   }
 
-  const rows = db.prepare(sql).all(...params) as { tag: string; category: string; count: number }[];
-  return rows.map((r) => ({ tag: r.tag, category: r.category as TagInfo["category"], count: r.count }));
+  const rows = db.prepare(sql).all(...params) as Array<{
+    tag: string;
+    category: string;
+    count: number;
+    display_tag: string;
+  }>;
+  return rows.map((r) => ({
+    tag: getCanonicalTagDisplayName(r.tag) === r.tag ? r.display_tag : getCanonicalTagDisplayName(r.tag),
+    canonicalTag: r.tag,
+    aliases: getCanonicalTagAlternatives(r.tag),
+    category: r.category as TagInfo["category"],
+    count: r.count,
+  }));
 }
 
 // ---------------------------------------------------------------------------
@@ -51,18 +85,16 @@ export function getDocumentsByTag(
   const db = getDb();
   const limit = Math.min(options?.limit ?? 20, 100);
   const offset = options?.offset ?? 0;
+  const canonicalTag = resolveKnownSearchTag(tag);
+  if (!canonicalTag) return [];
 
   let sql = `
-    SELECT * FROM documents
-    WHERE
-      EXISTS (SELECT 1 FROM json_each(domain_tags) WHERE value = ?)
-      OR EXISTS (SELECT 1 FROM json_each(model_tags) WHERE value = ?)
-      OR source = ?
-      OR source_tag = ?
-      OR type_tag = ?
-      OR CAST(year_tag AS TEXT) = ?
+    SELECT DISTINCT d.*
+    FROM documents d
+    JOIN document_search_tags st ON st.document_id = d.id
+    WHERE st.canonical_tag = ?
   `;
-  const params: (string | number)[] = [tag, tag, tag, tag, tag, tag];
+  const params: (string | number)[] = [canonicalTag];
 
   if (options?.sortBy === "relevance") {
     sql += " ORDER BY is_summarized DESC, published_at DESC";
@@ -79,19 +111,18 @@ export function getDocumentsByTag(
 
 export function countDocumentsByTag(tag: string): number {
   const db = getDb();
+  const canonicalTag = resolveKnownSearchTag(tag);
+  if (!canonicalTag) return 0;
   const row = db
     .prepare(
       `SELECT COUNT(*) as count
-     FROM documents
-     WHERE
-       EXISTS (SELECT 1 FROM json_each(domain_tags) WHERE value = ?)
-       OR EXISTS (SELECT 1 FROM json_each(model_tags) WHERE value = ?)
-       OR source = ?
-       OR source_tag = ?
-       OR type_tag = ?
-       OR CAST(year_tag AS TEXT) = ?`,
+       FROM (
+         SELECT DISTINCT document_id
+         FROM document_search_tags
+         WHERE canonical_tag = ?
+       )`,
     )
-    .get(tag, tag, tag, tag, tag, tag) as { count: number } | undefined;
+    .get(canonicalTag) as { count: number } | undefined;
   return row?.count ?? 0;
 }
 
@@ -105,97 +136,22 @@ export function refreshTagStats(): void {
   const refreshAll = db.transaction(() => {
     db.prepare("DELETE FROM tag_stats").run();
 
-    // Domain tags
-    const domainRows = db
-      .prepare("SELECT domain_tags FROM documents WHERE domain_tags IS NOT NULL AND domain_tags != '[]'")
-      .all() as { domain_tags: string }[];
-
-    const domainCounts = new Map<string, number>();
-    for (const row of domainRows) {
-      try {
-        const tags = JSON.parse(row.domain_tags) as string[];
-        for (const tag of tags) {
-          domainCounts.set(tag, (domainCounts.get(tag) ?? 0) + 1);
-        }
-      } catch {
-        // ignore
-      }
-    }
-
     const insert = db.prepare("INSERT INTO tag_stats(tag, category, count) VALUES (?, ?, ?)");
-    for (const [tag, count] of domainCounts) {
-      insert.run(tag, "domain", count);
+    const rows = db
+      .prepare(
+        `SELECT canonical_tag, category, COUNT(DISTINCT document_id) AS count
+         FROM document_search_tags
+         GROUP BY canonical_tag, category`,
+      )
+      .all() as Array<{ canonical_tag: string; category: string; count: number }>;
+    for (const row of rows) {
+      insert.run(row.canonical_tag, row.category, row.count);
     }
 
-    // Model tags
-    const modelRows = db
-      .prepare("SELECT model_tags FROM documents WHERE model_tags IS NOT NULL AND model_tags != '[]'")
-      .all() as { model_tags: string }[];
-
-    const modelCounts = new Map<string, number>();
-    for (const row of modelRows) {
-      try {
-        const tags = JSON.parse(row.model_tags) as string[];
-        for (const tag of tags) {
-          modelCounts.set(tag, (modelCounts.get(tag) ?? 0) + 1);
-        }
-      } catch {
-        // ignore
-      }
-    }
-    for (const [tag, count] of modelCounts) {
-      insert.run(tag, "model", count);
-    }
-
-    // Source tags
-    const sourceRows = db
-      .prepare("SELECT source_tag, COUNT(*) as count FROM documents GROUP BY source_tag")
-      .all() as { source_tag: string; count: number }[];
-    for (const row of sourceRows) {
-      insert.run(row.source_tag, "source", row.count);
-    }
-
-    // Type tags
-    const typeRows = db
-      .prepare("SELECT type_tag, COUNT(*) as count FROM documents GROUP BY type_tag")
-      .all() as { type_tag: string; count: number }[];
-    for (const row of typeRows) {
-      insert.run(row.type_tag, "type", row.count);
-    }
-
-    // Year tags
-    const yearRows = db
-      .prepare("SELECT year_tag, COUNT(*) as count FROM documents GROUP BY year_tag")
-      .all() as { year_tag: number; count: number }[];
-    for (const row of yearRows) {
-      insert.run(String(row.year_tag), "year", row.count);
-    }
-
-    console.log(`[tags] Refreshed stats: ${domainCounts.size} domain, ${modelCounts.size} model tags`);
+    console.log(`[tags] Refreshed stats: ${rows.length} canonical tag entries`);
   });
 
   refreshAll();
-}
-
-// ---------------------------------------------------------------------------
-// Incremental update (call when new document inserted)
-// ---------------------------------------------------------------------------
-
-export function updateTagStatsForDocument(doc: Document): void {
-  const db = getDb();
-  const insert = db.prepare(
-    "INSERT INTO tag_stats(tag, category, count) VALUES (?, ?, 1) ON CONFLICT(tag, category) DO UPDATE SET count = count + 1, last_updated = CURRENT_TIMESTAMP",
-  );
-
-  for (const tag of doc.domainTags) {
-    insert.run(tag, "domain");
-  }
-  for (const tag of doc.modelTags) {
-    insert.run(tag, "model");
-  }
-  insert.run(doc.sourceTag, "source");
-  insert.run(doc.typeTag, "type");
-  insert.run(String(doc.yearTag), "year");
 }
 
 // ---------------------------------------------------------------------------

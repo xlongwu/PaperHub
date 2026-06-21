@@ -245,6 +245,11 @@ describe("compareMetrics", () => {
       p95LatencyMs: 200,
       totalQueries: 10,
       queriesWithResults: 9,
+      constraintViolationRate: 0,
+      allTagAccuracy: 1,
+      conjunctivePrecisionAt5: 0.8,
+      mustConceptCoverage: 1,
+      relaxedResultRatio: 0,
     };
     const current: SearchMetrics = {
       recallAt5: 0.9,
@@ -261,6 +266,11 @@ describe("compareMetrics", () => {
       p95LatencyMs: 210,
       totalQueries: 10,
       queriesWithResults: 9,
+      constraintViolationRate: 0,
+      allTagAccuracy: 1,
+      conjunctivePrecisionAt5: 0.85,
+      mustConceptCoverage: 1,
+      relaxedResultRatio: 0,
     };
 
     const comparison = compareMetrics(baseline, current);

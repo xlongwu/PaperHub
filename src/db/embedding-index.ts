@@ -90,11 +90,21 @@ export function rebuildEmbeddingIndex(runtime: EmbeddingRuntime): void {
   try {
     const rebuild = db.transaction(() => {
       db.exec("DROP TABLE IF EXISTS document_vectors_v2");
+      db.exec("DROP TABLE IF EXISTS document_title_abstract_vectors_v2");
+      db.exec("DROP TABLE IF EXISTS document_tag_vectors_v2");
       db.exec(`
         CREATE VIRTUAL TABLE document_vectors_v2 USING vec0(
           document_id TEXT PRIMARY KEY,
           embedding float[${runtime.dimensions}] distance_metric=cosine
-        )
+        );
+        CREATE VIRTUAL TABLE document_title_abstract_vectors_v2 USING vec0(
+          document_id TEXT PRIMARY KEY,
+          embedding float[${runtime.dimensions}] distance_metric=cosine
+        );
+        CREATE VIRTUAL TABLE document_tag_vectors_v2 USING vec0(
+          document_id TEXT PRIMARY KEY,
+          embedding float[${runtime.dimensions}] distance_metric=cosine
+        );
       `);
       db.exec(`
         UPDATE document_index_state

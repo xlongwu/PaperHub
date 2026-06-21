@@ -12,6 +12,12 @@ import { deleteDocument, insertDocument, updateDocument } from "@/db/documents";
 import { generateEmbedding } from "@/embedding";
 import { hybridSearch } from "@/search";
 import { stopIndexer } from "@/search-indexer";
+import {
+  getSearchQualityStats,
+  markSearchReformulated,
+  recordSearchClick,
+  recordSearchEvent,
+} from "@/db/search-events";
 import type { Document } from "@/types";
 import { safeUnlink, testPath } from "./test-utils";
 
@@ -60,6 +66,7 @@ afterAll(() => {
   safeUnlink(DB_PATH);
   delete process.env["PAPERHUB_SEARCH_ENGINE"];
   delete process.env["EMBEDDING_MOCK"];
+  delete process.env["PAPERHUB_RERANKER"];
 });
 
 describe("search quality regression coverage", () => {
@@ -80,7 +87,7 @@ describe("search quality regression coverage", () => {
     expect(result.results.map((entry) => entry.document.id)).toContain("medical-diffusion");
   });
 
-  it("keeps a pure semantic result without lexical overlap", async () => {
+  it("does not let a vector-only result bypass must-concept coverage", async () => {
     const semanticDoc = doc({
       id: "semantic-only",
       title: "Latent State Compression",
@@ -93,7 +100,7 @@ describe("search quality regression coverage", () => {
       query: "how agents remember earlier conversations",
       mode: "hybrid",
     });
-    expect(result.results.map((entry) => entry.document.id)).toContain("semantic-only");
+    expect(result.results.map((entry) => entry.document.id)).not.toContain("semantic-only");
   });
 
   it("normalizes LLM and GPT4 aliases", async () => {
@@ -137,7 +144,7 @@ describe("search quality regression coverage", () => {
     expect(all.results.map((entry) => entry.document.id)).toEqual(["agents-rag"]);
   });
 
-  it("treats an unknown free-text tag as a topic refinement", async () => {
+  it("rejects an unknown tag instead of silently turning it into a topic", async () => {
     insertDocument(
       doc({
         id: "synthetic-llm",
@@ -157,15 +164,16 @@ describe("search quality regression coverage", () => {
       }),
     );
 
-    const result = await hybridSearch({
-      query: "帮我搜集一些与大模型数据合成相关的论文和博客",
-      mode: "keyword",
-      tags: ["synthetic data"],
+    await expect(
+      hybridSearch({
+        query: "帮我搜集一些与大模型数据合成相关的论文和博客",
+        mode: "keyword",
+        allTags: ["not-a-real-tag"],
+      }),
+    ).rejects.toMatchObject({
+      code: "UNKNOWN_TAG",
+      details: { unknownTags: ["not-a-real-tag"] },
     });
-
-    expect(result.topicTerms).toEqual(["synthetic data"]);
-    expect(result.appliedTags).toEqual([]);
-    expect(result.results.map((entry) => entry.document.id)).toEqual(["synthetic-llm"]);
   });
 
   it("does not remove a valid tag when the filtered search has no matches", async () => {
@@ -190,9 +198,114 @@ describe("search quality regression coverage", () => {
       tags: ["Agents"],
     });
 
-    expect(result.appliedTags).toEqual(["Agents"]);
+    expect(result.appliedTags).toEqual(["agent"]);
     expect(result.topicTerms).toEqual([]);
     expect(result.results).toHaveLength(0);
+  });
+
+  it("enforces all, any, and exclude tags in the final result set", async () => {
+    insertDocument(
+      doc({
+        id: "joint-tags",
+        title: "Joint Tag Search",
+        domainTags: ["Agents", "RAG"],
+        modelTags: ["LLM"],
+      }),
+    );
+    insertDocument(
+      doc({
+        id: "partial-tags",
+        title: "Partial Tag Search",
+        domainTags: ["Agents"],
+        modelTags: ["GPT-4"],
+      }),
+    );
+
+    const result = await hybridSearch({
+      query: "tag search",
+      mode: "keyword",
+      allTags: ["Agents", "RAG"],
+      anyTags: ["LLM"],
+      excludeTags: ["GPT-4"],
+    });
+
+    expect(result.results.map((entry) => entry.document.id)).toEqual(["joint-tags"]);
+    expect(result.queryPlan?.filters).toMatchObject({
+      allTags: ["agent", "rag"],
+      anyTags: ["llm"],
+      excludeTags: ["gpt"],
+    });
+    expect(result.results[0]?.explanation?.matchedTags).toEqual(["agent", "rag", "llm"]);
+  });
+
+  it("finds LLM and synthetic-data intersections using derived method tags", async () => {
+    insertDocument(
+      doc({
+        id: "llm-synthetic-intersection",
+        title: "Synthetic Data Generation for LLM Training",
+        abstract: "A data synthesis pipeline for large language model instruction tuning.",
+        domainTags: ["LLM"],
+      }),
+    );
+    insertDocument(
+      doc({
+        id: "llm-without-synthetic",
+        title: "Efficient LLM Inference",
+        abstract: "Serving large language models with lower latency.",
+        domainTags: ["LLM"],
+      }),
+    );
+
+    const result = await hybridSearch({
+      query: "LLM, synthetic-data",
+      mode: "keyword",
+      allTags: ["LLM", "synthetic-data"],
+      anyTags: ["LLM", "synthetic-data"],
+    });
+
+    expect(result.queryPlan?.filters.anyTags).toEqual([]);
+    expect(result.results.map((entry) => entry.document.id)).toEqual([
+      "llm-synthetic-intersection",
+    ]);
+  });
+
+  it("defaults legacy multi-tag filters to intersection semantics", async () => {
+    insertDocument(doc({ id: "legacy-agent", title: "Legacy Filter", domainTags: ["Agents"] }));
+    insertDocument(doc({ id: "legacy-joint", title: "Legacy Filter Joint", domainTags: ["Agents", "RAG"] }));
+
+    const result = await hybridSearch({
+      query: "legacy filter",
+      mode: "keyword",
+      tags: ["Agents", "RAG"],
+    });
+
+    expect(result.results.map((entry) => entry.document.id)).toEqual(["legacy-joint"]);
+  });
+
+  it("rejects incomplete, invalid, and reversed date ranges", async () => {
+    await expect(
+      hybridSearch({
+        query: "agent memory",
+        dateRange: { start: "2026-06-01T00:00:00Z", end: "" },
+      }),
+    ).rejects.toMatchObject({ code: "INVALID_QUERY" });
+
+    await expect(
+      hybridSearch({
+        query: "agent memory",
+        dateRange: { start: "not-a-date", end: "2026-06-30T00:00:00Z" },
+      }),
+    ).rejects.toMatchObject({ code: "INVALID_QUERY" });
+
+    await expect(
+      hybridSearch({
+        query: "agent memory",
+        dateRange: {
+          start: "2026-06-30T00:00:00Z",
+          end: "2026-06-01T00:00:00Z",
+        },
+      }),
+    ).rejects.toMatchObject({ code: "FILTER_CONFLICT" });
   });
 
   it("invalidates stale vectors on update and removes both indexes on delete", async () => {
@@ -200,9 +313,31 @@ describe("search quality regression coverage", () => {
     insertDocument(lifecycleDoc);
     await indexDocumentVector(lifecycleDoc);
     expect(countIndexedVectors()).toBe(1);
+    expect(
+      (
+        getDb().prepare("SELECT COUNT(*) AS count FROM document_title_abstract_vectors_v2").get() as {
+          count: number;
+        }
+      ).count,
+    ).toBe(1);
+    expect(
+      (getDb().prepare("SELECT COUNT(*) AS count FROM document_tag_vectors_v2").get() as { count: number })
+        .count,
+    ).toBe(1);
 
     updateDocument(lifecycleDoc.id, { title: "ModernBeta Search Title" });
     expect(countIndexedVectors()).toBe(0);
+    expect(
+      (
+        getDb().prepare("SELECT COUNT(*) AS count FROM document_title_abstract_vectors_v2").get() as {
+          count: number;
+        }
+      ).count,
+    ).toBe(0);
+    expect(
+      (getDb().prepare("SELECT COUNT(*) AS count FROM document_tag_vectors_v2").get() as { count: number })
+        .count,
+    ).toBe(0);
     expect((await hybridSearch({ query: "legacyalpha", mode: "keyword" })).results).toHaveLength(0);
     expect((await hybridSearch({ query: "modernbeta", mode: "keyword" })).results[0]?.document.id).toBe(
       "lifecycle",
@@ -281,5 +416,70 @@ describe("search quality regression coverage", () => {
     const firstIds = new Set(first.results.map((entry) => entry.document.id));
     expect(second.results.every((entry) => !firstIds.has(entry.document.id))).toBe(true);
     expect(first.nextCursor).toBeTruthy();
+  });
+
+  it("reports configurable local reranker metadata without changing hard constraints", async () => {
+    insertDocument(
+      doc({
+        id: "reranker-hit",
+        title: "Agent Memory Compression",
+        domainTags: ["Agents", "Memory"],
+      }),
+    );
+
+    const enabled = await hybridSearch({
+      query: "agent memory",
+      mode: "keyword",
+      allTags: ["Agents", "Memory"],
+    });
+    expect(enabled.reranker?.provider).toBe("local");
+    expect(enabled.results[0]?.document.id).toBe("reranker-hit");
+
+    process.env["PAPERHUB_RERANKER"] = "off";
+    const disabled = await hybridSearch({
+      query: "agent memory",
+      mode: "keyword",
+      allTags: ["Agents", "Memory"],
+    });
+    expect(disabled.reranker?.provider).toBe("off");
+    expect(disabled.results[0]?.document.id).toBe("reranker-hit");
+    delete process.env["PAPERHUB_RERANKER"];
+  });
+
+  it("derives anonymous failure queries and hard negatives from search feedback", () => {
+    insertDocument(doc({ id: "negative-a", title: "Failure Candidate A" }));
+    insertDocument(doc({ id: "negative-b", title: "Failure Candidate B" }));
+
+    recordSearchEvent({
+      query: "agent memory",
+      queryType: "concept_intersection",
+      mode: "hybrid",
+      modeUsed: "hybrid",
+      resultCount: 2,
+      latencyMs: 20,
+      resultDocumentIds: ["negative-a", "negative-b"],
+    });
+    const clickedEvent = recordSearchEvent({
+      query: "agent memory",
+      queryType: "concept_intersection",
+      mode: "hybrid",
+      modeUsed: "hybrid",
+      resultCount: 2,
+      latencyMs: 25,
+      resultDocumentIds: ["negative-a", "negative-b"],
+    });
+    recordSearchClick({ eventId: clickedEvent, documentId: "negative-b", rank: 2 });
+    markSearchReformulated(clickedEvent);
+
+    const stats = getSearchQualityStats();
+    expect(stats.noClickRate).toBe(0.5);
+    expect(stats.clickMrr).toBe(0.25);
+    expect(stats.byQueryType.concept_intersection).toMatchObject({
+      searches: 2,
+      noClickRate: 0.5,
+      reformulationRate: 0.5,
+    });
+    expect(stats.failureQueries[0]?.failures).toBe(2);
+    expect(stats.hardNegativeDocumentIds).toEqual(expect.arrayContaining(["negative-a", "negative-b"]));
   });
 });

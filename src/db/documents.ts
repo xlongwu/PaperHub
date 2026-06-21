@@ -3,8 +3,13 @@
  * All methods use better-sqlite3 synchronous API for simplicity and performance.
  */
 
-import type { Document, DocumentSource } from "@/types";
+import type {
+  Document,
+  DocumentExternalIds,
+  DocumentSource,
+} from "@/types";
 import { getDb } from "./index.ts";
+import { replaceDocumentSearchTags } from "./search-tags";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -30,6 +35,10 @@ function toDb(doc: Document): Record<string, unknown> {
     full_text: doc.fullText ?? null,
     full_text_path: doc.fullTextPath ?? null,
     language: doc.language,
+    external_ids: doc.externalIds ? JSON.stringify(doc.externalIds) : null,
+    canonical_url: doc.canonicalUrl ?? null,
+    origin_json: doc.origin ? JSON.stringify(doc.origin) : null,
+    discovery_json: doc.discovery ? JSON.stringify(doc.discovery) : null,
     domain_tags: JSON.stringify(doc.domainTags),
     source_tag: doc.sourceTag,
     type_tag: doc.typeTag,
@@ -66,6 +75,16 @@ function fromDb(row: Record<string, unknown>): Document {
     fullText: row.full_text ? String(row.full_text) : undefined,
     fullTextPath: row.full_text_path ? String(row.full_text_path) : undefined,
     language: String(row.language) as "zh" | "en",
+    externalIds: row.external_ids
+      ? safeJsonParse<Document["externalIds"]>(row.external_ids, undefined)
+      : undefined,
+    canonicalUrl: row.canonical_url ? String(row.canonical_url) : undefined,
+    origin: row.origin_json
+      ? safeJsonParse<Document["origin"]>(row.origin_json, undefined)
+      : undefined,
+    discovery: row.discovery_json
+      ? safeJsonParse<Document["discovery"]>(row.discovery_json, undefined)
+      : undefined,
     domainTags: safeJsonParse<string[]>(row.domain_tags, []),
     sourceTag: String(row.source_tag),
     typeTag: String(row.type_tag) as "paper" | "blog" | "tutorial" | "review",
@@ -95,13 +114,15 @@ export function insertDocument(doc: Document): string {
   const stmt = db.prepare(`
     INSERT INTO documents (
       id, title, source, url, published_at, authors, abstract,
-      full_text, full_text_path, language, domain_tags, source_tag, type_tag,
+      full_text, full_text_path, language, external_ids, canonical_url,
+      origin_json, discovery_json, domain_tags, source_tag, type_tag,
       year_tag, model_tags, summary_zh, summary_en,
       summary_zh_level, summary_en_level,
       created_at, updated_at, is_summarized
     ) VALUES (
       @id, @title, @source, @url, @published_at, @authors, @abstract,
-      @full_text, @full_text_path, @language, @domain_tags, @source_tag, @type_tag,
+      @full_text, @full_text_path, @language, @external_ids, @canonical_url,
+      @origin_json, @discovery_json, @domain_tags, @source_tag, @type_tag,
       @year_tag, @model_tags, @summary_zh, @summary_en,
       @summary_zh_level, @summary_en_level,
       @created_at, @updated_at, @is_summarized
@@ -111,6 +132,11 @@ export function insertDocument(doc: Document): string {
       abstract = excluded.abstract,
       authors = excluded.authors,
       full_text = excluded.full_text,
+      full_text_path = COALESCE(excluded.full_text_path, documents.full_text_path),
+      external_ids = COALESCE(excluded.external_ids, documents.external_ids),
+      canonical_url = COALESCE(excluded.canonical_url, documents.canonical_url),
+      origin_json = COALESCE(excluded.origin_json, documents.origin_json),
+      discovery_json = COALESCE(excluded.discovery_json, documents.discovery_json),
       domain_tags = excluded.domain_tags,
       model_tags = excluded.model_tags,
       summary_zh = excluded.summary_zh,
@@ -120,7 +146,10 @@ export function insertDocument(doc: Document): string {
       updated_at = excluded.updated_at
   `);
   stmt.run(data);
-  return doc.id;
+  const stored = db.prepare("SELECT id FROM documents WHERE url = ?").get(doc.url) as { id: string };
+  const storedId = stored.id;
+  replaceDocumentSearchTags({ ...doc, id: storedId }, db);
+  return storedId;
 }
 
 export function getDocumentById(id: string): Document | null {
@@ -137,6 +166,68 @@ export function getDocumentByUrl(url: string): Document | null {
     | Record<string, unknown>
     | undefined;
   return row ? fromDb(row) : null;
+}
+
+export function findDocumentByExternalIds(
+  ids: DocumentExternalIds,
+): Document | null {
+  const checks: Array<[keyof DocumentExternalIds, string | undefined]> = [
+    ["doi", normalizeDoi(ids.doi)],
+    ["arxivId", normalizeIdentifier(ids.arxivId)],
+    ["openAlexId", normalizeIdentifier(ids.openAlexId)],
+    ["pmid", normalizeIdentifier(ids.pmid)],
+  ];
+  for (const [key, value] of checks) {
+    if (!value) continue;
+    const row = getDb()
+      .prepare(
+        `SELECT * FROM documents
+         WHERE lower(json_extract(external_ids, ?)) = lower(?)
+         LIMIT 1`,
+      )
+      .get(`$.${key}`, value) as Record<string, unknown> | undefined;
+    if (row) return fromDb(row);
+  }
+  return null;
+}
+
+export function findDocumentByCanonicalUrl(url: string): Document | null {
+  const row = getDb()
+    .prepare(
+      `SELECT * FROM documents
+       WHERE canonical_url = ? OR url = ?
+       LIMIT 1`,
+    )
+    .get(url, url) as Record<string, unknown> | undefined;
+  return row ? fromDb(row) : null;
+}
+
+export function findDocumentByTitleAuthorYear(input: {
+  title: string;
+  firstAuthor?: string;
+  year?: number;
+}): Document | null {
+  const normalizedTitle = normalizeComparable(input.title);
+  const normalizedAuthor = normalizeComparable(input.firstAuthor ?? "");
+  const candidates = getDb()
+    .prepare(
+      `SELECT * FROM documents
+       WHERE year_tag = ?
+       ORDER BY updated_at DESC`,
+    )
+    .all(input.year ?? 0) as Record<string, unknown>[];
+  for (const row of candidates) {
+    const document = fromDb(row);
+    if (normalizeComparable(document.title) !== normalizedTitle) continue;
+    if (
+      normalizedAuthor &&
+      normalizeComparable(document.authors[0] ?? "") !== normalizedAuthor
+    ) {
+      continue;
+    }
+    return document;
+  }
+  return null;
 }
 
 export function getDocumentsBySource(source: string): Document[] {
@@ -216,8 +307,7 @@ export function getPendingSummaryDocuments(
   const lang = options.lang ?? "zh";
   const summaryLevel = options.summaryLevel ?? "short";
   const summaryColumn = lang === "zh" ? "summary_zh" : "summary_en";
-  const levelColumn =
-    lang === "zh" ? "summary_zh_level" : "summary_en_level";
+  const levelColumn = lang === "zh" ? "summary_zh_level" : "summary_en_level";
   const rows = db
     .prepare(
       `SELECT * FROM documents
@@ -303,6 +393,22 @@ export function updateDocument(id: string, updates: Partial<Document>): void {
     sets.push("full_text_path = ?");
     values.push(updates.fullTextPath);
   }
+  if (updates.externalIds !== undefined) {
+    sets.push("external_ids = ?");
+    values.push(JSON.stringify(updates.externalIds));
+  }
+  if (updates.canonicalUrl !== undefined) {
+    sets.push("canonical_url = ?");
+    values.push(updates.canonicalUrl);
+  }
+  if (updates.origin !== undefined) {
+    sets.push("origin_json = ?");
+    values.push(JSON.stringify(updates.origin));
+  }
+  if (updates.discovery !== undefined) {
+    sets.push("discovery_json = ?");
+    values.push(JSON.stringify(updates.discovery));
+  }
 
   if (sets.length === 0) return;
 
@@ -311,6 +417,8 @@ export function updateDocument(id: string, updates: Partial<Document>): void {
   values.push(id);
 
   db.prepare(`UPDATE documents SET ${sets.join(", ")} WHERE id = ?`).run(...values);
+  const updated = getDocumentById(id);
+  if (updated) replaceDocumentSearchTags(updated, db);
   void import("@/search-indexer")
     .then(({ enqueueVectorIndexing }) => enqueueVectorIndexing([id]))
     .catch(() => {
@@ -329,4 +437,23 @@ export function documentExists(url: string): boolean {
 export function deleteDocument(id: string): void {
   const db = getDb();
   db.prepare("DELETE FROM documents WHERE id = ?").run(id);
+}
+
+function normalizeDoi(value: string | undefined): string | undefined {
+  return value
+    ?.trim()
+    .replace(/^https?:\/\/(?:dx\.)?doi\.org\//i, "")
+    .toLowerCase();
+}
+
+function normalizeIdentifier(value: string | undefined): string | undefined {
+  return value?.trim().toLowerCase();
+}
+
+function normalizeComparable(value: string): string {
+  return value
+    .normalize("NFKC")
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
+    .trim();
 }

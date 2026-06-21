@@ -1,0 +1,12 @@
+interface:
+  display_name: "Save to PaperHub Library"
+  short_description: "Confirm and save selected Web results safely"
+  default_prompt: "Use $save-to-library to review and save selected PaperHub Web results."
+dependencies:
+  tools:
+    - type: "mcp"
+      value: "paperhub-local"
+      description: "PaperHub local MCP result and save tools"
+      transport: "stdio"
+policy:
+  allow_implicit_invocation: true

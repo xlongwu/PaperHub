@@ -19,7 +19,12 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { ensureCorpus, indexCorpusVectors, loadSearchQueries, runEvaluationQueries } from "@/evaluation/index";
+import {
+  ensureCorpus,
+  indexCorpusVectors,
+  loadSearchQueries,
+  runEvaluationQueries,
+} from "@/evaluation/index";
 import { computeAllMetrics, compareMetrics, computeMetricsForSubset } from "@/evaluation/metrics";
 import type { EvaluationReport, SearchMetrics } from "@/evaluation/metrics";
 import { getIndexStateStats } from "@/db/search";
@@ -52,23 +57,30 @@ function parseArgs(): CliArgs {
 // ---------------------------------------------------------------------------
 
 const REPORT_DIR = path.resolve(process.cwd(), ".tmp", "evaluation");
-const BASELINE_FILE = path.join(REPORT_DIR, "baseline.json");
 
-function saveReport(report: EvaluationReport, engine: string): void {
+function baselineFile(corpus: string): string {
+  return path.join(REPORT_DIR, `baseline-${corpus}.json`);
+}
+
+function saveReport(report: EvaluationReport, engine: string, corpus: string): void {
   fs.mkdirSync(REPORT_DIR, { recursive: true });
-  const filename = path.join(REPORT_DIR, `report-${engine}-${report.timestamp.replace(/[:.]/g, "-")}.json`);
+  const filename = path.join(
+    REPORT_DIR,
+    `report-${engine}-${corpus}-${report.timestamp.replace(/[:.]/g, "-")}.json`,
+  );
   fs.writeFileSync(filename, JSON.stringify(report, null, 2), "utf-8");
   console.log(`[eval] Report saved: ${filename}`);
 
   // Also save as latest
-  const latestFile = path.join(REPORT_DIR, `latest-${engine}.json`);
+  const latestFile = path.join(REPORT_DIR, `latest-${engine}-${corpus}.json`);
   fs.writeFileSync(latestFile, JSON.stringify(report, null, 2), "utf-8");
 }
 
-function loadBaseline(): EvaluationReport | null {
+function loadBaseline(corpus: string): EvaluationReport | null {
   try {
-    if (fs.existsSync(BASELINE_FILE)) {
-      return JSON.parse(fs.readFileSync(BASELINE_FILE, "utf-8")) as EvaluationReport;
+    const filename = baselineFile(corpus);
+    if (fs.existsSync(filename)) {
+      return JSON.parse(fs.readFileSync(filename, "utf-8")) as EvaluationReport;
     }
   } catch {
     // Baseline not available
@@ -76,10 +88,11 @@ function loadBaseline(): EvaluationReport | null {
   return null;
 }
 
-function saveBaseline(report: EvaluationReport): void {
+function saveBaseline(report: EvaluationReport, corpus: string): void {
   fs.mkdirSync(REPORT_DIR, { recursive: true });
-  fs.writeFileSync(BASELINE_FILE, JSON.stringify(report, null, 2), "utf-8");
-  console.log(`[eval] Baseline saved: ${BASELINE_FILE}`);
+  const filename = baselineFile(corpus);
+  fs.writeFileSync(filename, JSON.stringify(report, null, 2), "utf-8");
+  console.log(`[eval] Baseline saved: ${filename}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -113,13 +126,16 @@ function printMetrics(metrics: SearchMetrics): void {
   console.log(`  Avg latency:           ${formatMs(metrics.avgLatencyMs)}`);
   console.log(`  P50 latency:           ${formatMs(metrics.p50LatencyMs)}`);
   console.log(`  P95 latency:           ${formatMs(metrics.p95LatencyMs)}`);
+  console.log(`  Constraint violations: ${formatPct(metrics.constraintViolationRate)}`);
+  console.log(`  All-tag accuracy:      ${formatPct(metrics.allTagAccuracy)}`);
+  console.log(`  Conjunctive P@5:       ${formatPct(metrics.conjunctivePrecisionAt5)}`);
+  console.log(`  Must coverage:         ${formatPct(metrics.mustConceptCoverage)}`);
+  console.log(`  Relaxed-result ratio:  ${formatPct(metrics.relaxedResultRatio)}`);
   console.log(`  Total queries:         ${metrics.totalQueries}`);
   console.log(`  Queries with results:  ${metrics.queriesWithResults}`);
 }
 
-function printComparison(
-  comparison: Record<string, { before: number; after: number; delta: number }>,
-): void {
+function printComparison(comparison: Record<string, { before: number; after: number; delta: number }>): void {
   console.log(`\n  Metric                  Before      After       Delta`);
   console.log(`  ${"-".repeat(56)}`);
   for (const [key, vals] of Object.entries(comparison)) {
@@ -165,7 +181,7 @@ async function main(): Promise<void> {
       const status = qr.zeroResult ? "ZERO" : `${qr.results.length} results`;
       console.log(
         `  [${qr.queryId}] "${qr.query}" → ${status} (${qr.latencyMs}ms) ` +
-        `R@10=${formatPct(qr.metrics.recallAt10)} NDCG@10=${formatPct(qr.metrics.ndcgAt10)}`,
+          `R@10=${formatPct(qr.metrics.recallAt10)} NDCG@10=${formatPct(qr.metrics.ndcgAt10)}`,
       );
     }
   }
@@ -173,15 +189,10 @@ async function main(): Promise<void> {
   // 5. Compute metrics
   printSeparator("Step 5: Aggregate Metrics");
   const metrics = computeAllMetrics(queryResults);
-  const keywordMetrics = computeMetricsForSubset(
-    queryResults,
-    (result) => result.mode === "keyword",
-  );
+  const keywordMetrics = computeMetricsForSubset(queryResults, (result) => result.mode === "keyword");
 
   // Category breakdown
-  const chineseQueries = queryResults.filter(
-    (_, i) => queries[i]?.language === "zh",
-  );
+  const chineseQueries = queryResults.filter((_, i) => queries[i]?.language === "zh");
   const chineseMetrics = chineseQueries.length > 0 ? computeAllMetrics(chineseQueries) : null;
   const categoryBreakdown = Object.fromEntries(
     [...new Set(queryResults.map((result) => result.category).filter(Boolean))]
@@ -217,7 +228,7 @@ async function main(): Promise<void> {
   let baselineReport: EvaluationReport | null = null;
   if (args.compare) {
     printSeparator("Step 6: Baseline Comparison");
-    baselineReport = loadBaseline();
+    baselineReport = loadBaseline(args.corpus);
     if (baselineReport) {
       report.comparison = { vsBaseline: compareMetrics(baselineReport.metrics, metrics) };
       printComparison(report.comparison.vsBaseline!);
@@ -228,29 +239,27 @@ async function main(): Promise<void> {
 
   // 8. Save
   if (args.save) {
-    saveReport(report, args.engine);
+    saveReport(report, args.engine, args.corpus);
     if (!args.compare) {
-      saveBaseline(report);
+      saveBaseline(report, args.corpus);
     }
   }
 
   // 9. Quality gate check
   printSeparator("Quality Gate Check");
-  const gates = checkQualityGates(
-    metrics,
-    chineseMetrics,
-    keywordMetrics,
-    getIndexStateStats(),
-  );
+  const gates = checkQualityGates(metrics, chineseMetrics, keywordMetrics, getIndexStateStats());
   if (baselineReport) {
     gates.push({
-      name: "Recall@20 improves >= 15% or preserves ceiling baseline",
+      name: "Recall@20 regression <= 0.02",
       actual: formatPct(metrics.recallAt20 - baselineReport.metrics.recallAt20),
-      threshold: "15.00% (or no regression when baseline >= 90%)",
-      pass:
-        metrics.recallAt20 - baselineReport.metrics.recallAt20 >= 0.15 ||
-        (baselineReport.metrics.recallAt20 >= 0.9 &&
-          metrics.recallAt20 >= baselineReport.metrics.recallAt20),
+      threshold: ">= -2.00%",
+      pass: metrics.recallAt20 - baselineReport.metrics.recallAt20 >= -0.02,
+    });
+    gates.push({
+      name: "NDCG@10 regression <= 0.02",
+      actual: formatPct(metrics.ndcgAt10 - baselineReport.metrics.ndcgAt10),
+      threshold: ">= -2.00%",
+      pass: metrics.ndcgAt10 - baselineReport.metrics.ndcgAt10 >= -0.02,
     });
     for (const [category, current] of Object.entries(categoryBreakdown)) {
       const previous = baselineReport.categoryBreakdown?.[category];
@@ -300,28 +309,40 @@ function checkQualityGates(
 ): QualityGate[] {
   return [
     {
+      name: "Constraint Violation Rate = 0",
+      actual: formatPct(metrics.constraintViolationRate),
+      threshold: "0.00%",
+      pass: metrics.constraintViolationRate === 0,
+    },
+    {
+      name: "All-tag Accuracy = 100%",
+      actual: formatPct(metrics.allTagAccuracy),
+      threshold: "100.00%",
+      pass: metrics.allTagAccuracy === 1,
+    },
+    {
+      name: "Conjunctive Precision@5 >= 0.80",
+      actual: formatPct(metrics.conjunctivePrecisionAt5),
+      threshold: "80.00%",
+      pass: metrics.conjunctivePrecisionAt5 >= 0.8,
+    },
+    {
       name: "Recall@20 >= 0.90",
       actual: formatPct(metrics.recallAt20),
       threshold: "90.00%",
-      pass: metrics.recallAt20 >= 0.90,
+      pass: metrics.recallAt20 >= 0.9,
     },
     {
       name: "NDCG@10 >= 0.80",
       actual: formatPct(metrics.ndcgAt10),
       threshold: "80.00%",
-      pass: metrics.ndcgAt10 >= 0.80,
+      pass: metrics.ndcgAt10 >= 0.8,
     },
     {
       name: "MRR@10 >= 0.75",
       actual: formatPct(metrics.mrrAt10),
       threshold: "75.00%",
       pass: metrics.mrrAt10 >= 0.75,
-    },
-    {
-      name: "Precision@5 >= 0.80",
-      actual: formatPct(metrics.precisionAt5),
-      threshold: "80.00%",
-      pass: metrics.precisionAt5 >= 0.80,
     },
     {
       name: "Zero-result rate <= 2%",

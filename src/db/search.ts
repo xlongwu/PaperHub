@@ -6,6 +6,8 @@ import { getDb } from "./index";
 import { getDocumentById } from "./documents";
 import {
   buildDocumentEmbeddingTextForRuntime,
+  buildTagEmbeddingText,
+  buildTitleAbstractEmbeddingText,
   generateEmbedding,
   generateEmbeddings,
   getEmbeddingRuntime,
@@ -13,6 +15,9 @@ import {
 } from "@/embedding";
 import { analyzeSearchQuery, scoreDocumentAgainstQuery } from "@/search-query";
 import type { Document } from "@/types";
+import type { SearchMatchExplanation } from "@/search-contract";
+import { collectDocumentCanonicalTags, getCanonicalTagId } from "@/canonical-tags";
+import { resolveKnownSearchTag } from "./search-tags";
 import {
   assertEmbeddingIndexReady,
   ensureEmbeddingIndexRuntime,
@@ -32,6 +37,9 @@ export interface Fts5SearchOptions {
   sources?: string[];
   tags?: string[];
   tagMatchMode?: "any" | "all";
+  allTags?: string[];
+  anyTags?: string[];
+  excludeTags?: string[];
   dateRange?: { start: string; end: string };
 }
 
@@ -43,6 +51,9 @@ export interface VectorSearchOptions {
   sources?: string[];
   tags?: string[];
   tagMatchMode?: "any" | "all";
+  allTags?: string[];
+  anyTags?: string[];
+  excludeTags?: string[];
   dateRange?: { start: string; end: string };
 }
 
@@ -53,6 +64,7 @@ export interface SearchResult {
   snippet?: string;
   semanticScore?: number;
   matchedField?: string;
+  explanation?: SearchMatchExplanation;
 }
 
 const SEARCH_RESULT_LIMIT_CAP = 1000;
@@ -248,6 +260,9 @@ export interface RecallOptions {
   sources?: string[];
   tags?: string[];
   tagMatchMode?: "any" | "all";
+  allTags?: string[];
+  anyTags?: string[];
+  excludeTags?: string[];
   dateRange?: { start: string; end: string };
 }
 
@@ -399,30 +414,59 @@ export async function searchVectorAdaptive(
   const kSteps = [200, 400, 800];
   let bestResults: SearchResult[] = [];
   for (const k of kSteps) {
-    const kValue = Math.min(totalIndexed, k);
+    const profiles = multiVectorEnabled()
+      ? ([
+          { table: "document_vectors_v2", weight: 0.5 },
+          { table: "document_title_abstract_vectors_v2", weight: 0.35 },
+          { table: "document_tag_vectors_v2", weight: 0.15 },
+        ] as const)
+      : ([{ table: "document_vectors_v2", weight: 1 }] as const);
+    const fusedScores = new Map<
+      string,
+      { weightedScore: number; totalWeight: number; profileHits: number }
+    >();
+    let largestKValue = 0;
 
-    const rows = db
-      .prepare(
-        `
-      SELECT document_id, distance
-      FROM document_vectors_v2
-      WHERE embedding MATCH ?
-        AND k = ?
-      ORDER BY distance
-    `,
-      )
-      .all(serializedEmbedding, kValue) as {
-      document_id: string;
-      distance: number;
-    }[];
+    for (const profile of profiles) {
+      const indexed = countVectorRows(profile.table);
+      if (indexed === 0) continue;
+      const kValue = Math.min(indexed, k);
+      largestKValue = Math.max(largestKValue, kValue);
+      const rows = db
+        .prepare(
+          `
+          SELECT document_id, distance
+          FROM ${profile.table}
+          WHERE embedding MATCH ?
+            AND k = ?
+          ORDER BY distance
+        `,
+        )
+        .all(serializedEmbedding, kValue) as {
+        document_id: string;
+        distance: number;
+      }[];
+      for (const row of rows) {
+        const similarity = 1 - row.distance / 2;
+        const existing = fusedScores.get(row.document_id) ?? {
+          weightedScore: 0,
+          totalWeight: 0,
+          profileHits: 0,
+        };
+        existing.weightedScore += similarity * profile.weight;
+        existing.totalWeight += profile.weight;
+        existing.profileHits++;
+        fusedScores.set(row.document_id, existing);
+      }
+    }
 
     const results: SearchResult[] = [];
-    for (const row of rows) {
-      const doc = getDocumentById(row.document_id);
+    for (const [documentId, fused] of fusedScores) {
+      const doc = getDocumentById(documentId);
       if (!doc) continue;
       if (!matchesSearchFilters(doc, options)) continue;
 
-      const similarity = 1 - row.distance / 2;
+      const similarity = fused.weightedScore / fused.totalWeight;
       if (similarity < threshold) continue;
 
       results.push({
@@ -430,17 +474,39 @@ export async function searchVectorAdaptive(
         score: similarity,
         semanticScore: similarity,
         matchType: "vector",
+        matchedField: fused.profileHits > 1 ? "multi_vector" : "document",
       });
     }
+    results.sort(
+      (left, right) => right.score - left.score || left.document.id.localeCompare(right.document.id),
+    );
     bestResults = results;
 
     // Stop if we have enough candidates that pass filters
-    if (results.length >= minCandidates || kValue >= totalIndexed) {
+    if (results.length >= minCandidates || largestKValue >= totalIndexed) {
       return results.slice(0, options.limit);
     }
   }
 
   return bestResults.slice(0, options.limit);
+}
+
+function multiVectorEnabled(): boolean {
+  const configured = process.env["PAPERHUB_MULTI_VECTOR"]?.trim().toLocaleLowerCase();
+  return configured !== "off" && configured !== "false" && configured !== "0";
+}
+
+function countVectorRows(
+  table: "document_vectors_v2" | "document_title_abstract_vectors_v2" | "document_tag_vectors_v2",
+): number {
+  try {
+    const row = getDb().prepare(`SELECT COUNT(*) AS count FROM ${table}`).get() as {
+      count: number;
+    };
+    return row.count;
+  } catch {
+    return 0;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -572,17 +638,34 @@ export async function indexDocumentVectors(documents: Document[]): Promise<void>
   });
   markBatchRunning();
 
-  const texts = documents.map((document) => buildDocumentEmbeddingTextForRuntime(document, runtime));
+  const texts = documents.flatMap((document) => [
+    buildDocumentEmbeddingTextForRuntime(document, runtime),
+    buildTitleAbstractEmbeddingText(document, runtime.maxInputChars),
+    buildTagEmbeddingText(document, runtime.maxInputChars),
+  ]);
   const embeddings = await generateEmbeddings(texts);
-  if (embeddings.length !== documents.length) {
+  const expectedEmbeddingCount = documents.length * 3;
+  if (embeddings.length !== expectedEmbeddingCount) {
     throw new Error(
-      `Embedding batch count mismatch: expected ${documents.length}, received ${embeddings.length}`,
+      `Embedding batch count mismatch: expected ${expectedEmbeddingCount}, received ${embeddings.length}`,
     );
   }
 
+  const storeTitleAbstract = db.prepare(
+    "INSERT OR REPLACE INTO document_title_abstract_vectors_v2(document_id, embedding) VALUES (?, ?)",
+  );
+  const storeTags = db.prepare(
+    "INSERT OR REPLACE INTO document_tag_vectors_v2(document_id, embedding) VALUES (?, ?)",
+  );
   const writeBatch = db.transaction(() => {
     documents.forEach((document, index) => {
-      store.run(document.id, serializeEmbedding(embeddings[index]!, runtime.dimensions));
+      const embeddingOffset = index * 3;
+      store.run(document.id, serializeEmbedding(embeddings[embeddingOffset]!, runtime.dimensions));
+      storeTitleAbstract.run(
+        document.id,
+        serializeEmbedding(embeddings[embeddingOffset + 1]!, runtime.dimensions),
+      );
+      storeTags.run(document.id, serializeEmbedding(embeddings[embeddingOffset + 2]!, runtime.dimensions));
       markReady.run(document.id, runtime.signature);
     });
   });
@@ -700,6 +783,9 @@ export function matchesSearchFilters(
     sources?: string[];
     tags?: string[];
     tagMatchMode?: "any" | "all";
+    allTags?: string[];
+    anyTags?: string[];
+    excludeTags?: string[];
     dateRange?: { start: string; end: string };
   },
 ): boolean {
@@ -707,11 +793,13 @@ export function matchesSearchFilters(
     return false;
   }
 
-  if (filters.tags && filters.tags.length > 0) {
-    const matches = filters.tags.map((tag) => documentMatchesTag(document, tag));
-    const matched = filters.tagMatchMode === "all" ? matches.every(Boolean) : matches.some(Boolean);
-    if (!matched) return false;
+  const normalized = normalizeFilterTags(filters);
+  const documentTags = new Set(collectDocumentCanonicalTags(document).map((entry) => entry.canonicalTag));
+  if (!normalized.allTags.every((tag) => documentTags.has(tag))) return false;
+  if (normalized.anyTags.length > 0 && !normalized.anyTags.some((tag) => documentTags.has(tag))) {
+    return false;
   }
+  if (normalized.excludeTags.some((tag) => documentTags.has(tag))) return false;
 
   if (
     filters.dateRange &&
@@ -724,36 +812,7 @@ export function matchesSearchFilters(
 }
 
 export function hasIndexedSearchTag(tag: string): boolean {
-  const db = getDb();
-  const variants = tagVariants(tag);
-  const placeholders = variants.map(() => "?").join(",");
-  const params: string[] = [];
-  for (let repeat = 0; repeat < 6; repeat++) params.push(...variants);
-
-  const row = db
-    .prepare(
-      `
-      SELECT 1
-      FROM documents d
-      WHERE
-        EXISTS (
-          SELECT 1 FROM json_each(d.domain_tags)
-          WHERE lower(replace(replace(value, '-', ''), ' ', '')) IN (${placeholders})
-        )
-        OR EXISTS (
-          SELECT 1 FROM json_each(d.model_tags)
-          WHERE lower(replace(replace(value, '-', ''), ' ', '')) IN (${placeholders})
-        )
-        OR lower(replace(replace(d.source, '-', ''), ' ', '')) IN (${placeholders})
-        OR lower(replace(replace(d.source_tag, '-', ''), ' ', '')) IN (${placeholders})
-        OR lower(replace(replace(d.type_tag, '-', ''), ' ', '')) IN (${placeholders})
-        OR CAST(d.year_tag AS TEXT) IN (${placeholders})
-      LIMIT 1
-    `,
-    )
-    .get(...params);
-
-  return row !== undefined;
+  return resolveKnownSearchTag(tag) !== null;
 }
 
 function appendSqlFilters(
@@ -763,6 +822,9 @@ function appendSqlFilters(
     sources?: string[];
     tags?: string[];
     tagMatchMode?: "any" | "all";
+    allTags?: string[];
+    anyTags?: string[];
+    excludeTags?: string[];
     dateRange?: { start: string; end: string };
   },
 ): { sql: string } {
@@ -771,32 +833,35 @@ function appendSqlFilters(
     params.push(...options.sources);
   }
 
-  if (options.tags?.length) {
-    const clauses = options.tags.map((tag) => {
-      const variants = tagVariants(tag);
-      const placeholders = variants.map(() => "?").join(",");
-      return `
-      (
-        EXISTS (
-          SELECT 1 FROM json_each(d.domain_tags)
-          WHERE lower(replace(replace(value, '-', ''), ' ', '')) IN (${placeholders})
-        )
-        OR EXISTS (
-          SELECT 1 FROM json_each(d.model_tags)
-          WHERE lower(replace(replace(value, '-', ''), ' ', '')) IN (${placeholders})
-        )
-        OR lower(replace(replace(d.source, '-', ''), ' ', '')) IN (${placeholders})
-        OR lower(replace(replace(d.source_tag, '-', ''), ' ', '')) IN (${placeholders})
-        OR lower(replace(replace(d.type_tag, '-', ''), ' ', '')) IN (${placeholders})
-        OR CAST(d.year_tag AS TEXT) IN (${placeholders})
-      )
-    `;
-    });
-    sql += ` AND (${clauses.join(options.tagMatchMode === "all" ? " AND " : " OR ")})`;
-    for (const tag of options.tags) {
-      const variants = tagVariants(tag);
-      for (let repeat = 0; repeat < 6; repeat++) params.push(...variants);
-    }
+  const tags = normalizeFilterTags(options);
+  if (tags.allTags.length > 0) {
+    sql += `
+      AND d.id IN (
+        SELECT document_id
+        FROM document_search_tags
+        WHERE canonical_tag IN (${tags.allTags.map(() => "?").join(",")})
+        GROUP BY document_id
+        HAVING COUNT(DISTINCT canonical_tag) = ?
+      )`;
+    params.push(...tags.allTags, tags.allTags.length);
+  }
+  if (tags.anyTags.length > 0) {
+    sql += `
+      AND EXISTS (
+        SELECT 1 FROM document_search_tags st
+        WHERE st.document_id = d.id
+          AND st.canonical_tag IN (${tags.anyTags.map(() => "?").join(",")})
+      )`;
+    params.push(...tags.anyTags);
+  }
+  if (tags.excludeTags.length > 0) {
+    sql += `
+      AND NOT EXISTS (
+        SELECT 1 FROM document_search_tags st
+        WHERE st.document_id = d.id
+          AND st.canonical_tag IN (${tags.excludeTags.map(() => "?").join(",")})
+      )`;
+    params.push(...tags.excludeTags);
   }
 
   if (options.dateRange) {
@@ -806,41 +871,29 @@ function appendSqlFilters(
   return { sql };
 }
 
-function tagVariants(value: string): string[] {
-  const target = normalizeTag(value);
-  const groups: Record<string, string[]> = {
-    agents: ["agent", "agents", "agentic"],
-    llm: ["llm", "llms", "largelanguagemodel", "largelanguagemodels"],
-    gpt4: ["gpt4", "gpt40", "gpt4o"],
+function normalizeFilterTags(filters: {
+  tags?: string[];
+  tagMatchMode?: "any" | "all";
+  allTags?: string[];
+  anyTags?: string[];
+  excludeTags?: string[];
+}): {
+  allTags: string[];
+  anyTags: string[];
+  excludeTags: string[];
+} {
+  const legacy = (filters.tags ?? []).map(getCanonicalTagId);
+  return {
+    allTags: [
+      ...(filters.allTags ?? []).map(getCanonicalTagId),
+      ...(filters.tagMatchMode === "any" ? [] : legacy),
+    ],
+    anyTags: [
+      ...(filters.anyTags ?? []).map(getCanonicalTagId),
+      ...(filters.tagMatchMode === "any" ? legacy : []),
+    ],
+    excludeTags: (filters.excludeTags ?? []).map(getCanonicalTagId),
   };
-  return groups[target] ?? [target];
-}
-
-function normalizeTag(value: string): string {
-  const normalized = value
-    .trim()
-    .toLowerCase()
-    .replace(/[-_\s]+/g, "");
-  const aliases: Record<string, string> = {
-    agent: "agents",
-    llms: "llm",
-    largelanguagemodel: "llm",
-    largelanguagemodels: "llm",
-    gpt4: "gpt4",
-  };
-  return aliases[normalized] ?? normalized;
-}
-
-function documentMatchesTag(document: Document, tag: string): boolean {
-  const target = normalizeTag(tag);
-  return [
-    ...document.domainTags,
-    ...document.modelTags,
-    document.source,
-    document.sourceTag,
-    document.typeTag,
-    String(document.yearTag),
-  ].some((value) => normalizeTag(value) === target);
 }
 
 function countFtsDocuments(): number {

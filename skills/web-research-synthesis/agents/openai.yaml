@@ -1,0 +1,12 @@
+interface:
+  display_name: "Web Research Synthesis"
+  short_description: "Synthesize PaperHub sessions with citations"
+  default_prompt: "Use $web-research-synthesis to synthesize these PaperHub Web Search sessions."
+dependencies:
+  tools:
+    - type: "mcp"
+      value: "paperhub-local"
+      description: "PaperHub local MCP session, result, and summary tools"
+      transport: "stdio"
+policy:
+  allow_implicit_invocation: true

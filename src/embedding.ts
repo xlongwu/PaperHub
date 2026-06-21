@@ -75,7 +75,12 @@ export {
   resetEmbeddingRuntime,
   resolveEmbeddingRuntime,
 };
-export { buildDocumentEmbeddingText, buildDocumentEmbeddingTextForRuntime } from "./embedding/document";
+export {
+  buildDocumentEmbeddingText,
+  buildDocumentEmbeddingTextForRuntime,
+  buildTagEmbeddingText,
+  buildTitleAbstractEmbeddingText,
+} from "./embedding/document";
 export { EmbeddingError } from "./embedding/types";
 export type {
   EmbeddingConfiguration,

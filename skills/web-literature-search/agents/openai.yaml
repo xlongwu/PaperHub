@@ -1,0 +1,12 @@
+interface:
+  display_name: "Web Literature Search"
+  short_description: "Plan and run bounded literature searches"
+  default_prompt: "Use $web-literature-search to find and explain relevant current literature."
+dependencies:
+  tools:
+    - type: "mcp"
+      value: "paperhub-local"
+      description: "PaperHub local MCP search and session tools"
+      transport: "stdio"
+policy:
+  allow_implicit_invocation: true

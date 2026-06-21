@@ -9,6 +9,7 @@ import type {
 } from "./types";
 
 const REQUEST_TIMEOUT_MS = 30_000;
+const LONG_REQUEST_TIMEOUT_MS = 60_000;
 const MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
 const CONNECTION_TEST_PROMPT = "Reply with exactly: PaperHub connection OK";
 const CONNECTION_TEST_MAX_TOKENS = 256;
@@ -151,6 +152,7 @@ export async function callLlmConnection(
     headers: buildHeaders(connection, connection.request.headers),
     body,
     apiKey: connection.apiKey,
+    timeoutMs: maxTokens > 4_096 ? LONG_REQUEST_TIMEOUT_MS : REQUEST_TIMEOUT_MS,
   });
   const text = extractJsonPath(payload, connection.request.responsePath);
   if (typeof text !== "string" || !text.trim()) {
@@ -207,11 +209,13 @@ interface RequestJsonOptions {
   headers: Record<string, string>;
   body?: JsonTemplate;
   apiKey?: string;
+  timeoutMs?: number;
 }
 
 async function requestJson(url: URL, options: RequestJsonOptions): Promise<unknown> {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  const timeoutMs = options.timeoutMs ?? REQUEST_TIMEOUT_MS;
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const response = await fetch(url, {
       method: options.method,
@@ -251,7 +255,7 @@ async function requestJson(url: URL, options: RequestJsonOptions): Promise<unkno
     }
   } catch (error) {
     if (error instanceof Error && error.name === "AbortError") {
-      throw new Error(`LLM request timed out after ${REQUEST_TIMEOUT_MS / 1000} seconds.`);
+      throw new Error(`LLM request timed out after ${timeoutMs / 1000} seconds.`);
     }
     throw normalizeLlmRequestError(error, options.apiKey);
   } finally {

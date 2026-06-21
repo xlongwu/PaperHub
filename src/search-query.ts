@@ -20,6 +20,7 @@ import {
   allAlternatives,
   findChineseConcepts,
 } from "@/search-aliases";
+import { getCanonicalTagDefinition } from "@/canonical-tags";
 import type { Document } from "@/types";
 
 // ---------------------------------------------------------------------------
@@ -29,6 +30,7 @@ import type { Document } from "@/types";
 export interface SearchConcept {
   canonical: string;
   alternatives: string[];
+  known: boolean;
 }
 
 /** Recognised query pattern — influences recall-path weights */
@@ -76,6 +78,12 @@ export interface LexicalRelevance {
   summaryMatches: number;
 }
 
+export interface ConceptMatchEvidence {
+  coverage: number;
+  matchedConcepts: string[];
+  matchedFields: Array<"title" | "abstract" | "tags" | "summary" | "full_text">;
+}
+
 // ---------------------------------------------------------------------------
 // Stop words
 // ---------------------------------------------------------------------------
@@ -108,6 +116,8 @@ const STOP_WORDS = new Set([
   "which",
   "can",
   "should",
+  "preferably",
+  "ideally",
 ]);
 
 // ---------------------------------------------------------------------------
@@ -165,6 +175,27 @@ export function analyzeSearchQuery(query: string): SearchQueryAnalysis {
     broadFtsQuery,
     cjkNgrams,
     pattern,
+  };
+}
+
+export function buildSearchQueryAnalysis(original: string, concepts: SearchConcept[]): SearchQueryAnalysis {
+  const deduplicated = [...new Map(concepts.map((concept) => [concept.canonical, concept])).values()];
+  const aliases = [...new Set(deduplicated.flatMap((concept) => concept.alternatives))];
+  const tokens = tokenize(original).filter((token) => !STOP_WORDS.has(token));
+  const language = detectLanguage(tokens, original);
+  return {
+    original,
+    normalized: deduplicated.map((concept) => concept.canonical).join(" "),
+    language,
+    terms: tokens,
+    phrases: aliases.filter((alternative) => alternative.includes(" ")),
+    concepts: deduplicated,
+    aliases,
+    exactTitleQuery: buildExactTitleQuery(deduplicated),
+    strictFtsQuery: buildStrictFtsQuery(deduplicated),
+    broadFtsQuery: buildBroadFtsQuery(deduplicated, aliases),
+    cjkNgrams: language !== "en" ? generateCjkNgrams(original) : null,
+    pattern: detectQueryPattern(original, deduplicated, language),
   };
 }
 
@@ -230,6 +261,47 @@ export function scoreDocumentAgainstQuery(
   );
 
   return { score, coverage, matchedConcepts, titleMatches, tagMatches, summaryMatches };
+}
+
+export function getConceptMatchEvidence(document: Document, concepts: SearchConcept[]): ConceptMatchEvidence {
+  if (concepts.length === 0) {
+    return { coverage: 1, matchedConcepts: [], matchedFields: [] };
+  }
+
+  const fields = {
+    title: searchableField(document.title),
+    abstract: searchableField(document.abstract),
+    tags: searchableField(
+      [...document.domainTags, ...document.modelTags, document.sourceTag, document.typeTag].join(" "),
+    ),
+    summary: searchableField([document.summaryZh, document.summaryEn].filter(Boolean).join(" ")),
+    full_text: searchableField(document.fullText ?? ""),
+  };
+  const matchedConcepts: string[] = [];
+  const matchedFields = new Set<ConceptMatchEvidence["matchedFields"][number]>();
+
+  for (const concept of concepts) {
+    let matched = false;
+    for (const [fieldName, field] of Object.entries(fields) as Array<
+      [ConceptMatchEvidence["matchedFields"][number], ReturnType<typeof searchableField>]
+    >) {
+      if (fieldContainsConcept(field, concept)) {
+        matched = true;
+        matchedFields.add(fieldName);
+      }
+    }
+    if (matched) matchedConcepts.push(concept.canonical);
+  }
+
+  return {
+    coverage: matchedConcepts.length / concepts.length,
+    matchedConcepts,
+    matchedFields: [...matchedFields],
+  };
+}
+
+export function textContainsConcept(text: string, concept: SearchConcept): boolean {
+  return fieldContainsConcept(searchableField(text), concept);
 }
 
 // ---------------------------------------------------------------------------
@@ -347,6 +419,7 @@ function createConcept(value: string): SearchConcept {
   return {
     canonical,
     alternatives: allAlternatives(canonical),
+    known: Boolean(getCanonicalTagDefinition(canonical)),
   };
 }
 
@@ -463,6 +536,9 @@ function fieldContainsConcept(
 ): boolean {
   return concept.alternatives.some((alternative) => {
     const normalizedAlternative = normalizeSearchText(alternative);
+    if (isCJK(normalizedAlternative)) {
+      return field.normalized.includes(normalizedAlternative);
+    }
     if (normalizedAlternative.includes(" ")) {
       return field.normalized.includes(normalizedAlternative);
     }

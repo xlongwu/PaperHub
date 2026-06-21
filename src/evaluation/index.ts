@@ -18,6 +18,8 @@ import { createPhase6FixtureDocuments } from "@/test-support/phase6-fixtures";
 import type { EvaluationQuery, QueryResult } from "./metrics";
 import { computeQueryMetrics } from "./metrics";
 import type { Document } from "@/types";
+import { collectDocumentCanonicalTags } from "@/canonical-tags";
+import { getConceptMatchEvidence } from "@/search-query";
 
 // ---------------------------------------------------------------------------
 // Corpus management
@@ -160,6 +162,14 @@ export function loadSearchQueries(
       relevanceGrades?: Record<string, number>;
       category?: string;
       notes?: string;
+      allTags?: string[];
+      anyTags?: string[];
+      excludeTags?: string[];
+      sources?: string[];
+      dateRange?: { start: string; end: string };
+      mustConcepts?: string[];
+      shouldConcepts?: string[];
+      excludeConcepts?: string[];
     }>;
   };
 
@@ -171,6 +181,14 @@ export function loadSearchQueries(
     relevanceGrades: q.relevanceGrades,
     category: q.category,
     mode: (q.mode as "keyword" | "semantic" | "hybrid") ?? "hybrid",
+    allTags: q.allTags,
+    anyTags: q.anyTags,
+    excludeTags: q.excludeTags,
+    sources: q.sources,
+    dateRange: q.dateRange,
+    mustConcepts: q.mustConcepts,
+    shouldConcepts: q.shouldConcepts,
+    excludeConcepts: q.excludeConcepts,
   }));
 }
 
@@ -198,11 +216,42 @@ export async function runEvaluationQueries(
         query: q.query,
         mode: q.mode,
         limit: 20,
+        allTags: q.allTags,
+        anyTags: q.anyTags,
+        excludeTags: q.excludeTags,
+        sources: q.sources,
+        dateRange: q.dateRange,
+        mustConcepts: q.mustConcepts,
+        shouldConcepts: q.shouldConcepts,
+        excludeConcepts: q.excludeConcepts,
       });
 
       const latencyMs = Date.now() - startTime;
       const resultDocIds = response.results.map((r) => r.document.id);
       const zeroResult = response.results.length === 0;
+      const queryPlan = response.queryPlan;
+      const constraintViolations = queryPlan
+        ? response.results.filter((result) => !satisfiesQueryPlan(result.document, queryPlan)).length
+        : 0;
+      const allTagMatches =
+        queryPlan && queryPlan.filters.allTags.length > 0
+          ? response.results.filter((result) => {
+              const tags = new Set(
+                collectDocumentCanonicalTags(result.document).map((entry) => entry.canonicalTag),
+              );
+              return queryPlan.filters.allTags.every((tag) => tags.has(tag));
+            }).length
+          : undefined;
+      const mustConceptCoverage =
+        queryPlan && queryPlan.concepts.must.length > 0 && response.results.length > 0
+          ? response.results.reduce(
+              (sum, result) =>
+                sum + getConceptMatchEvidence(result.document, queryPlan.concepts.must).coverage,
+              0,
+            ) / response.results.length
+          : queryPlan?.concepts.must.length
+            ? 0
+            : undefined;
 
       results.push({
         queryId: q.queryId,
@@ -219,6 +268,13 @@ export async function runEvaluationQueries(
         latencyMs,
         metrics: computeQueryMetrics(q, resultDocIds, 10),
         zeroResult,
+        constraintViolations,
+        allTagMatches,
+        mustConceptCoverage,
+        relaxedResultCount: response.results.filter((result) => result.explanation?.tier === "relaxed")
+          .length,
+        conjunctive:
+          (queryPlan?.concepts.must.length ?? 0) > 1 || (queryPlan?.filters.allTags.length ?? 0) > 1,
       });
     } catch {
       const latencyMs = Date.now() - startTime;
@@ -232,11 +288,43 @@ export async function runEvaluationQueries(
         latencyMs,
         metrics: { recallAt10: 0, ndcgAt10: 0, mrrAt10: 0, precisionAt5: 0 },
         zeroResult: true,
+        constraintViolations: 0,
+        relaxedResultCount: 0,
+        conjunctive: (q.mustConcepts?.length ?? 0) > 1 || (q.allTags?.length ?? 0) > 1,
       });
     }
   }
 
   return results;
+}
+
+function satisfiesQueryPlan(
+  document: Document,
+  queryPlan: NonNullable<Awaited<ReturnType<typeof hybridSearch>>["queryPlan"]>,
+): boolean {
+  const tags = new Set(collectDocumentCanonicalTags(document).map((entry) => entry.canonicalTag));
+  if (!queryPlan.filters.allTags.every((tag) => tags.has(tag))) return false;
+  if (queryPlan.filters.anyTags.length > 0 && !queryPlan.filters.anyTags.some((tag) => tags.has(tag))) {
+    return false;
+  }
+  if (queryPlan.filters.excludeTags.some((tag) => tags.has(tag))) return false;
+  if (queryPlan.filters.sources.length > 0 && !queryPlan.filters.sources.includes(document.source)) {
+    return false;
+  }
+  if (
+    queryPlan.filters.dateRange &&
+    (document.publishedAt < queryPlan.filters.dateRange.start ||
+      document.publishedAt > queryPlan.filters.dateRange.end)
+  ) {
+    return false;
+  }
+  const mustEvidence = getConceptMatchEvidence(document, queryPlan.concepts.must);
+  const required =
+    queryPlan.concepts.must.length <= 2
+      ? queryPlan.concepts.must.length
+      : Math.ceil(queryPlan.concepts.must.length * 0.75);
+  if (mustEvidence.matchedConcepts.length < required) return false;
+  return getConceptMatchEvidence(document, queryPlan.concepts.exclude).matchedConcepts.length === 0;
 }
 
 // ---------------------------------------------------------------------------

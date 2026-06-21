@@ -1,4 +1,13 @@
 import type { Document, MemoryTerm, RecommendationEntry } from "@/types";
+import type { SearchMatchExplanation, SearchQueryPlan } from "@/search-contract";
+import type { SearchRerankerMetadata } from "@/search-reranker";
+import type {
+  WebSearchConnection,
+  WebSearchRequest,
+  WebSearchSummary,
+  WebSearchSession,
+  WebSearchSessionStatus,
+} from "@/web-search/types";
 
 declare global {
   interface Window {
@@ -10,6 +19,8 @@ export interface ApiEnvelope<T> {
   success: boolean;
   data?: T;
   error?: string;
+  errorCode?: string;
+  details?: Record<string, unknown>;
   meta?: {
     page?: number;
     limit?: number;
@@ -23,6 +34,7 @@ export interface SearchResponse {
     score: number;
     matchType: "fts" | "vector" | "hybrid";
     snippet?: string;
+    explanation?: SearchMatchExplanation;
   }>;
   total: number;
   mode: string;
@@ -37,6 +49,8 @@ export interface SearchResponse {
   searchEventId?: number;
   degraded?: boolean;
   reason?: string;
+  queryPlan?: SearchQueryPlan;
+  reranker?: SearchRerankerMetadata;
 }
 
 export interface IndexCoverage {
@@ -58,11 +72,7 @@ export interface PagedResult<T> {
 export type TimeRangePreset = "all" | "7d" | "30d" | "90d" | "365d";
 export type LlmProviderName = "anthropic" | "openai" | "github-copilot" | "openrouter" | "deepseek";
 export type EmbeddingProviderName = "openai" | "ollama";
-export type LlmProtocol =
-  | "openai_chat"
-  | "anthropic_messages"
-  | "gemini_generate_content"
-  | "custom_json";
+export type LlmProtocol = "openai_chat" | "anthropic_messages" | "gemini_generate_content" | "custom_json";
 export type LlmAuthType = "bearer" | "header" | "query" | "none";
 
 export interface LlmAuthConfig {
@@ -136,11 +146,7 @@ export interface LlmConnectionsState {
   connections: LlmConnection[];
   activeConnectionId: string | null;
   runtimeConnectionId: string;
-  runtimeSource:
-    | "environment_connection"
-    | "environment_provider"
-    | "stored"
-    | "default";
+  runtimeSource: "environment_connection" | "environment_provider" | "stored" | "default";
   environmentOverride: boolean;
 }
 
@@ -194,6 +200,76 @@ export interface SummarizeDocumentResponse {
   document: Document;
 }
 
+export interface CreatedWebSearchSession {
+  sessionId: string;
+  status: WebSearchSessionStatus;
+  eventsUrl: string;
+  expiresAt: string;
+}
+
+export interface WebSearchHealth {
+  status: "healthy" | "degraded";
+  checkedAt: string;
+  providers: Array<{
+    providerId: string;
+    configured: boolean;
+    enabled: boolean;
+    lastTestStatus?: "success" | "failed";
+    lastTestedAt?: string;
+  }>;
+  cache: {
+    sessions: number;
+    results: number;
+    evidence: number;
+    summaries: number;
+    content: number;
+  };
+  maintenance: {
+    lastCleanupAt?: string;
+    lastRecoveryAt?: string;
+  };
+  lastSevenDays: {
+    searches: number;
+    providerFailureRate: number;
+    estimatedCredits: number;
+  };
+}
+
+export interface WebSearchMetrics {
+  range: { from: string; to: string };
+  providers: Array<{
+    providerId: string;
+    calls: number;
+    successRate: number;
+    timeoutRate: number;
+    rateLimitRate: number;
+    p50LatencyMs: number;
+    p95LatencyMs: number;
+    resultCount: number;
+    estimatedCredits: number;
+    cacheHitRate: number;
+  }>;
+  summaries: {
+    attempts: number;
+    successRate: number;
+    p95LatencyMs: number;
+    citationMappingAccuracy: number;
+    uncitedClaims: number;
+    evidenceInsufficient: number;
+    estimatedTokens: number;
+  };
+  usage: {
+    searches: number;
+    resultOpens: number;
+    deepSummaries: number;
+    saves: number;
+    favorites: number;
+    pdfDownloads: number;
+    partialSessionRate: number;
+    noResultRate: number;
+  };
+}
+
 export async function getHotRecommendations(): Promise<RecommendationEntry[]> {
   const response = await apiGet<RecommendationEntry[]>("/api/recommendations/hot");
   return response.data ?? [];
@@ -237,6 +313,13 @@ export async function searchDocuments(params: {
   sources: string[];
   tags: string[];
   tagMatchMode?: "any" | "all";
+  allTags?: string[];
+  anyTags?: string[];
+  excludeTags?: string[];
+  mustConcepts?: string[];
+  shouldConcepts?: string[];
+  excludeConcepts?: string[];
+  fallbackPolicy?: "strict" | "allow_relaxed";
   timeRange?: TimeRangePreset;
   limit?: number;
   page?: number;
@@ -258,7 +341,28 @@ export async function searchDocuments(params: {
   }
   if (params.tags.length > 0) {
     search.set("tags", params.tags.join(","));
-    search.set("tagMatch", params.tagMatchMode ?? "any");
+    search.set("tagMatch", params.tagMatchMode ?? "all");
+  }
+  if (params.allTags?.length) {
+    search.set("allTags", params.allTags.join(","));
+  }
+  if (params.anyTags?.length) {
+    search.set("anyTags", params.anyTags.join(","));
+  }
+  if (params.excludeTags?.length) {
+    search.set("excludeTags", params.excludeTags.join(","));
+  }
+  if (params.mustConcepts?.length) {
+    search.set("mustConcepts", params.mustConcepts.join(","));
+  }
+  if (params.shouldConcepts?.length) {
+    search.set("shouldConcepts", params.shouldConcepts.join(","));
+  }
+  if (params.excludeConcepts?.length) {
+    search.set("excludeConcepts", params.excludeConcepts.join(","));
+  }
+  if (params.fallbackPolicy === "allow_relaxed") {
+    search.set("fallback", "allow_relaxed");
   }
   const range = resolveTimeRange(params.timeRange ?? "all");
   if (range) {
@@ -273,10 +377,134 @@ export async function searchDocuments(params: {
   return response.data;
 }
 
-export async function generateSearchReport(query: string, documentIds: string[]): Promise<string> {
+export async function createWebSearch(request: WebSearchRequest): Promise<CreatedWebSearchSession> {
+  const response = await apiPost<CreatedWebSearchSession>("/api/web-search", request);
+  if (!response.data) throw new Error("Web Search session was not created.");
+  return response.data;
+}
+
+export async function getWebSearchSession(sessionId: string): Promise<WebSearchSession> {
+  const response = await apiGet<WebSearchSession>(`/api/web-search/${encodeURIComponent(sessionId)}`);
+  if (!response.data) throw new Error("Web Search session was not found.");
+  return response.data;
+}
+
+export async function summarizeWebSearch(sessionId: string): Promise<WebSearchSummary> {
+  const response = await apiPost<WebSearchSummary>(
+    `/api/web-search/${encodeURIComponent(sessionId)}/summarize`,
+    {},
+  );
+  if (!response.data) throw new Error("Web Search summary was not generated.");
+  return response.data;
+}
+
+export async function summarizeWebSearchResult(
+  sessionId: string,
+  resultId: string,
+): Promise<WebSearchSummary> {
+  const response = await apiPost<WebSearchSummary>(
+    `/api/web-search/${encodeURIComponent(sessionId)}/results/${encodeURIComponent(resultId)}/summarize`,
+    {},
+  );
+  if (!response.data) throw new Error("Web result summary was not generated.");
+  return response.data;
+}
+
+export async function saveWebSearchResult(
+  sessionId: string,
+  resultId: string,
+  input: {
+    mode: "metadata_only" | "save_content" | "download_pdf";
+    favorite?: boolean;
+    generateSummary?: boolean;
+  },
+): Promise<import("@/web-search/types").WebSaveResponse> {
+  const response = await apiPost<import("@/web-search/types").WebSaveResponse>(
+    `/api/web-search/${encodeURIComponent(sessionId)}/results/${encodeURIComponent(resultId)}/save`,
+    input,
+  );
+  if (!response.data) throw new Error("Web result was not saved.");
+  return response.data;
+}
+
+export async function getWebSearchConnections(): Promise<WebSearchConnection[]> {
+  const response = await apiGet<WebSearchConnection[]>("/api/web-search/connections");
+  return response.data ?? [];
+}
+
+export async function saveWebSearchConnection(payload: {
+  id?: string;
+  provider: "openalex" | "tavily" | "brave" | "mcp";
+  name: string;
+  enabled?: boolean;
+  isPrimary?: boolean;
+  settings: WebSearchConnection["settings"];
+  apiKey?: string;
+  clearApiKey?: boolean;
+}): Promise<WebSearchConnection> {
+  const response = payload.id
+    ? await apiPut<WebSearchConnection>(
+        `/api/web-search/connections/${encodeURIComponent(payload.id)}`,
+        payload,
+      )
+    : await apiPost<WebSearchConnection>("/api/web-search/connections", payload);
+  if (!response.data) throw new Error("Web Search connection was not saved.");
+  return response.data;
+}
+
+export async function activateWebSearchConnection(id: string): Promise<WebSearchConnection> {
+  const response = await apiPost<WebSearchConnection>(
+    `/api/web-search/connections/${encodeURIComponent(id)}/activate`,
+    {},
+  );
+  if (!response.data) throw new Error("Web Search connection was not activated.");
+  return response.data;
+}
+
+export async function testWebSearchConnection(id: string): Promise<void> {
+  await apiPost(`/api/web-search/connections/${encodeURIComponent(id)}/test`, {});
+}
+
+export async function getWebSearchHealth(): Promise<WebSearchHealth> {
+  const response = await apiGet<WebSearchHealth>("/api/web-search/health");
+  if (!response.data) throw new Error("Web Search health is unavailable.");
+  return response.data;
+}
+
+export async function getWebSearchMetrics(): Promise<WebSearchMetrics> {
+  const response = await apiGet<WebSearchMetrics>("/api/web-search/metrics");
+  if (!response.data) throw new Error("Web Search metrics are unavailable.");
+  return response.data;
+}
+
+export async function recordWebSearchResultOpen(
+  sessionId: string,
+  resultId: string,
+): Promise<void> {
+  await apiPost(
+    `/api/web-search/${encodeURIComponent(sessionId)}/results/${encodeURIComponent(resultId)}/open`,
+    {},
+  );
+}
+
+export async function cancelWebSearch(sessionId: string): Promise<WebSearchSession> {
+  const response = await apiPost<WebSearchSession>(
+    `/api/web-search/${encodeURIComponent(sessionId)}/cancel`,
+    {},
+  );
+  if (!response.data) throw new Error("Web Search session could not be cancelled.");
+  return response.data;
+}
+
+export async function generateSearchReport(
+  query: string,
+  documentIds: string[],
+  maxResults?: number,
+): Promise<string> {
   const response = await apiPost<{ report: string }>("/api/search/report", {
     query,
     documentIds,
+    maxResults,
   });
   return response.data?.report ?? "";
 }
@@ -304,13 +532,25 @@ export async function recordSearchFeedback(input: {
   await apiPost("/api/search/feedback", input);
 }
 
-export async function getTagCloud(
-  category?: string,
-): Promise<Array<{ tag: string; category: string; count: number }>> {
+export async function getTagCloud(category?: string): Promise<
+  Array<{
+    tag: string;
+    canonicalTag?: string;
+    aliases?: string[];
+    category: string;
+    count: number;
+  }>
+> {
   const suffix = category ? `?category=${encodeURIComponent(category)}` : "";
-  const response = await apiGet<Array<{ tag: string; category: string; count: number }>>(
-    `/api/tags${suffix}`,
-  );
+  const response = await apiGet<
+    Array<{
+      tag: string;
+      canonicalTag?: string;
+      aliases?: string[];
+      category: string;
+      count: number;
+    }>
+  >(`/api/tags${suffix}`);
   return response.data ?? [];
 }
 
@@ -378,22 +618,14 @@ export async function getLlmConnections(): Promise<LlmConnectionsState> {
   return response.data;
 }
 
-export async function createLlmConnection(
-  payload: LlmConnectionPayload,
-): Promise<LlmConnection> {
+export async function createLlmConnection(payload: LlmConnectionPayload): Promise<LlmConnection> {
   const response = await apiPost<LlmConnection>("/api/llm/connections", payload);
   if (!response.data) throw new Error("LLM connection was not created");
   return response.data;
 }
 
-export async function updateLlmConnection(
-  id: string,
-  payload: LlmConnectionPayload,
-): Promise<LlmConnection> {
-  const response = await apiPut<LlmConnection>(
-    `/api/llm/connections/${encodeURIComponent(id)}`,
-    payload,
-  );
+export async function updateLlmConnection(id: string, payload: LlmConnectionPayload): Promise<LlmConnection> {
+  const response = await apiPut<LlmConnection>(`/api/llm/connections/${encodeURIComponent(id)}`, payload);
   if (!response.data) throw new Error("LLM connection was not updated");
   return response.data;
 }
@@ -423,13 +655,8 @@ export async function testLlmConnection(
   return response.data;
 }
 
-export async function discoverLlmConnectionModels(
-  connection: LlmConnectionPayload,
-): Promise<string[]> {
-  const response = await apiPost<{ models: string[] }>(
-    "/api/llm/connections/models",
-    { connection },
-  );
+export async function discoverLlmConnectionModels(connection: LlmConnectionPayload): Promise<string[]> {
+  const response = await apiPost<{ models: string[] }>("/api/llm/connections/models", { connection });
   return response.data?.models ?? [];
 }
 

@@ -6,10 +6,40 @@
 // Document model
 // ---------------------------------------------------------------------------
 
-export type DocumentSource = "arxiv" | "gpt_blog" | "claude_blog";
+export type DocumentSource = "arxiv" | "gpt_blog" | "claude_blog" | "web";
 export type DocumentType = "paper" | "blog" | "tutorial" | "review";
 export type DocumentLanguage = "zh" | "en";
 export type SummaryLevel = "short" | "detailed";
+
+export interface DocumentExternalIds {
+  doi?: string;
+  arxivId?: string;
+  openAlexId?: string;
+  pmid?: string;
+}
+
+export interface DocumentOrigin {
+  sourceType:
+    | "arxiv"
+    | "journal"
+    | "conference"
+    | "official_blog"
+    | "technical_article"
+    | "documentation"
+    | "repository"
+    | "other";
+  sourceName?: string;
+  publisher?: string;
+  venue?: string;
+  domain?: string;
+}
+
+export interface DocumentDiscovery {
+  discoveredVia: "collector" | "web_search" | "manual_import" | "mcp";
+  providerId?: string;
+  searchSessionId?: string;
+  webResultId?: string;
+}
 
 export interface Document {
   id: string; // hash(source + url)
@@ -22,6 +52,10 @@ export interface Document {
   fullText?: string;
   fullTextPath?: string; // local file path
   language: DocumentLanguage;
+  externalIds?: DocumentExternalIds;
+  canonicalUrl?: string;
+  origin?: DocumentOrigin;
+  discovery?: DocumentDiscovery;
 
   // tags
   domainTags: string[];
@@ -78,6 +112,8 @@ export interface ApiResponse<T> {
   success: boolean;
   data?: T;
   error?: string;
+  errorCode?: string;
+  details?: Record<string, unknown>;
   meta?: {
     page?: number;
     limit?: number;

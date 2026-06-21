@@ -12,11 +12,18 @@ import {
   searchCjkNgram,
   searchVectorAdaptive,
   matchesSearchFilters,
-  hasIndexedSearchTag,
   type RecallOptions,
 } from "@/db/search";
-import { analyzeSearchQuery, type SearchQueryAnalysis } from "@/search-query";
+import { getConceptMatchEvidence, type SearchQueryAnalysis } from "@/search-query";
 import { reciprocalRankFusion } from "@/search-fusion";
+import { buildSearchQueryPlan } from "@/search-planner";
+import {
+  type SearchFallbackPolicy,
+  type SearchMatchExplanation,
+  type SearchQueryPlan,
+} from "@/search-contract";
+import { collectDocumentCanonicalTags } from "@/canonical-tags";
+import { rerankSearchCandidates, type SearchRerankerMetadata } from "@/search-reranker";
 import type { Document } from "@/types";
 
 // ---------------------------------------------------------------------------
@@ -32,6 +39,13 @@ export interface SearchOptions {
   sources?: string[];
   tags?: string[];
   tagMatchMode?: "any" | "all";
+  allTags?: string[];
+  anyTags?: string[];
+  excludeTags?: string[];
+  mustConcepts?: string[];
+  shouldConcepts?: string[];
+  excludeConcepts?: string[];
+  fallbackPolicy?: SearchFallbackPolicy;
   dateRange?: { start: string; end: string };
 }
 
@@ -39,6 +53,7 @@ export interface SearchResultV2 {
   document: Document;
   score: number;
   matchReason: string;
+  explanation: SearchMatchExplanation;
   snippet?: string;
 }
 
@@ -59,6 +74,8 @@ export interface SearchResponseV2 {
   };
   appliedTags?: string[];
   topicTerms?: string[];
+  queryPlan: SearchQueryPlan;
+  reranker: SearchRerankerMetadata;
 }
 
 // ---------------------------------------------------------------------------
@@ -67,39 +84,36 @@ export interface SearchResponseV2 {
 
 export async function hybridSearchV2(options: SearchOptions): Promise<SearchResponseV2> {
   const originalQuery = options.query.trim();
-  if (!originalQuery) {
-    return { results: [], returned: 0, candidateTotal: 0, hasMore: false, modeUsed: "keyword" };
-  }
-
   const limit = Math.min(options.limit ?? 12, 100);
   const cursorOffset = options.cursor ? decodeCursor(options.cursor, originalQuery) : undefined;
   const offset = Math.max(cursorOffset ?? options.offset ?? 0, 0);
   const mode = options.mode ?? "hybrid";
-  const { appliedTags, topicTerms } = resolveTagInputs(options.tags);
-  const query = appendTopicTerms(originalQuery, topicTerms);
-
-  // 1. Query analysis
-  const analysis = analyzeSearchQuery(query);
+  const { queryPlan, recallAnalysis: analysis, mustAnalysis } = buildSearchQueryPlan(options);
+  const query = originalQuery;
 
   // 2. Build recall options
   const recallOptions: RecallOptions = {
     limit: Math.min(limit * 4, 300),
-    sources: options.sources,
-    tags: appliedTags,
-    tagMatchMode: options.tagMatchMode,
-    dateRange: options.dateRange,
+    sources: queryPlan.filters.sources,
+    allTags: queryPlan.filters.allTags,
+    anyTags: queryPlan.filters.anyTags,
+    excludeTags: queryPlan.filters.excludeTags,
+    dateRange: queryPlan.filters.dateRange,
   };
 
   // 3. Multi-path recall (parallel where possible)
   const rankedLists = new Map<string, Awaited<ReturnType<typeof searchFts5Strict>>>();
 
   if (mode !== "semantic") {
-    rankedLists.set("exact", searchFts5Exact(analysis.exactTitleQuery, { ...recallOptions, limit: 50 }));
+    rankedLists.set("exact", searchFts5Exact(mustAnalysis.exactTitleQuery, { ...recallOptions, limit: 50 }));
   }
 
   // Path 2: Strict FTS (keyword + hybrid mode)
   if (mode !== "semantic") {
-    rankedLists.set("strict", searchFts5Strict(analysis.strictFtsQuery, { ...recallOptions, limit: 100 }));
+    rankedLists.set(
+      "strict",
+      searchFts5Strict(mustAnalysis.strictFtsQuery, { ...recallOptions, limit: 100 }),
+    );
   }
 
   // Path 3: Broad FTS (keyword + hybrid mode, using wide query)
@@ -148,20 +162,39 @@ export async function hybridSearchV2(options: SearchOptions): Promise<SearchResp
       }
     }
   }
-  const fused = reciprocalRankFusion(rankedLists, analysis).filter((candidate) =>
-    matchesSearchFilters(candidate.document, recallOptions),
+  const constrainedCandidates = reciprocalRankFusion(rankedLists, analysis).filter(
+    (candidate) =>
+      matchesSearchFilters(candidate.document, recallOptions) &&
+      passesConceptConstraints(candidate.document, queryPlan),
   );
+  const reranked = await rerankSearchCandidates(constrainedCandidates, queryPlan);
+  const constrained = reranked.candidates.map(({ candidate, rerankerScore }) => ({
+    candidate,
+    rerankerScore,
+    tier: resolveTier(candidate.paths),
+  }));
+  const supported = constrained.filter((entry) => entry.tier !== "relaxed");
+  const relaxed = constrained.filter((entry) => entry.tier === "relaxed");
+  const targetCount = offset + limit;
+  const fused =
+    queryPlan.fallbackPolicy === "allow_relaxed" && supported.length < targetCount
+      ? [...supported, ...relaxed]
+      : supported;
 
   // 5. Pagination (cursor-style stable page)
   const page = fused.slice(offset, offset + limit);
 
   // 6. Build response
-  const results: SearchResultV2[] = page.map((f) => ({
-    document: f.document,
-    score: f.finalScore,
-    matchReason: f.matchReason,
-    snippet: snippets.get(f.document.id) ?? buildSnippetV2(f.document, analysis),
-  }));
+  const results: SearchResultV2[] = page.map(({ candidate, tier, rerankerScore }) => {
+    const explanation = buildExplanation(candidate, tier, queryPlan, rerankerScore);
+    return {
+      document: candidate.document,
+      score: rerankerScore ?? candidate.finalScore,
+      matchReason: candidate.matchReason,
+      explanation,
+      snippet: snippets.get(candidate.document.id) ?? buildSnippetV2(candidate.document, analysis),
+    };
+  });
 
   const candidateTotal = fused.length;
   const hasMore = offset + limit < candidateTotal;
@@ -181,35 +214,11 @@ export async function hybridSearchV2(options: SearchOptions): Promise<SearchResp
       concepts: analysis.concepts.map((c) => c.canonical),
       pattern: analysis.pattern,
     },
-    appliedTags,
-    topicTerms,
+    appliedTags: [...queryPlan.filters.allTags, ...queryPlan.filters.anyTags],
+    topicTerms: [],
+    queryPlan,
+    reranker: reranked.metadata,
   };
-}
-
-function resolveTagInputs(tags?: string[]): {
-  appliedTags: string[];
-  topicTerms: string[];
-} {
-  const appliedTags: string[] = [];
-  const topicTerms: string[] = [];
-
-  for (const rawTag of tags ?? []) {
-    const tag = rawTag.trim();
-    if (!tag) continue;
-    if (hasIndexedSearchTag(tag)) {
-      appliedTags.push(tag);
-    } else {
-      topicTerms.push(tag);
-    }
-  }
-
-  return { appliedTags, topicTerms };
-}
-
-function appendTopicTerms(query: string, topicTerms: string[]): string {
-  const normalizedQuery = query.toLocaleLowerCase();
-  const additions = topicTerms.filter((term) => !normalizedQuery.includes(term.toLocaleLowerCase()));
-  return additions.length > 0 ? `${query} ${additions.join(" ")}` : query;
 }
 
 function encodeCursor(query: string, offset: number): string {
@@ -243,6 +252,64 @@ export async function relaxedSearch(
   options: SearchOptions & { maxRelaxations?: number },
 ): Promise<SearchResponseV2> {
   return hybridSearchV2(options);
+}
+
+function requiredConceptMatches(conceptCount: number): number {
+  if (conceptCount <= 1) return conceptCount;
+  if (conceptCount === 2) return 2;
+  return Math.ceil(conceptCount * 0.75);
+}
+
+function passesConceptConstraints(document: Document, queryPlan: SearchQueryPlan): boolean {
+  const mustEvidence = getConceptMatchEvidence(document, queryPlan.concepts.must);
+  if (mustEvidence.matchedConcepts.length < requiredConceptMatches(queryPlan.concepts.must.length)) {
+    return false;
+  }
+  const excluded = getConceptMatchEvidence(document, queryPlan.concepts.exclude);
+  return excluded.matchedConcepts.length === 0;
+}
+
+function resolveTier(paths: string[]): SearchMatchExplanation["tier"] {
+  if (paths.includes("exact") || paths.includes("strict")) return "strict";
+  if (paths.includes("vector") || paths.includes("cjk")) return "semantic";
+  return "relaxed";
+}
+
+function buildExplanation(
+  candidate: ReturnType<typeof reciprocalRankFusion>[number],
+  tier: SearchMatchExplanation["tier"],
+  queryPlan: SearchQueryPlan,
+  rerankerScore?: number,
+): SearchMatchExplanation {
+  const mustEvidence = getConceptMatchEvidence(candidate.document, queryPlan.concepts.must);
+  const shouldEvidence = getConceptMatchEvidence(candidate.document, queryPlan.concepts.should);
+  const documentTags = new Set(
+    collectDocumentCanonicalTags(candidate.document).map((entry) => entry.canonicalTag),
+  );
+  const requestedTags = [...queryPlan.filters.allTags, ...queryPlan.filters.anyTags];
+
+  return {
+    tier,
+    matchedTags: requestedTags.filter((tag) => documentTags.has(tag)),
+    matchedMustConcepts: mustEvidence.matchedConcepts,
+    missingShouldConcepts: queryPlan.concepts.should
+      .map((concept) => concept.canonical)
+      .filter((concept) => !shouldEvidence.matchedConcepts.includes(concept)),
+    matchedFields: mustEvidence.matchedFields,
+    recallPaths: candidate.paths,
+    scoreBreakdown: {
+      fusion: candidate.rrfScore,
+      lexical: candidate.lexical.score,
+      semantic: candidate.semanticScore,
+      jointCoverage:
+        candidate.joint.titleJointMatch ||
+        candidate.joint.abstractJointMatch ||
+        candidate.joint.sameSentenceCooccurrence > 0
+          ? 1
+          : candidate.joint.conceptCoverage,
+      reranker: rerankerScore,
+    },
+  };
 }
 
 // ---------------------------------------------------------------------------

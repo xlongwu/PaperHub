@@ -6,6 +6,7 @@
  */
 
 import { getDb } from "./index";
+import { getSecretStore } from "@/security/secret-store";
 
 export type EmbeddingProviderSetting = "openai" | "ollama";
 
@@ -33,7 +34,7 @@ export interface EmbeddingSettingsUpdate {
 export function getStoredEmbeddingSettings(): StoredEmbeddingSettings | null {
   const row = getDb()
     .prepare(
-      `SELECT provider, model, base_url, api_key
+      `SELECT provider, model, base_url, api_key, secret_ref
        FROM embedding_provider_settings
        ORDER BY updated_at DESC
        LIMIT 1`,
@@ -44,6 +45,7 @@ export function getStoredEmbeddingSettings(): StoredEmbeddingSettings | null {
         model: string | null;
         base_url: string | null;
         api_key: string | null;
+        secret_ref: string | null;
       }
     | undefined;
 
@@ -55,7 +57,9 @@ export function getStoredEmbeddingSettings(): StoredEmbeddingSettings | null {
     provider: row.provider as EmbeddingProviderSetting,
     model: row.model,
     baseUrl: row.base_url,
-    apiKey: row.api_key,
+    apiKey:
+      (row.secret_ref ? getSecretStore().get(row.secret_ref) : undefined) ??
+      row.api_key,
   };
 }
 
@@ -73,6 +77,8 @@ export function saveStoredEmbeddingSettings(
   const baseUrl =
     update.baseUrl === undefined ? (existing?.baseUrl ?? null) : normalize(update.baseUrl);
 
+  const secretStore = getSecretStore();
+  const secretReference = `embedding-provider:${update.provider}`;
   let apiKey: string | null;
   if (update.clearApiKey) {
     apiKey = null;
@@ -81,20 +87,33 @@ export function saveStoredEmbeddingSettings(
   } else {
     apiKey = normalize(update.apiKey);
   }
+  if (update.clearApiKey || apiKey === null) {
+    secretStore.delete(secretReference);
+  } else if (update.apiKey !== undefined) {
+    secretStore.set(secretReference, apiKey);
+  }
+  const storedApiKey = secretStore.get(secretReference) ?? null;
 
   getDb()
     .prepare(
-      `INSERT INTO embedding_provider_settings(provider, model, base_url, api_key, updated_at)
-       VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+      `INSERT INTO embedding_provider_settings(
+         provider, model, base_url, api_key, secret_ref, updated_at
+       ) VALUES (?, ?, ?, NULL, ?, CURRENT_TIMESTAMP)
        ON CONFLICT(provider) DO UPDATE SET
          model = excluded.model,
          base_url = excluded.base_url,
-         api_key = excluded.api_key,
+         api_key = NULL,
+         secret_ref = excluded.secret_ref,
          updated_at = CURRENT_TIMESTAMP`,
     )
-    .run(update.provider, model, baseUrl, apiKey);
+    .run(
+      update.provider,
+      model,
+      baseUrl,
+      storedApiKey ? secretReference : null,
+    );
 
-  return { provider: update.provider, model, baseUrl, apiKey };
+  return { provider: update.provider, model, baseUrl, apiKey: storedApiKey };
 }
 
 function normalize(value: string | null | undefined): string | null {

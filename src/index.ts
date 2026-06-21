@@ -14,6 +14,8 @@ import { startIndexer, stopIndexer } from "@/search-indexer";
 import { getEmbeddingConfiguration } from "@/embedding";
 import fs from "node:fs";
 import path from "node:path";
+import { formatRedactedLogArguments, redactLogValue } from "@/security/redaction";
+import { configureGlobalProxy } from "@/network-proxy";
 
 // ---------------------------------------------------------------------------
 // Logging setup
@@ -25,10 +27,12 @@ function setupLogging(): void {
 
   const originalLog = console.log;
   const originalError = console.error;
+  const originalWarn = console.warn;
 
   console.log = (...args: unknown[]) => {
-    const line = `[${new Date().toISOString()}] ${args.join(" ")}\n`;
-    originalLog(...args);
+    const redacted = args.map(redactLogValue);
+    const line = `[${new Date().toISOString()}] ${formatRedactedLogArguments(args)}\n`;
+    originalLog(...redacted);
     try {
       fs.appendFileSync(file, line, "utf-8");
     } catch {
@@ -37,8 +41,20 @@ function setupLogging(): void {
   };
 
   console.error = (...args: unknown[]) => {
-    const line = `[${new Date().toISOString()}] ERROR: ${args.join(" ")}\n`;
-    originalError(...args);
+    const redacted = args.map(redactLogValue);
+    const line = `[${new Date().toISOString()}] ERROR: ${formatRedactedLogArguments(args)}\n`;
+    originalError(...redacted);
+    try {
+      fs.appendFileSync(file, line, "utf-8");
+    } catch {
+      // Logging must never break the desktop app startup path.
+    }
+  };
+
+  console.warn = (...args: unknown[]) => {
+    const redacted = args.map(redactLogValue);
+    const line = `[${new Date().toISOString()}] WARN: ${formatRedactedLogArguments(args)}\n`;
+    originalWarn(...redacted);
     try {
       fs.appendFileSync(file, line, "utf-8");
     } catch {
@@ -139,6 +155,10 @@ async function main(): Promise<void> {
   console.log("[app] PaperHub starting...");
 
   setupLogging();
+
+  if (configureGlobalProxy()) {
+    console.log("[app] System proxy configured for outbound requests.");
+  }
 
   // Log exit code for post-mortem debugging
   process.on("exit", (code) => {

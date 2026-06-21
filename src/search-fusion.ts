@@ -2,8 +2,9 @@
  * Reciprocal Rank Fusion and deterministic feature re-ranking.
  */
 
-import { scoreDocumentAgainstQuery } from "@/search-query";
+import { scoreDocumentAgainstQuery, textContainsConcept } from "@/search-query";
 import type { SearchQueryAnalysis, LexicalRelevance } from "@/search-query";
+import type { JointRelevanceFeatures } from "@/search-contract";
 import type { Document } from "@/types";
 
 export interface RankedCandidate {
@@ -19,6 +20,8 @@ export interface FusionResult {
   featureScore: number;
   finalScore: number;
   lexical: LexicalRelevance;
+  joint: JointRelevanceFeatures;
+  semanticScore: number;
   paths: string[];
   matchReason: string;
 }
@@ -73,12 +76,20 @@ export function reciprocalRankFusion(
     );
     const rrfScore = rawRrf / maxRrf;
     const lexical = scoreDocumentAgainstQuery(entry.doc, queryAnalysis);
+    const joint = computeJointRelevanceFeatures(
+      entry.doc,
+      queryAnalysis,
+      lexical,
+      entry.paths,
+      entry.semanticScore,
+    );
     const featureScore = computeFeatureScore(
       entry.doc,
       queryAnalysis,
       lexical,
       entry.paths,
       entry.semanticScore,
+      joint,
     );
 
     const result = {
@@ -87,13 +98,13 @@ export function reciprocalRankFusion(
       featureScore,
       finalScore: rrfScore * 0.65 + featureScore * 0.35,
       lexical,
+      joint,
+      semanticScore: entry.semanticScore,
       paths: entry.paths,
       matchReason: buildMatchReason(entry.paths, lexical),
     };
 
-    if (passesRecallQualityFloor(result, queryAnalysis)) {
-      fused.push(result);
-    }
+    fused.push(result);
   }
 
   return fused.sort(
@@ -102,18 +113,6 @@ export function reciprocalRankFusion(
       b.document.publishedAt.localeCompare(a.document.publishedAt) ||
       a.document.id.localeCompare(b.document.id),
   );
-}
-
-function passesRecallQualityFloor(result: FusionResult, analysis: SearchQueryAnalysis): boolean {
-  const conceptCount = analysis.concepts.length;
-  if (conceptCount <= 1) return true;
-
-  if (result.paths.includes("vector") || result.paths.includes("exact") || result.paths.includes("strict")) {
-    return true;
-  }
-
-  const requiredMatches = conceptCount === 2 ? 2 : Math.ceil(conceptCount * 0.66);
-  return result.lexical.matchedConcepts >= requiredMatches;
 }
 
 function pathWeight(pathName: string, analysis: SearchQueryAnalysis): number {
@@ -141,6 +140,7 @@ function computeFeatureScore(
   lexical: LexicalRelevance,
   paths: string[],
   semanticScore: number,
+  joint: JointRelevanceFeatures,
 ): number {
   const conceptCount = analysis.concepts.length;
   if (conceptCount === 0) return semanticScore * 0.12;
@@ -175,6 +175,11 @@ function computeFeatureScore(
 
   if (paths.includes("vector") && paths.some((path) => path !== "vector")) score += 0.06;
   score += 0.12 * Math.max(0, Math.min(1, semanticScore));
+  if (joint.titleJointMatch) score += 0.12;
+  else if (joint.abstractJointMatch) score += 0.08;
+  score += joint.sameSentenceCooccurrence * 0.08;
+  score += joint.sameParagraphCooccurrence * 0.04;
+  if (joint.vectorLexicalAgreement) score += 0.06;
 
   const summaryText = normalize([document.summaryZh, document.summaryEn].filter(Boolean).join(" "));
   if (
@@ -186,6 +191,36 @@ function computeFeatureScore(
   }
 
   return Math.min(1, score);
+}
+
+export function computeJointRelevanceFeatures(
+  document: Document,
+  analysis: SearchQueryAnalysis,
+  lexical: LexicalRelevance = scoreDocumentAgainstQuery(document, analysis),
+  paths: string[] = [],
+  semanticScore = 0,
+): JointRelevanceFeatures {
+  const concepts = analysis.concepts;
+  const allMatch = (text: string): boolean =>
+    concepts.length > 0 && concepts.every((concept) => textContainsConcept(text, concept));
+  const summaries = [document.summaryZh, document.summaryEn].filter(Boolean).join("\n");
+  const paragraphs = [document.abstract, summaries, document.fullText ?? ""]
+    .flatMap((value) => value.split(/\n{2,}/u))
+    .filter(Boolean);
+  const sentences = paragraphs
+    .flatMap((paragraph) => paragraph.split(/(?<=[.!?。！？])\s*/u))
+    .filter(Boolean);
+
+  return {
+    conceptCoverage: lexical.coverage,
+    titleJointMatch: allMatch(document.title),
+    abstractJointMatch: allMatch(document.abstract),
+    sameSentenceCooccurrence: sentences.some(allMatch) ? 1 : 0,
+    sameParagraphCooccurrence: paragraphs.some(allMatch) ? 1 : 0,
+    allTagMatch: allMatch([...document.domainTags, ...document.modelTags].join(" ")),
+    strictPathHit: paths.includes("exact") || paths.includes("strict"),
+    vectorLexicalAgreement: paths.includes("vector") && lexical.coverage > 0 && semanticScore > 0,
+  };
 }
 
 function buildMatchReason(paths: string[], lexical: LexicalRelevance): string {

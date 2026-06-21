@@ -4,13 +4,12 @@
 
 import { describe, it, expect, beforeEach, afterAll } from "vitest";
 import { initDatabase, closeDb, setDbPath, clearDbPath } from "@/db/index";
-import { insertDocument } from "@/db/documents";
+import { deleteDocument, insertDocument, updateDocument } from "@/db/documents";
 import {
   getTagCloud,
   getDocumentsByTag,
   countDocumentsByTag,
   refreshTagStats,
-  updateTagStatsForDocument,
 } from "@/db/tags";
 import type { Document } from "@/types";
 import { safeUnlink, testPath } from "./test-utils";
@@ -110,6 +109,27 @@ describe("getDocumentsByTag", () => {
     expect(docs[0]!.id).toBe("d3");
   });
 
+  it("derives method tags from document content", () => {
+    insertDocument(
+      makeDoc({
+        id: "synthetic-method",
+        title: "Synthetic Data Generation for Language Models",
+        abstract: "We study data synthesis for instruction tuning.",
+      }),
+    );
+
+    const docs = getDocumentsByTag("synthetic-data");
+    expect(docs.map((document) => document.id)).toEqual(["synthetic-method"]);
+    expect(getTagCloud({ category: "method" })).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          canonicalTag: "synthetic-data",
+          count: 1,
+        }),
+      ]),
+    );
+  });
+
   it("finds by source tag", () => {
     insertDocument(makeDoc({ id: "d4", source: "gpt_blog" }));
 
@@ -136,15 +156,19 @@ describe("countDocumentsByTag", () => {
   });
 });
 
-describe("updateTagStatsForDocument", () => {
-  it("increments tag counts", () => {
+describe("automatic canonical tag stats synchronization", () => {
+  it("tracks inserts, tag updates, and deletes", () => {
     const doc = makeDoc({ domainTags: ["TestTag"] });
     insertDocument(doc);
-    updateTagStatsForDocument(doc);
 
-    const cloud = getTagCloud();
-    const tag = cloud.find((t) => t.tag === "TestTag");
-    expect(tag?.count).toBe(1);
+    expect(getTagCloud().find((entry) => entry.tag === "TestTag")?.count).toBe(1);
+
+    updateDocument(doc.id, { domainTags: ["ReplacementTag"] });
+    expect(getTagCloud().some((entry) => entry.tag === "TestTag")).toBe(false);
+    expect(getTagCloud().find((entry) => entry.tag === "ReplacementTag")?.count).toBe(1);
+
+    deleteDocument(doc.id);
+    expect(getTagCloud().some((entry) => entry.tag === "ReplacementTag")).toBe(false);
   });
 
   it("keeps same tag text separate across categories", () => {
@@ -156,10 +180,9 @@ describe("updateTagStatsForDocument", () => {
     });
 
     insertDocument(doc);
-    updateTagStatsForDocument(doc);
 
     const cloud = getTagCloud();
-    const paperEntries = cloud.filter((entry) => entry.tag === "paper");
+    const paperEntries = cloud.filter((entry) => entry.tag === "Paper");
 
     expect(paperEntries.map((entry) => entry.category).sort()).toEqual(["domain", "model", "source", "type"]);
   });

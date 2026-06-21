@@ -31,6 +31,32 @@ export function buildDocumentEmbeddingTextForRuntime(document: Document, runtime
   return buildDocumentEmbeddingText(document, runtime.maxInputChars);
 }
 
+export function buildTitleAbstractEmbeddingText(
+  document: Document,
+  maxInputChars = resolveMaxInputChars(),
+): string {
+  return [
+    document.title ? `Title: ${document.title.trim()}` : "",
+    document.abstract ? `Abstract: ${document.abstract.trim()}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n")
+    .slice(0, maxInputChars);
+}
+
+export function buildTagEmbeddingText(document: Document, maxInputChars = resolveMaxInputChars()): string {
+  return [
+    ...document.domainTags,
+    ...document.modelTags,
+    document.sourceTag,
+    document.typeTag,
+    String(document.yearTag),
+  ]
+    .filter(Boolean)
+    .join(", ")
+    .slice(0, maxInputChars);
+}
+
 function appendWithinLimit(current: string, value: string, limit: number): string {
   const separator = current ? "\n" : "";
   const remaining = limit - current.length - separator.length;

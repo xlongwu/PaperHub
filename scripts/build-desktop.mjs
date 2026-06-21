@@ -6,7 +6,9 @@ import { fileURLToPath } from "node:url";
 import { runNode, runPnpm, withPnpmOnPath } from "./pnpm-runner.mjs";
 
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const outputDir = path.resolve(rootDir, "dist-desktop");
+const buildConfig = readPackageJson().build;
+const outputDirRel = buildConfig?.directories?.output ?? "dist-desktop";
+const outputDir = path.resolve(rootDir, outputDirRel);
 const isWindows = process.platform === "win32";
 const args = process.argv.slice(2);
 const targetArgs = args.includes("--dir")
@@ -90,7 +92,12 @@ function cleanOutputDirectory() {
     throw new Error(`Refusing to clean output directory outside the project: ${outputDir}`);
   }
 
-  fs.rmSync(outputDir, { recursive: true, force: true });
+  try {
+    fs.rmSync(outputDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 500 });
+  } catch (err) {
+    console.warn(`[desktop-build] Could not clean ${outputDir}: ${err.message}`);
+    console.warn(`[desktop-build] Continuing anyway — electron-builder will overwrite stale files.`);
+  }
 }
 
 async function ensureHostBetterSqlite() {
@@ -223,13 +230,26 @@ function verifyPackagedUi() {
   const bundle = readPackagedFile(bundlePath).toString("utf-8");
   if (
     !bundle.includes("/api/llm/connections") ||
+    !bundle.includes("/api/web-search/health") ||
+    !bundle.includes("/api/web-search/metrics") ||
     !bundle.includes("LLM 连接管理") ||
     !bundle.includes("保存并启用")
   ) {
-    throw new Error("Packaged UI does not contain the multi-provider LLM connection manager.");
+    throw new Error("Packaged UI does not contain the required W7 management surfaces.");
   }
 
-  console.log(`[desktop-build] Verified packaged LLM connection manager: ${bundlePath}`);
+  const requiredFiles = [
+    "src/mcp/server.ts",
+    "src/security/secret-store.ts",
+    "skills/web-literature-search/SKILL.md",
+    "skills/web-research-synthesis/SKILL.md",
+    "skills/save-to-library/SKILL.md",
+  ];
+  for (const requiredFile of requiredFiles) {
+    readPackagedFile(requiredFile);
+  }
+
+  console.log(`[desktop-build] Verified packaged W7 UI and resources: ${bundlePath}`);
 }
 
 function copyQuickTestLauncher() {

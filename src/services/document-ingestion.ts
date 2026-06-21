@@ -6,7 +6,7 @@
  *   - dedup checks happen
  *   - tags are applied
  *   - documents are inserted into the database
- *   - tag stats are updated
+ *   - canonical tag indexes and stats are updated
  *   - vector indexing is scheduled
  *
  * No caller should directly compose insertDocument + updateTagStats — they
@@ -14,8 +14,12 @@
  */
 
 import { rawToDocument } from "@/collectors/transformer";
-import { insertDocument, documentExists } from "@/db/documents";
-import { updateTagStatsForDocument } from "@/db/tags";
+import {
+  findDocumentByCanonicalUrl,
+  findDocumentByExternalIds,
+  getDocumentByUrl,
+  insertDocument,
+} from "@/db/documents";
 import { applyDocumentTags } from "@/tagger/apply";
 import { findDuplicateByTitle } from "@/utils/dedup";
 import type { RawDocument } from "@/types";
@@ -58,10 +62,15 @@ export async function ingestDocuments(rawDocs: RawDocument[]): Promise<Ingestion
     const doc = rawToDocument(raw);
 
     // Dedup: URL exact match or title fuzzy match
-    if (documentExists(doc.url) || findDuplicateByTitle(doc.title)) {
+    const duplicate =
+      (doc.externalIds ? findDocumentByExternalIds(doc.externalIds) : null) ??
+      (doc.canonicalUrl ? findDocumentByCanonicalUrl(doc.canonicalUrl) : null) ??
+      getDocumentByUrl(doc.url) ??
+      findDuplicateByTitle(doc.title);
+    if (duplicate) {
       result.skipped++;
       result.details.push({
-        documentId: doc.id,
+        documentId: duplicate.id,
         title: doc.title,
         status: "duplicate",
       });
@@ -74,9 +83,6 @@ export async function ingestDocuments(rawDocs: RawDocument[]): Promise<Ingestion
 
       // Insert into documents table (FTS triggers auto-sync FTS index)
       insertDocument(doc);
-
-      // Update global tag statistics
-      updateTagStatsForDocument(doc);
 
       // Schedule vector indexing (non-blocking)
       vectorQueue.push(doc.id);

@@ -25,12 +25,9 @@ import {
   countHistory,
   countFavorites,
 } from "@/db/user";
-import {
-  getConfiguredSummaryLevel,
-  summarizeBatch,
-  summarizeDocument,
-} from "@/summarizer";
+import { getConfiguredSummaryLevel, summarizeBatch, summarizeDocument } from "@/summarizer";
 import { hybridSearch, generateSearchReport } from "@/search";
+import { SearchContractError, type SearchFallbackPolicy } from "@/search-contract";
 import {
   LLM_PROVIDER_CATALOG,
   createLlmConnectionInputFromPreset,
@@ -59,7 +56,12 @@ import {
 } from "@/db/llm-connections";
 import { getIndexStateStats } from "@/db/search";
 import { getIndexerState, processPending, startIndexer } from "@/search-indexer";
-import { getEmbeddingConfiguration, getEmbeddingConfigurationSource, probeEmbeddingConfiguration, resetEmbeddingRuntime } from "@/embedding";
+import {
+  getEmbeddingConfiguration,
+  getEmbeddingConfigurationSource,
+  probeEmbeddingConfiguration,
+  resetEmbeddingRuntime,
+} from "@/embedding";
 import {
   getStoredEmbeddingSettings,
   saveStoredEmbeddingSettings,
@@ -82,7 +84,12 @@ import {
   refreshHotRecommendations,
 } from "@/recommendation";
 import type { MemoryTerm, RecommendationEntry } from "@/types";
-import { corsMiddleware, createRateLimiter } from "./security";
+import {
+  corsMiddleware,
+  createRateLimiter,
+  securityHeadersMiddleware,
+} from "./security";
+import { startWebSearchCleanup, webSearchRouter } from "./routes/web-search";
 
 // ---------------------------------------------------------------------------
 // Setup
@@ -93,7 +100,9 @@ const app = express();
 
 // --- Security middleware ---
 app.use(corsMiddleware); // CORS: localhost only
+app.use(securityHeadersMiddleware);
 app.use(express.json({ limit: "1mb" })); // Request body size cap
+app.use("/api/web-search", webSearchRouter);
 
 // Rate limiters: different limits per endpoint sensitivity
 const writeLimiter = createRateLimiter({ windowMs: 60_000, max: 20 });
@@ -192,11 +201,7 @@ export function parseLlmConnectionRequest(body: unknown): LlmConnectionInput {
     return parseLlmConnectionInput(body);
   }
   const input = body as Record<string, unknown>;
-  if (
-    input.protocol === undefined &&
-    typeof input.presetId === "string" &&
-    input.presetId.trim()
-  ) {
+  if (input.protocol === undefined && typeof input.presetId === "string" && input.presetId.trim()) {
     const preset = createLlmConnectionInputFromPreset(
       input.presetId.trim(),
       typeof input.name === "string" ? input.name : undefined,
@@ -244,8 +249,14 @@ function ok<T>(res: Response, data: T, meta?: ApiResponse<T>["meta"]): void {
   res.json(payload);
 }
 
-function err(res: Response, status: number, message: string): void {
-  const payload: ApiResponse<never> = { success: false, error: message };
+function err(
+  res: Response,
+  status: number,
+  message: string,
+  errorCode?: string,
+  details?: Record<string, unknown>,
+): void {
+  const payload: ApiResponse<never> = { success: false, error: message, errorCode, details };
   res.status(status).json(payload);
 }
 
@@ -286,6 +297,13 @@ export async function searchResponse(options: {
   sources?: string[];
   tags?: string[];
   tagMatchMode?: "any" | "all";
+  allTags?: string[];
+  anyTags?: string[];
+  excludeTags?: string[];
+  mustConcepts?: string[];
+  shouldConcepts?: string[];
+  excludeConcepts?: string[];
+  fallbackPolicy?: SearchFallbackPolicy;
   from?: string;
   to?: string;
 }): Promise<Awaited<ReturnType<typeof hybridSearch>>> {
@@ -298,7 +316,17 @@ export async function searchResponse(options: {
     sources: options.sources,
     tags: options.tags,
     tagMatchMode: options.tagMatchMode,
-    dateRange: options.from && options.to ? { start: options.from, end: options.to } : undefined,
+    allTags: options.allTags,
+    anyTags: options.anyTags,
+    excludeTags: options.excludeTags,
+    mustConcepts: options.mustConcepts,
+    shouldConcepts: options.shouldConcepts,
+    excludeConcepts: options.excludeConcepts,
+    fallbackPolicy: options.fallbackPolicy,
+    dateRange:
+      options.from || options.to
+        ? { start: options.from ?? "", end: options.to ?? "" }
+        : undefined,
   });
 }
 
@@ -538,8 +566,7 @@ app.get("/api/llm/connections", (_req, res) => {
       runtimeConnectionId: runtime.connection.id,
       runtimeSource: runtime.source,
       environmentOverride:
-        runtime.source === "environment_connection" ||
-        runtime.source === "environment_provider",
+        runtime.source === "environment_connection" || runtime.source === "environment_provider",
     });
   } catch (e) {
     logError("api/llm/connections", e);
@@ -603,7 +630,7 @@ app.post("/api/llm/connections/test", llmLimiter, async (req, res) => {
     const connection = resolveConnectionRequest(req.body);
     connectionId = connection.id === "draft" ? undefined : connection.id;
     apiKey = connection.apiKey;
-      const text = await probeLlmConnection(connection);
+    const text = await probeLlmConnection(connection);
     if (connectionId) {
       updateLlmConnectionTest(connectionId, "success", "Connection successful");
     }
@@ -613,10 +640,7 @@ app.post("/api/llm/connections/test", llmLimiter, async (req, res) => {
       responsePreview: text.slice(0, 160),
     });
   } catch (e) {
-    const message = redactSecrets(
-      e instanceof Error ? e.message : "LLM connection test failed",
-      apiKey,
-    );
+    const message = redactSecrets(e instanceof Error ? e.message : "LLM connection test failed", apiKey);
     if (connectionId) {
       updateLlmConnectionTest(connectionId, "failed", message);
     }
@@ -632,14 +656,7 @@ app.post("/api/llm/connections/models", llmLimiter, async (req, res) => {
     const models = await discoverLlmModels(connection);
     ok(res, { models });
   } catch (e) {
-    err(
-      res,
-      503,
-      redactSecrets(
-        e instanceof Error ? e.message : "Failed to discover models",
-        apiKey,
-      ),
-    );
+    err(res, 503, redactSecrets(e instanceof Error ? e.message : "Failed to discover models", apiKey));
   }
 });
 
@@ -853,7 +870,7 @@ app.post("/api/summarize", llmLimiter, async (req, res) => {
 // Search
 // ---------------------------------------------------------------------------
 
-app.get("/api/search", searchLimiter, async (req, res) => {
+const localSearchHandler = async (req: Request, res: Response): Promise<void> => {
   try {
     const q = req.query.q as string;
     if (!q || q.trim().length === 0) {
@@ -869,7 +886,9 @@ app.get("/api/search", searchLimiter, async (req, res) => {
     }
     const mode = modeRaw as "keyword" | "semantic" | "hybrid";
 
-    const tagMatchMode = String(req.query.tagMatch ?? "any").toLowerCase() === "all" ? "all" : "any";
+    const tagMatchMode = String(req.query.tagMatch ?? "all").toLowerCase() === "any" ? "any" : "all";
+    const fallbackPolicy =
+      String(req.query.fallback ?? "strict").toLowerCase() === "allow_relaxed" ? "allow_relaxed" : "strict";
     const startedAt = Date.now();
     const result = await searchResponse({
       query: q,
@@ -880,6 +899,13 @@ app.get("/api/search", searchLimiter, async (req, res) => {
       sources: req.query.sources ? String(req.query.sources).split(",") : undefined,
       tags: req.query.tags ? String(req.query.tags).split(",") : undefined,
       tagMatchMode,
+      allTags: req.query.allTags ? String(req.query.allTags).split(",") : undefined,
+      anyTags: req.query.anyTags ? String(req.query.anyTags).split(",") : undefined,
+      excludeTags: req.query.excludeTags ? String(req.query.excludeTags).split(",") : undefined,
+      mustConcepts: req.query.mustConcepts ? String(req.query.mustConcepts).split(",") : undefined,
+      shouldConcepts: req.query.shouldConcepts ? String(req.query.shouldConcepts).split(",") : undefined,
+      excludeConcepts: req.query.excludeConcepts ? String(req.query.excludeConcepts).split(",") : undefined,
+      fallbackPolicy,
       from: req.query.from as string | undefined,
       to: req.query.to as string | undefined,
     });
@@ -890,25 +916,39 @@ app.get("/api/search", searchLimiter, async (req, res) => {
       modeUsed: result.modeUsed ?? result.mode,
       resultCount: result.total,
       latencyMs: Date.now() - startedAt,
+      queryType: result.queryPlan?.intent,
+      resultDocumentIds: result.results.map((entry) => entry.document.id),
     });
     ok(res, { ...result, searchEventId });
   } catch (e) {
+    if (e instanceof SearchContractError) {
+      err(res, 400, e.message, e.code, e.details);
+      return;
+    }
     logError("api/search", e);
     err(res, 500, "Search failed");
   }
-});
+};
+
+app.get("/api/search", searchLimiter, localSearchHandler);
+app.get("/api/local-search", searchLimiter, localSearchHandler);
 
 // POST /api/search/report — async LLM summary (non-blocking)
 app.post("/api/search/report", llmLimiter, async (req, res) => {
   try {
-    const { query, documentIds } = req.body as { query: string; documentIds: string[] };
+    const { query, documentIds, maxResults } = req.body as {
+      query: string;
+      documentIds: string[];
+      maxResults?: number;
+    };
     if (!query || !documentIds?.length) {
       err(res, 400, "query and documentIds are required");
       return;
     }
 
-    // Fetch documents by their IDs
-    const docs = documentIds.map((id: string) => getDocumentById(id)).filter(Boolean);
+    // Fetch documents by their IDs, capped by user-specified count
+    const cappedIds = maxResults ? documentIds.slice(0, Math.min(maxResults, 100)) : documentIds;
+    const docs = cappedIds.map((id: string) => getDocumentById(id)).filter(Boolean);
     const mockResults = docs.map((doc) => ({ document: doc!, score: 1, matchType: "fts" as const }));
 
     const report = await generateSearchReport(mockResults, query);
@@ -1056,10 +1096,7 @@ app.get("/api/settings/embedding", (_req, res) => {
       hasApiKey =
         source === "stored"
           ? Boolean(getStoredEmbeddingSettings()?.apiKey)
-          : Boolean(
-              process.env["EMBEDDING_API_KEY"] ||
-                process.env["OPENAI_API_KEY"],
-            );
+          : Boolean(process.env["EMBEDDING_API_KEY"] || process.env["OPENAI_API_KEY"]);
     } catch {
       // ignore
     }
@@ -1102,7 +1139,9 @@ app.put("/api/settings/embedding", writeLimiter, (req, res) => {
     };
 
     const VALID_PROVIDERS: EmbeddingProviderSetting[] = ["openai", "ollama"];
-    const providerRaw = String(body.provider ?? "").trim().toLowerCase();
+    const providerRaw = String(body.provider ?? "")
+      .trim()
+      .toLowerCase();
     if (!VALID_PROVIDERS.includes(providerRaw as EmbeddingProviderSetting)) {
       err(res, 400, `Invalid provider "${providerRaw}". Use: ${VALID_PROVIDERS.join(", ")}`);
       return;
@@ -1283,6 +1322,7 @@ app.use((_req: Request, res: Response) => {
 // ---------------------------------------------------------------------------
 
 export function startServer(): ReturnType<typeof app.listen> {
+  startWebSearchCleanup();
   const server = app.listen(config.port, "127.0.0.1", () => {
     console.log(`[api] Server listening on http://127.0.0.1:${config.port}`);
   });
