@@ -8,6 +8,7 @@ import { MemoryRouter, Route, Routes, useNavigate } from "react-router-dom";
 import { SearchPage } from "@/ui/pages/SearchPage";
 
 afterEach(() => {
+  localStorage.clear();
   vi.useRealTimers();
   vi.restoreAllMocks();
 });
@@ -54,7 +55,7 @@ describe("SearchPage", () => {
         requests.push(url);
         const offset = new URL(url, "http://localhost").searchParams.get("offset");
 
-        if (offset === "12") {
+        if (offset === "10") {
           return searchResponse("Second page result", 24);
         }
 
@@ -63,21 +64,157 @@ describe("SearchPage", () => {
     );
 
     renderSearchPage("/search");
+    fireEvent.click(screen.getByRole("tab", { name: "本地知识库" }));
 
-    fireEvent.change(screen.getByLabelText("Query"), { target: { value: "agents" } });
-    fireEvent.change(screen.getByLabelText("Published within"), { target: { value: "30d" } });
-    fireEvent.click(screen.getByRole("button", { name: "Run search" }));
+    fireEvent.change(screen.getByLabelText("查询"), { target: { value: "agents" } });
+    fireEvent.change(screen.getByLabelText("发布时间"), { target: { value: "30d" } });
+    fireEvent.click(screen.getByRole("button", { name: "执行搜索" }));
 
     expect(await screen.findByText("First page result")).toBeInTheDocument();
     expect(requests.at(-1)).toContain("from=");
     expect(requests.at(-1)).toContain("to=");
-    expect(requests.at(-1)).toContain("limit=12");
+    expect(requests.at(-1)).toContain("limit=10");
 
-    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    fireEvent.click(screen.getByRole("button", { name: "下一页" }));
 
     expect(await screen.findByText("Second page result")).toBeInTheDocument();
-    expect(requests.at(-1)).toContain("offset=12");
-    expect(screen.getByText("Page 2 / 2")).toBeInTheDocument();
+    expect(requests.at(-1)).toContain("offset=10");
+    expect(screen.getByText("Page 2 / 3")).toBeInTheDocument();
+  });
+
+  it("opens Web Search by default and restores the created session", async () => {
+    let createdRequest: Record<string, unknown> | undefined;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        const url = getUrl(input);
+        if (url.endsWith("/api/web-search") && init?.method === "POST") {
+          createdRequest = JSON.parse(String(init.body)) as Record<string, unknown>;
+          return new Response(
+            JSON.stringify({
+              success: true,
+              data: {
+                sessionId: "ws_ui",
+                status: "created",
+                eventsUrl: "/api/web-search/ws_ui/events",
+                expiresAt: "2026-06-21T00:00:00Z",
+              },
+            }),
+            { status: 202, headers: { "Content-Type": "application/json" } },
+          );
+        }
+        if (url.endsWith("/api/web-search/ws_ui")) {
+          return new Response(
+            JSON.stringify({
+              success: true,
+              data: {
+                id: "ws_ui",
+                request: { query: "agent memory", scope: "academic" },
+                status: "completed",
+                providerRuns: [
+                  { providerId: "arxiv", status: "success", resultCount: 1, latencyMs: 12 },
+                ],
+                results: [
+                  {
+                    id: "wr_ui",
+                    sessionId: "ws_ui",
+                    title: "Web-only Agent Memory",
+                    url: "https://arxiv.org/abs/2501.12345",
+                    authors: ["Alice"],
+                    publishedAt: "2026-06-18T00:00:00Z",
+                    contentType: "paper",
+                    abstract: "A temporary Web Search result.",
+                    identifiers: { arxivId: "2501.12345" },
+                    origin: { domain: "arxiv.org", sourceName: "arXiv" },
+                    providerEvidence: [],
+                    ranking: {
+                      aggregateScore: 1,
+                      providerRrfScore: 1,
+                      conceptCoverageScore: 1,
+                      freshnessScore: 1,
+                      sourceQualityScore: 1,
+                      metadataQualityScore: 1,
+                    },
+                    match: { matchedConcepts: [], matchedFields: [], missingMustConcepts: [] },
+                    localState: { status: "not_saved" },
+                    createdAt: "2026-06-20T00:00:00Z",
+                    expiresAt: "2026-06-21T00:00:00Z",
+                  },
+                ],
+                createdAt: "2026-06-20T00:00:00Z",
+                updatedAt: "2026-06-20T00:00:01Z",
+                expiresAt: "2026-06-21T00:00:00Z",
+              },
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } },
+          );
+        }
+        throw new Error(`Unhandled fetch: ${url}`);
+      }),
+    );
+
+    renderSearchPage("/search");
+
+    expect(screen.getByRole("tab", { name: "Web 搜索" })).toHaveAttribute("aria-selected", "true");
+    fireEvent.change(screen.getByLabelText("搜索词"), { target: { value: "agent memory" } });
+    fireEvent.change(screen.getByLabelText("结果数量"), { target: { value: "37" } });
+    fireEvent.click(screen.getByRole("button", { name: "搜索网络" }));
+
+    expect(await screen.findByText("Web-only Agent Memory")).toBeInTheDocument();
+    expect(createdRequest?.maxResults).toBe(37);
+    expect(screen.getByText("Temporary")).toBeInTheDocument();
+    expect(screen.getByText(/success · 1 results/)).toBeInTheDocument();
+  });
+
+  it("restores the latest Web Search session after returning without URL parameters", async () => {
+    localStorage.setItem(
+      "paperhub.web-search.state.v1",
+      JSON.stringify({
+        query: "restored query",
+        scope: "academic",
+        from: "2024-01-01",
+        to: "2026-06-21",
+        includeDomains: "",
+        excludeDomains: "",
+        searchBudget: "balanced",
+        maxResults: 25,
+        autoSummarize: true,
+        includeSearchMcp: false,
+        sessionId: "ws_restored",
+      }),
+    );
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string | URL | Request) => {
+        const url = getUrl(input);
+        if (!url.endsWith("/api/web-search/ws_restored")) {
+          throw new Error(`Unhandled fetch: ${url}`);
+        }
+        return new Response(
+          JSON.stringify({
+            success: true,
+            data: {
+              id: "ws_restored",
+              request: { query: "restored query", scope: "academic", maxResults: 25 },
+              status: "completed",
+              providerRuns: [],
+              results: [],
+              createdAt: "2026-06-20T00:00:00Z",
+              updatedAt: "2026-06-20T00:00:01Z",
+              expiresAt: "2026-06-22T00:00:00Z",
+            },
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }),
+    );
+
+    renderSearchPage("/search");
+
+    expect(await screen.findByDisplayValue("restored query")).toBeInTheDocument();
+    expect(screen.getByDisplayValue("25")).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "completed" })).toBeInTheDocument();
+    expect(screen.getByText(/0 temporary results/)).toBeInTheDocument();
   });
 });
 

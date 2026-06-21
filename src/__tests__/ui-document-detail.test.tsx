@@ -63,12 +63,12 @@ describe("DocumentPage", () => {
     expect(await screen.findByText("Readable agents")).toBeInTheDocument();
     expect(historyPostCount).toBe(0);
 
-    fireEvent.click(screen.getByRole("button", { name: "Mark as read" }));
+    fireEvent.click(screen.getByRole("button", { name: "标记已读" }));
 
     await waitFor(() => {
       expect(historyPostCount).toBe(1);
     });
-    expect(await screen.findByRole("button", { name: "Marked as read" })).toBeDisabled();
+    expect(await screen.findByRole("button", { name: "已标记已读" })).toBeDisabled();
   });
 
   it("generates a missing selected-language summary once and refreshes the detail", async () => {

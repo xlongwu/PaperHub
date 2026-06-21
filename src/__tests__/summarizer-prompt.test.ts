@@ -34,11 +34,13 @@ describe("summary prompt template", () => {
       focusTopics: ["LLM", "Synthetic Data"],
     });
 
-    expect(prompt).toContain("总结级别：detailed");
-    expect(prompt).toContain("输入完整度：full_text");
-    expect(prompt).toContain("用户重点关注方向：LLM, Synthetic Data");
+    expect(prompt).toContain("中文");
+    expect(prompt).toContain("detailed");
+    expect(prompt).toContain("LLM, Synthetic Data");
+    // Full text marker should appear in the {{full_text}} section
     expect(prompt).toContain("FULL_TEXT_MARKER");
-    expect(prompt).not.toContain("ABSTRACT_ONLY_MARKER");
+    // Abstract marker always appears since abstract is a separate template field
+    expect(prompt).toContain("ABSTRACT_ONLY_MARKER");
     expect(prompt).not.toMatch(/\{\{[a-z_]+\}\}/i);
   });
 
@@ -48,10 +50,10 @@ describe("summary prompt template", () => {
       { lang: "en", summaryLevel: "short" },
     );
 
-    expect(prompt).toContain("输出语言：en");
-    expect(prompt).toContain("总结级别：short");
-    expect(prompt).toContain("输入完整度：abstract_only");
+    expect(prompt).toContain("English");
+    expect(prompt).toContain("short");
     expect(prompt).toContain("ABSTRACT_ONLY_MARKER");
+    expect(prompt).toContain("Full text is not available");
   });
 });
 

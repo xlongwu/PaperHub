@@ -92,8 +92,8 @@ describe("UserCenterPage", () => {
 
     expect(await screen.findByText("Agents")).toBeInTheDocument();
 
-    fireEvent.change(screen.getByLabelText("Interest tags"), { target: { value: "Agents, RAG" } });
-    fireEvent.click(screen.getByRole("button", { name: "Save preferences" }));
+    fireEvent.change(screen.getByLabelText("兴趣标签"), { target: { value: "Agents, RAG" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存设置" }));
 
     await waitFor(() => {
       expect(savedBodies).toHaveLength(1);

@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
-import { SUMMARY_UI } from "@/i18n";
+import { SUMMARY_UI, DOCUMENT_UI } from "@/i18n";
 import type { Document } from "@/types";
 import { EmptyBlock, LoadingBlock, SectionHeader, formatDate } from "../components";
 import {
@@ -13,14 +13,14 @@ import {
   removeFavorite,
   summarizeDocument,
 } from "../lib/api";
-import { useSummaryLanguage, type SummaryLanguage } from "../summary-language";
+import { useAppLanguage, type AppLanguage } from "../app-language";
 
 type SummaryView = "summary" | "abstract";
 
 export function DocumentPage(): JSX.Element {
   const { id } = useParams();
   const queryClient = useQueryClient();
-  const { language } = useSummaryLanguage();
+  const { language } = useAppLanguage();
   const labels = {
     summaryTab: SUMMARY_UI.summaryTab[language],
     abstractTab: SUMMARY_UI.abstractTab[language],
@@ -72,7 +72,7 @@ export function DocumentPage(): JSX.Element {
   });
 
   const summaryMutation = useMutation({
-    mutationFn: (targetLanguage: SummaryLanguage) => summarizeDocument(id!, targetLanguage),
+    mutationFn: (targetLanguage: AppLanguage) => summarizeDocument(id!, targetLanguage),
     onSuccess: async (result) => {
       queryClient.setQueryData(["document", id], result.document);
       await Promise.all([
@@ -117,8 +117,8 @@ export function DocumentPage(): JSX.Element {
     return (
       <section className="content-panel">
         <EmptyBlock
-          description="The requested document could not be found in the local archive."
-          title="Document missing"
+          description={DOCUMENT_UI.noDocumentDescription[language]}
+          title={DOCUMENT_UI.noDocumentTitle[language]}
         />
       </section>
     );
@@ -128,13 +128,13 @@ export function DocumentPage(): JSX.Element {
     <div className="page-grid">
       <section className="content-panel article-panel">
         <SectionHeader
-          description={`${document.sourceTag} · ${formatDate(document.publishedAt)} · ${document.typeTag}`}
-          kicker="Reading room"
+          description={`${document.sourceTag} · ${formatDate(document.publishedAt, language)} · ${document.typeTag}`}
+          kicker={DOCUMENT_UI.readingKicker[language]}
           title={document.title}
         />
         <div className="detail-toolbar">
           <button className="primary-button" onClick={() => favoriteMutation.mutate()} type="button">
-            {isFavorite ? "Remove favorite" : "Save to favorites"}
+            {isFavorite ? DOCUMENT_UI.removeFavorite[language] : DOCUMENT_UI.saveFavorite[language]}
           </button>
           <button
             className="secondary-button"
@@ -142,20 +142,20 @@ export function DocumentPage(): JSX.Element {
             onClick={() => readMutation.mutate()}
             type="button"
           >
-            {isRead ? "Marked as read" : "Mark as read"}
+            {isRead ? DOCUMENT_UI.markedRead[language] : DOCUMENT_UI.markRead[language]}
           </button>
           <a className="secondary-button" href={document.url} rel="noreferrer" target="_blank">
-            Open original source
+            {DOCUMENT_UI.openOriginal[language]}
           </a>
         </div>
 
         <div className="detail-meta-grid">
           <article className="detail-card">
-            <h3>Authors</h3>
-            <p>{document.authors.length > 0 ? document.authors.join(", ") : "Unknown authorship"}</p>
+            <h3>{DOCUMENT_UI.authorsLabel[language]}</h3>
+            <p>{document.authors.length > 0 ? document.authors.join(", ") : DOCUMENT_UI.authorsUnknown[language]}</p>
           </article>
           <article className="detail-card">
-            <h3>Labels</h3>
+            <h3>{DOCUMENT_UI.labelsLabel[language]}</h3>
             <div className="chip-row">
               {document.domainTags.map((tag) => (
                 <span className="chip" key={tag}>
@@ -232,6 +232,6 @@ export function DocumentPage(): JSX.Element {
   );
 }
 
-function getSummary(document: Document, language: SummaryLanguage): string | undefined {
+function getSummary(document: Document, language: AppLanguage): string | undefined {
   return language === "zh" ? document.summaryZh : document.summaryEn;
 }

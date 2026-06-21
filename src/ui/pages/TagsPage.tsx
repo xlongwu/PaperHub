@@ -3,20 +3,25 @@ import { useParams } from "react-router-dom";
 import { Link, useSearchParams } from "react-router-dom";
 import { DocumentCard, EmptyBlock, LoadingBlock, PaginationBar, SectionHeader } from "../components";
 import { getDocumentsByTag, getTagCloud } from "../lib/api";
+import { TAGS_UI, SEARCH_UI } from "@/i18n";
+import { useAppLanguage } from "../app-language";
 
-const tagCategories = ["domain", "model", "source", "type", "year"] as const;
+const tagCategories = ["domain", "model", "method", "task", "source", "type", "year"] as const;
 const TAG_PAGE_SIZE = 12;
 const categoryOptions = [
-  { label: "All", value: "all" },
-  { label: "Domain", value: "domain" },
-  { label: "Model", value: "model" },
-  { label: "Source", value: "source" },
-  { label: "Type", value: "type" },
-  { label: "Year", value: "year" },
+  { labelKey: "catAll" as const, value: "all" },
+  { labelKey: "catDomain" as const, value: "domain" },
+  { labelKey: "catModel" as const, value: "model" },
+  { labelKey: "catMethod" as const, value: "method" },
+  { labelKey: "catTask" as const, value: "task" },
+  { labelKey: "catSource" as const, value: "source" },
+  { labelKey: "catType" as const, value: "type" },
+  { labelKey: "catYear" as const, value: "year" },
 ] as const;
 
 export function TagsPage(): JSX.Element {
   const { tag } = useParams();
+  const { language } = useAppLanguage();
   const [params, setParams] = useSearchParams();
   const category = categoryOptions.some((option) => option.value === params.get("category"))
     ? (params.get("category") as (typeof categoryOptions)[number]["value"])
@@ -49,9 +54,9 @@ export function TagsPage(): JSX.Element {
     <div className="page-grid">
       <section className="content-panel">
         <SectionHeader
-          description="Explore the archive by domain, model family, source, content type, or year."
-          kicker="Taxonomy"
-          title="Tag atlas"
+          description={TAGS_UI.description[language]}
+          kicker={TAGS_UI.kicker[language]}
+          title={TAGS_UI.title[language]}
         />
         <div className="filter-strip">
           {categoryOptions.map((option) => (
@@ -63,7 +68,7 @@ export function TagsPage(): JSX.Element {
               }}
               type="button"
             >
-              {option.label}
+              {TAGS_UI[option.labelKey][language]}
             </button>
           ))}
         </div>
@@ -90,13 +95,13 @@ export function TagsPage(): JSX.Element {
       {tag ? (
         <section className="content-panel">
           <SectionHeader
-            description={`Documents currently associated with the tag ${tag}.`}
-            kicker="Tag focus"
+            description={TAGS_UI.focusDescription(tag)[language]}
+            kicker={TAGS_UI.focusKicker[language]}
             title={tag}
           />
           <div className="toolbar-inline toolbar-inline-spread">
             <label className="field field-inline">
-              <span>Sort by</span>
+              <span>{TAGS_UI.sortBy[language]}</span>
               <select
                 className="field-input"
                 onChange={(event) => {
@@ -104,14 +109,14 @@ export function TagsPage(): JSX.Element {
                 }}
                 value={sortBy}
               >
-                <option value="time">Newest first</option>
-                <option value="relevance">Summaries first</option>
+                <option value="time">{TAGS_UI.sortNewest[language]}</option>
+                <option value="relevance">{TAGS_UI.sortSummaries[language]}</option>
               </select>
             </label>
           </div>
           {documentsQuery.isLoading ? <LoadingBlock /> : null}
           {!documentsQuery.isLoading && (documentsQuery.data?.items.length ?? 0) === 0 ? (
-            <EmptyBlock description="No documents have been mapped to this tag yet." title="No tag hits" />
+            <EmptyBlock description={TAGS_UI.noHitsDescription[language]} title={TAGS_UI.noHitsTitle[language]} />
           ) : null}
           <div className="stack-grid">
             {documentsQuery.data?.items.map((document) => (
@@ -119,7 +124,9 @@ export function TagsPage(): JSX.Element {
             ))}
           </div>
           <PaginationBar
-            label="Tag documents"
+            label={TAGS_UI.paginationLabel[language]}
+            nextLabel={SEARCH_UI.nextPage[language]}
+            prevLabel={SEARCH_UI.prevPage[language]}
             onNext={() => setParams(updateTagParams(params, { page: page + 1 }))}
             onPrev={() => setParams(updateTagParams(params, { page: page - 1 }))}
             page={page}

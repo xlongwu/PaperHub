@@ -8,8 +8,11 @@ import {
   SectionHeader,
   StatTile,
 } from "../components";
+import { HOME_UI } from "@/i18n";
+import { useAppLanguage } from "../app-language";
 
 export function HomePage(): JSX.Element {
+  const { language } = useAppLanguage();
   const hotQuery = useQuery({
     queryKey: ["home", "hot"],
     queryFn: getHotRecommendations,
@@ -27,39 +30,42 @@ export function HomePage(): JSX.Element {
     <div className="page-grid">
       <section className="hero-panel">
         <div className="hero-copy">
-          <span className="section-kicker">Research Frontline</span>
-          <h1 className="hero-title">
-            A local intelligence desk for papers, labs, and fast-moving AI ecosystems.
-          </h1>
-          <p className="hero-description">
-            PaperHub combines recommendation, retrieval, and memory into a single reading surface. Start with
-            the hot board, move into the archive, then follow the tags that matter.
-          </p>
+          <span className="section-kicker">{HOME_UI.heroKicker[language]}</span>
+          <h1 className="hero-title">{HOME_UI.heroTitle[language]}</h1>
+          <p className="hero-description">{HOME_UI.heroDescription[language]}</p>
         </div>
         <div className="hero-stats">
-          <StatTile label="Hot board" note="Daily rebuild" value={String(hotQuery.data?.length ?? 0)} />
           <StatTile
-            label="For you"
-            note="Profile matched"
+            label={HOME_UI.hotStatLabel[language]}
+            note={HOME_UI.hotStatNote[language]}
+            value={String(hotQuery.data?.length ?? 0)}
+          />
+          <StatTile
+            label={HOME_UI.forYouStatLabel[language]}
+            note={HOME_UI.forYouStatNote[language]}
             value={String(personalizedQuery.data?.length ?? 0)}
           />
-          <StatTile label="Latest" note="Fresh entries" value={String(latestQuery.data?.length ?? 0)} />
+          <StatTile
+            label={HOME_UI.latestStatLabel[language]}
+            note={HOME_UI.latestStatNote[language]}
+            value={String(latestQuery.data?.length ?? 0)}
+          />
         </div>
       </section>
 
       <section className="content-panel">
         <SectionHeader
-          actionLabel="Search everything"
+          actionLabel={HOME_UI.hotActionLabel[language]}
           actionTo="/search"
-          description="Time-decayed picks with source diversity, rebuilt from the recommendation cache."
-          kicker="Today"
-          title="Hot board"
+          description={HOME_UI.hotDescription[language]}
+          kicker={HOME_UI.hotKicker[language]}
+          title={HOME_UI.hotTitle[language]}
         />
         {hotQuery.isLoading ? <LoadingBlock /> : null}
         {!hotQuery.isLoading && (hotQuery.data?.length ?? 0) === 0 ? (
           <EmptyBlock
-            description="Run collection or rebuild recommendations to populate the board."
-            title="No hot recommendations yet"
+            description={HOME_UI.noHotDescription[language]}
+            title={HOME_UI.noHotTitle[language]}
           />
         ) : null}
         <div className="feature-grid">
@@ -71,17 +77,17 @@ export function HomePage(): JSX.Element {
 
       <section className="content-panel">
         <SectionHeader
-          actionLabel="Open profile"
+          actionLabel={HOME_UI.personalActionLabel[language]}
           actionTo="/me"
-          description="Matches drawn from interests, memory terms, reading history, and favorites."
-          kicker="Personal"
-          title="For you"
+          description={HOME_UI.personalDescription[language]}
+          kicker={HOME_UI.personalKicker[language]}
+          title={HOME_UI.personalTitle[language]}
         />
         {personalizedQuery.isLoading ? <LoadingBlock /> : null}
         {!personalizedQuery.isLoading && (personalizedQuery.data?.length ?? 0) === 0 ? (
           <EmptyBlock
-            description="Add interest tags or rebuild user memory to unlock personalized picks."
-            title="Profile needs more signal"
+            description={HOME_UI.noPersonalDescription[language]}
+            title={HOME_UI.noPersonalTitle[language]}
           />
         ) : null}
         <div className="stack-grid">
@@ -93,11 +99,11 @@ export function HomePage(): JSX.Element {
 
       <section className="content-panel">
         <SectionHeader
-          actionLabel="Browse tags"
+          actionLabel={HOME_UI.recentActionLabel[language]}
           actionTo="/tags"
-          description="The latest additions from the local corpus, ready for reading and follow-up search."
-          kicker="Recent"
-          title="New on the desk"
+          description={HOME_UI.recentDescription[language]}
+          kicker={HOME_UI.recentKicker[language]}
+          title={HOME_UI.recentTitle[language]}
         />
         {latestQuery.isLoading ? <LoadingBlock /> : null}
         <div className="stack-grid">

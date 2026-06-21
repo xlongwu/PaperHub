@@ -37,37 +37,38 @@ export function buildSummaryPrompt(
   const lang = options.lang ?? "zh";
   const summaryLevel = options.summaryLevel ?? "short";
   const fullText = doc.fullText?.trim();
-  const content = options.content ?? fullText ?? doc.abstract ?? "";
+  const content = options.content ?? fullText ?? "";
   const inputScope =
     options.inputScope ?? (fullText ? "full_text" : "abstract_only");
-  const readerProfile =
-    options.readerProfile ??
-    (lang === "zh"
-      ? "机器学习研究人员与算法工程师"
-      : "machine learning researchers and engineers");
   const focusTopics =
     options.focusTopics && options.focusTopics.length > 0
       ? options.focusTopics.join(", ")
-      : "none";
+      : lang === "zh"
+        ? "无特别关注方向"
+        : "none";
   const processingNote = options.processingNote?.trim();
-  const paperContent = processingNote
-    ? `${processingNote}\n\n${content}`
-    : content;
+
+  // Build full_text: when content is available (from full text or evidence notes), use it.
+  // When only abstract is available, indicate that full text is not provided.
+  const fullTextForTemplate = content
+    ? (processingNote ? `${processingNote}\n\n${content}` : content)
+    : (lang === "zh"
+        ? "论文未提供完整正文。以下总结仅基于摘要生成。"
+        : "Full text is not available. The summary below is based solely on the abstract.");
 
   return interpolateTemplate(loadSummaryTemplate(), {
-    output_language: lang,
-    summary_level: summaryLevel,
-    reader_profile: readerProfile,
-    focus_topics: focusTopics,
-    input_scope: inputScope,
+    // Map to template placeholders exactly as defined in 总结prompt模版.md
     title: doc.title,
     authors: doc.authors.join(", ") || "Unknown",
-    source: doc.sourceTag || doc.source,
-    published_at: doc.publishedAt,
-    paper_type: doc.typeTag,
-    url: doc.url,
-    domain_tags: doc.domainTags.join(", ") || "none",
-    paper_content: paperContent,
+    publication: `${doc.sourceTag || doc.source}, ${doc.publishedAt}`,
+    source_url: doc.url,
+    abstract: doc.abstract || (lang === "zh" ? "未提供摘要" : "No abstract provided"),
+    full_text: fullTextForTemplate,
+    user_focus: focusTopics,
+    output_language: lang === "zh" ? "中文" : "English",
+    summary_level: summaryLevel,
+    // Also replace Chinese placeholder used in output structure section header
+    "\u8BBA\u6587\u6807\u9898": doc.title,  // 论文标题
   });
 }
 

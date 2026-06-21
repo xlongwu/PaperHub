@@ -3,10 +3,13 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { EmptyBlock, LoadingBlock, SectionHeader } from "../components";
 import { LlmConnectionsPanel } from "../llm-connections";
+import { WebSearchConnectionsPanel } from "../web-search-connections";
 import {
   getFavorites,
   getHistory,
   getEmbeddingSettings,
+  getWebSearchHealth,
+  getWebSearchMetrics,
   getUserMemory,
   getUserPreferences,
   rebuildUserMemory,
@@ -17,8 +20,11 @@ import {
   testEmbeddingConnection,
   type EmbeddingProviderName,
 } from "../lib/api";
+import { USER_CENTER_UI } from "@/i18n";
+import { useAppLanguage } from "../app-language";
 
 export function UserCenterPage(): JSX.Element {
+  const { language } = useAppLanguage();
   const queryClient = useQueryClient();
   const preferencesQuery = useQuery({
     queryKey: ["user", "preferences"],
@@ -40,6 +46,16 @@ export function UserCenterPage(): JSX.Element {
   const favoritesQuery = useQuery({
     queryKey: ["user", "favorites"],
     queryFn: () => getFavorites(),
+  });
+  const webSearchHealthQuery = useQuery({
+    queryKey: ["web-search", "health"],
+    queryFn: getWebSearchHealth,
+    refetchInterval: 60_000,
+  });
+  const webSearchMetricsQuery = useQuery({
+    queryKey: ["web-search", "metrics"],
+    queryFn: getWebSearchMetrics,
+    refetchInterval: 60_000,
   });
 
   const [interestTagsDraft, setInterestTagsDraft] = useState("");
@@ -155,14 +171,14 @@ export function UserCenterPage(): JSX.Element {
     <div className="page-grid profile-grid">
       <section className="content-panel">
         <SectionHeader
-          description="Adjust explicit interests, reading defaults, and the size of the recommendation surface."
-          kicker="Controls"
-          title="Profile settings"
+          description={USER_CENTER_UI.profileDescription[language]}
+          kicker={USER_CENTER_UI.profileKicker[language]}
+          title={USER_CENTER_UI.profileTitle[language]}
         />
         {preferencesQuery.isLoading ? <LoadingBlock /> : null}
         <div className="settings-grid">
           <label className="field">
-            <span>Interest tags</span>
+            <span>{USER_CENTER_UI.interestTagsLabel[language]}</span>
             <textarea
               className="field-input field-textarea"
               onChange={(event) => setInterestTagsDraft(event.target.value)}
@@ -171,29 +187,29 @@ export function UserCenterPage(): JSX.Element {
             />
           </label>
           <label className="field">
-            <span>Default language</span>
+            <span>{USER_CENTER_UI.defaultLanguageLabel[language]}</span>
             <select
               className="field-input"
               onChange={(event) => setDefaultLanguage(event.target.value)}
               value={defaultLanguage}
             >
-              <option value="zh">中文</option>
-              <option value="en">English</option>
+              <option value="zh">{USER_CENTER_UI.languageZh[language]}</option>
+              <option value="en">{USER_CENTER_UI.languageEn[language]}</option>
             </select>
           </label>
           <label className="field">
-            <span>Summary length</span>
+            <span>{USER_CENTER_UI.summaryLengthLabel[language]}</span>
             <select
               className="field-input"
               onChange={(event) => setSummaryLength(event.target.value)}
               value={summaryLength}
             >
-              <option value="short">Short</option>
-              <option value="detailed">Detailed</option>
+              <option value="short">{USER_CENTER_UI.summaryShort[language]}</option>
+              <option value="detailed">{USER_CENTER_UI.summaryDetailed[language]}</option>
             </select>
           </label>
           <label className="field">
-            <span>Daily recommendation count</span>
+            <span>{USER_CENTER_UI.dailyRecommendLabel[language]}</span>
             <input
               className="field-input"
               onChange={(event) => setDailyRecommendCount(event.target.value)}
@@ -201,22 +217,22 @@ export function UserCenterPage(): JSX.Element {
             />
           </label>
           <button className="primary-button" onClick={() => savePreferencesMutation.mutate()} type="button">
-            Save preferences
+            {USER_CENTER_UI.savePreferences[language]}
           </button>
         </div>
       </section>
 
       <section className="content-panel">
         <SectionHeader
-          description="Configure the embedding model used for semantic search. Changes take effect immediately; rebuild the vector index if you switch models."
-          kicker="Search"
-          title="Embedding connection"
+          description={USER_CENTER_UI.embeddingDescription[language]}
+          kicker={USER_CENTER_UI.embeddingKicker[language]}
+          title={USER_CENTER_UI.embeddingTitle[language]}
         />
         {embeddingSettingsQuery.isLoading ? <LoadingBlock /> : null}
         {embeddingSettingsQuery.data ? (
           <div className="settings-grid">
             <label className="field">
-              <span>Provider</span>
+              <span>{USER_CENTER_UI.embeddingProviderLabel[language]}</span>
               <select
                 className="field-input"
                 id="embedding-provider"
@@ -227,48 +243,40 @@ export function UserCenterPage(): JSX.Element {
                   // Pre-fill sensible base URL defaults when switching providers
                   if (p === "ollama") {
                     setEmbeddingBaseUrl((prev) =>
-                      !prev || prev === "https://api.openai.com/v1"
-                        ? "http://127.0.0.1:11434"
-                        : prev,
+                      !prev || prev === "https://api.openai.com/v1" ? "http://127.0.0.1:11434" : prev,
                     );
                   } else {
                     setEmbeddingBaseUrl((prev) =>
-                      !prev || prev === "http://127.0.0.1:11434"
-                        ? "https://api.openai.com/v1"
-                        : prev,
+                      !prev || prev === "http://127.0.0.1:11434" ? "https://api.openai.com/v1" : prev,
                     );
                   }
                 }}
                 value={embeddingProvider}
               >
-                <option value="openai">OpenAI (API)</option>
-                <option value="ollama">Ollama (Local)</option>
+                <option value="openai">{USER_CENTER_UI.embeddingOpenAI[language]}</option>
+                <option value="ollama">{USER_CENTER_UI.embeddingOllama[language]}</option>
               </select>
             </label>
             <label className="field">
-              <span>Model</span>
+              <span>{USER_CENTER_UI.embeddingModelLabel[language]}</span>
               <input
                 className="field-input"
                 id="embedding-model"
                 onChange={(event) => setEmbeddingModel(event.target.value)}
                 placeholder={
-                  embeddingProvider === "ollama"
-                    ? "e.g. qwen3-embedding:0.6b"
-                    : "e.g. text-embedding-3-small"
+                  embeddingProvider === "ollama" ? "e.g. qwen3-embedding:0.6b" : "e.g. text-embedding-3-small"
                 }
                 value={embeddingModel}
               />
             </label>
             <label className="field">
-              <span>Base URL</span>
+              <span>{USER_CENTER_UI.embeddingBaseUrlLabel[language]}</span>
               <input
                 className="field-input"
                 id="embedding-base-url"
                 onChange={(event) => setEmbeddingBaseUrl(event.target.value)}
                 placeholder={
-                  embeddingProvider === "ollama"
-                    ? "http://127.0.0.1:11434"
-                    : "https://api.openai.com/v1"
+                  embeddingProvider === "ollama" ? "http://127.0.0.1:11434" : "https://api.openai.com/v1"
                 }
                 type="url"
                 value={embeddingBaseUrl}
@@ -276,17 +284,16 @@ export function UserCenterPage(): JSX.Element {
             </label>
             {embeddingProvider === "openai" ? (
               <label className="field">
-                <span>API key</span>
+                <span>{USER_CENTER_UI.embeddingApiKeyLabel[language]}</span>
                 <input
                   autoComplete="off"
                   className="field-input"
                   id="embedding-api-key"
                   onChange={(event) => setEmbeddingApiKeyDraft(event.target.value)}
                   placeholder={
-                    embeddingSettingsQuery.data.hasApiKey &&
-                    embeddingSettingsQuery.data.source === "stored"
-                      ? "A key is already configured; leave blank to keep it"
-                      : "Paste your embedding API key"
+                    embeddingSettingsQuery.data.hasApiKey && embeddingSettingsQuery.data.source === "stored"
+                      ? USER_CENTER_UI.embeddingKeyStored[language]
+                      : USER_CENTER_UI.embeddingKeyPlaceholder[language]
                   }
                   type="password"
                   value={embeddingApiKeyDraft}
@@ -294,21 +301,24 @@ export function UserCenterPage(): JSX.Element {
               </label>
             ) : null}
             <div className="field">
-              <span>Detected dimensions</span>
+              <span>{USER_CENTER_UI.embeddingDimensionsLabel[language]}</span>
               <strong>
                 {testEmbeddingMutation.data?.dimensions ??
                   embeddingSettingsQuery.data.index.dimensions ??
-                  "Not probed"}
+                  USER_CENTER_UI.embeddingNotProbed[language]}
               </strong>
             </div>
             <p className="settings-note" role="status">
-              {embeddingSettingsStatus(embeddingSettingsQuery.data, embeddingProvider)}
+              {embeddingSettingsStatus(embeddingSettingsQuery.data, embeddingProvider, language)}
             </p>
             <p className="settings-note" role="status">
-              Index {embeddingSettingsQuery.data.index.status}: {embeddingSettingsQuery.data.index.ready}/
-              {embeddingSettingsQuery.data.index.total} ready,{" "}
-              {embeddingSettingsQuery.data.index.pending + embeddingSettingsQuery.data.index.running} pending,{" "}
-              {embeddingSettingsQuery.data.index.failed} failed.
+              {USER_CENTER_UI.indexStatus(
+                embeddingSettingsQuery.data.index.status,
+                embeddingSettingsQuery.data.index.ready,
+                embeddingSettingsQuery.data.index.total,
+                embeddingSettingsQuery.data.index.pending + embeddingSettingsQuery.data.index.running,
+                embeddingSettingsQuery.data.index.failed,
+              )[language]}
             </p>
             {embeddingSettingsQuery.data.index.lastError ? (
               <p className="settings-error">{embeddingSettingsQuery.data.index.lastError}</p>
@@ -330,7 +340,7 @@ export function UserCenterPage(): JSX.Element {
                 onClick={() => saveEmbeddingSettingsMutation.mutate()}
                 type="button"
               >
-                {saveEmbeddingSettingsMutation.isPending ? "Saving..." : "Save embedding settings"}
+                {saveEmbeddingSettingsMutation.isPending ? USER_CENTER_UI.saving[language] : USER_CENTER_UI.saveEmbedding[language]}
               </button>
               {embeddingSettingsQuery.data.source === "stored" &&
               embeddingSettingsQuery.data.hasApiKey &&
@@ -342,7 +352,7 @@ export function UserCenterPage(): JSX.Element {
                   onClick={() => clearEmbeddingApiKeyMutation.mutate()}
                   type="button"
                 >
-                  Remove saved key
+                  {USER_CENTER_UI.removeKey[language]}
                 </button>
               ) : null}
               <button
@@ -352,7 +362,7 @@ export function UserCenterPage(): JSX.Element {
                 onClick={() => testEmbeddingMutation.mutate()}
                 type="button"
               >
-                {testEmbeddingMutation.isPending ? "Testing..." : "Test connection"}
+                {testEmbeddingMutation.isPending ? USER_CENTER_UI.testing[language] : USER_CENTER_UI.testConnection[language]}
               </button>
               <button
                 className="primary-button"
@@ -361,7 +371,7 @@ export function UserCenterPage(): JSX.Element {
                 onClick={() => rebuildEmbeddingMutation.mutate()}
                 type="button"
               >
-                {rebuildEmbeddingMutation.isPending ? "Starting..." : "Rebuild vector index"}
+                {rebuildEmbeddingMutation.isPending ? USER_CENTER_UI.starting[language] : USER_CENTER_UI.rebuildIndex[language]}
               </button>
             </div>
           </div>
@@ -369,23 +379,84 @@ export function UserCenterPage(): JSX.Element {
       </section>
 
       <LlmConnectionsPanel />
+      <WebSearchConnectionsPanel />
 
       <section className="content-panel">
         <SectionHeader
-          description="These are the long-lived terms currently extracted from recent digests and weighted into the profile."
-          kicker="Memory"
-          title="User memory"
+          description={USER_CENTER_UI.webSearchDescription[language]}
+          kicker={USER_CENTER_UI.webSearchKicker[language]}
+          title={USER_CENTER_UI.webSearchTitle[language]}
+        />
+        {webSearchHealthQuery.isLoading || webSearchMetricsQuery.isLoading ? <LoadingBlock /> : null}
+        {webSearchHealthQuery.data ? (
+          <>
+            <div className="memory-grid">
+              <article className="memory-card">
+                <p className="memory-category">{USER_CENTER_UI.healthLabel[language]}</p>
+                <h3>{webSearchHealthQuery.data.status}</h3>
+                <p className="memory-weight">
+                  {USER_CENTER_UI.enabledProviders(webSearchHealthQuery.data.providers.filter((provider) => provider.enabled).length)[language]}
+                </p>
+              </article>
+              <article className="memory-card">
+                <p className="memory-category">{USER_CENTER_UI.searches7d[language]}</p>
+                <h3>{webSearchHealthQuery.data.lastSevenDays.searches}</h3>
+                <p className="memory-weight">
+                  {USER_CENTER_UI.providerFailures((webSearchHealthQuery.data.lastSevenDays.providerFailureRate * 100).toFixed(1))[language]}
+                </p>
+              </article>
+              <article className="memory-card">
+                <p className="memory-category">{USER_CENTER_UI.estimatedCredits[language]}</p>
+                <h3>{webSearchHealthQuery.data.lastSevenDays.estimatedCredits.toFixed(3)}</h3>
+                <p className="memory-weight">{USER_CENTER_UI.storedLocally[language]}</p>
+              </article>
+              <article className="memory-card">
+                <p className="memory-category">{USER_CENTER_UI.tempCache[language]}</p>
+                <h3>{webSearchHealthQuery.data.cache.results} {USER_CENTER_UI.resultsCache[language]}</h3>
+                <p className="memory-weight">
+                  {webSearchHealthQuery.data.cache.content} {USER_CENTER_UI.fetchedPages[language]}
+                </p>
+              </article>
+            </div>
+            <p className="settings-note">
+              {USER_CENTER_UI.lastCleanup[language]}
+              {webSearchHealthQuery.data.maintenance.lastCleanupAt
+                ? new Date(webSearchHealthQuery.data.maintenance.lastCleanupAt).toLocaleString(language === "zh" ? "zh-CN" : "en-US")
+                : USER_CENTER_UI.notRecorded[language]}
+            </p>
+          </>
+        ) : null}
+        {webSearchMetricsQuery.data ? (
+          <div className="list-panel">
+            {webSearchMetricsQuery.data.providers.map((provider) => (
+              <div className="list-row" key={provider.providerId}>
+                <span>{provider.providerId}</span>
+                <strong>
+                  {provider.calls} {USER_CENTER_UI.calls[language]} · {(provider.successRate * 100).toFixed(0)}% {USER_CENTER_UI.success[language]} · P95{" "}
+                  {provider.p95LatencyMs} ms
+                </strong>
+              </div>
+            ))}
+          </div>
+        ) : null}
+      </section>
+
+      <section className="content-panel">
+        <SectionHeader
+          description={USER_CENTER_UI.memoryDescription[language]}
+          kicker={USER_CENTER_UI.memoryKicker[language]}
+          title={USER_CENTER_UI.memoryTitle[language]}
         />
         <div className="toolbar-inline">
           <button className="secondary-button" onClick={() => rebuildMemoryMutation.mutate()} type="button">
-            Rebuild memory
+            {USER_CENTER_UI.rebuildMemory[language]}
           </button>
         </div>
         {memoryQuery.isLoading ? <LoadingBlock /> : null}
         {(memoryQuery.data?.length ?? 0) === 0 && !memoryQuery.isLoading ? (
           <EmptyBlock
-            description="Memory will appear after the first digest rebuild."
-            title="No memory terms yet"
+            description={USER_CENTER_UI.noMemoryDescription[language]}
+            title={USER_CENTER_UI.noMemoryTitle[language]}
           />
         ) : null}
         <div className="memory-grid">
@@ -393,7 +464,7 @@ export function UserCenterPage(): JSX.Element {
             <article className="memory-card" key={`${term.category}-${term.term}`}>
               <p className="memory-category">{term.category}</p>
               <h3>{term.term}</h3>
-              <p className="memory-weight">weight {term.weight.toFixed(2)}</p>
+              <p className="memory-weight">{USER_CENTER_UI.weightLabel(term.weight.toFixed(2))[language]}</p>
             </article>
           ))}
         </div>
@@ -402,22 +473,22 @@ export function UserCenterPage(): JSX.Element {
       <div className="dual-column">
         <section className="content-panel">
           <SectionHeader
-            description="Recent reading activity is fed back into profile construction and read exclusion."
-            kicker="History"
-            title="Reading history"
+            description={USER_CENTER_UI.historyDescription[language]}
+            kicker={USER_CENTER_UI.historyKicker[language]}
+            title={USER_CENTER_UI.historyTitle[language]}
           />
           {historyQuery.isLoading ? <LoadingBlock /> : null}
           {(historyQuery.data?.length ?? 0) === 0 && !historyQuery.isLoading ? (
             <EmptyBlock
-              description="Mark a document as read from the detail page to register a reading event."
-              title="No history yet"
+              description={USER_CENTER_UI.noHistoryDescription[language]}
+              title={USER_CENTER_UI.noHistoryTitle[language]}
             />
           ) : null}
           <div className="list-panel">
             {historyQuery.data?.map((item) => (
               <Link className="list-row" key={item.id} to={`/documents/${item.documentId}`}>
                 <span>{item.documentId}</span>
-                <strong>{new Date(item.viewedAt).toLocaleString("zh-CN")}</strong>
+                <strong>{new Date(item.viewedAt).toLocaleString(language === "zh" ? "zh-CN" : "en-US")}</strong>
               </Link>
             ))}
           </div>
@@ -425,15 +496,15 @@ export function UserCenterPage(): JSX.Element {
 
         <section className="content-panel">
           <SectionHeader
-            description="Favorites are pinned research artifacts and are excluded from the default personalized queue."
-            kicker="Pinned"
-            title="Favorites"
+            description={USER_CENTER_UI.favoritesDescription[language]}
+            kicker={USER_CENTER_UI.favoritesKicker[language]}
+            title={USER_CENTER_UI.favoritesTitle[language]}
           />
           {favoritesQuery.isLoading ? <LoadingBlock /> : null}
           {(favoritesQuery.data?.length ?? 0) === 0 && !favoritesQuery.isLoading ? (
             <EmptyBlock
-              description="Save a paper from the detail page to pin it here."
-              title="No favorites yet"
+              description={USER_CENTER_UI.noFavoritesDescription[language]}
+              title={USER_CENTER_UI.noFavoritesTitle[language]}
             />
           ) : null}
           <div className="list-panel">
@@ -445,7 +516,7 @@ export function UserCenterPage(): JSX.Element {
                   onClick={() => removeFavoriteMutation.mutate(item.documentId)}
                   type="button"
                 >
-                  Remove
+                  {USER_CENTER_UI.removeFavorite[language]}
                 </button>
               </div>
             ))}
@@ -459,22 +530,23 @@ export function UserCenterPage(): JSX.Element {
 function embeddingSettingsStatus(
   settings: Awaited<ReturnType<typeof getEmbeddingSettings>> | undefined,
   selectedProvider: "openai" | "ollama",
+  lang: "zh" | "en",
 ): string {
   if (!settings) {
-    return "Save to activate this embedding configuration.";
+    return USER_CENTER_UI.embeddingStatusUnsaved[lang];
   }
   if (settings.source === "environment") {
-    return "Configuration is set via environment variables and cannot be overridden here.";
+    return USER_CENTER_UI.embeddingStatusEnv[lang];
   }
   if (settings.source === "stored") {
     if (selectedProvider === "openai" && !settings.hasApiKey) {
-      return "Saved — but no API key stored. Semantic search will fail until a key is saved.";
+      return USER_CENTER_UI.embeddingStatusNoKey[lang];
     }
-    return "Embedding settings saved. Rebuild the vector index if you changed the model.";
+    return USER_CENTER_UI.embeddingStatusSaved[lang];
   }
   // "default"
   if (selectedProvider === "ollama") {
-    return "Using built-in defaults. Save to apply your Ollama configuration.";
+    return USER_CENTER_UI.embeddingStatusDefaultOllama[lang];
   }
-  return "Using built-in defaults. Save to persist your configuration.";
+  return USER_CENTER_UI.embeddingStatusDefault[lang];
 }

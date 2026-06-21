@@ -50,7 +50,7 @@ describe("HomePage", () => {
       </QueryClientProvider>,
     );
 
-    expect(screen.getAllByText("Hot board").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("热门").length).toBeGreaterThan(0);
     expect(await screen.findByText("Hot agents")).toBeInTheDocument();
     expect(await screen.findByText("Personalized planning")).toBeInTheDocument();
     expect(await screen.findByText("Latest memory systems")).toBeInTheDocument();

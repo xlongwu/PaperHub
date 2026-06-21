@@ -1,10 +1,10 @@
 import { Link } from "react-router-dom";
 import type { Document, RecommendationEntry } from "@/types";
 import type { ReactNode } from "react";
-import { useSummaryLanguage, type SummaryLanguage } from "./summary-language";
+import { useAppLanguage, type AppLanguage } from "./app-language";
 
 /** Returns the selected summary language, falling back only to the original abstract. */
-export function pickSummary(doc: Document, lang: SummaryLanguage): string {
+export function pickSummary(doc: Document, lang: AppLanguage): string {
   return (lang === "zh" ? doc.summaryZh : doc.summaryEn) ?? doc.abstract;
 }
 
@@ -33,13 +33,13 @@ export function SectionHeader(props: {
 
 export function RecommendationCard(props: { entry: RecommendationEntry }): JSX.Element {
   const { document, reason, score } = props.entry;
-  const { language } = useSummaryLanguage();
+  const { language } = useAppLanguage();
 
   return (
     <article className="paper-card paper-card-featured">
       <div className="paper-meta-row">
         <span>{document.sourceTag}</span>
-        <span>{formatDate(document.publishedAt)}</span>
+        <span>{formatDate(document.publishedAt, language)}</span>
         <span>score {score.toFixed(2)}</span>
       </div>
       <Link className="paper-title-link" to={`/documents/${document.id}`}>
@@ -65,12 +65,12 @@ export function DocumentCard(props: {
   onOpen?: () => void;
 }): JSX.Element {
   const { document } = props;
-  const { language } = useSummaryLanguage();
+  const { language } = useAppLanguage();
   return (
     <article className="paper-card">
       <div className="paper-meta-row">
         <span>{document.sourceTag}</span>
-        <span>{formatDate(document.publishedAt)}</span>
+        <span>{formatDate(document.publishedAt, language)}</span>
         <span>{document.typeTag}</span>
       </div>
       <Link className="paper-title-link" onClick={props.onOpen} to={`/documents/${document.id}`}>
@@ -127,6 +127,8 @@ export function PaginationBar(props: {
   label: string;
   onPrev: () => void;
   onNext: () => void;
+  prevLabel?: string;
+  nextLabel?: string;
 }): JSX.Element | null {
   if (props.totalPages <= 1) {
     return null;
@@ -135,7 +137,7 @@ export function PaginationBar(props: {
   return (
     <div aria-label={`${props.label} pagination`} className="pagination-bar">
       <button className="secondary-button" disabled={props.page <= 1} onClick={props.onPrev} type="button">
-        Previous
+        {props.prevLabel ?? "Previous"}
       </button>
       <p className="pagination-copy">
         Page {props.page} / {props.totalPages}
@@ -146,14 +148,15 @@ export function PaginationBar(props: {
         onClick={props.onNext}
         type="button"
       >
-        Next
+        {props.nextLabel ?? "Next"}
       </button>
     </div>
   );
 }
 
-export function formatDate(value: string): string {
-  return new Intl.DateTimeFormat("zh-CN", {
+export function formatDate(value: string, lang: AppLanguage = "zh"): string {
+  const locale = lang === "zh" ? "zh-CN" : "en-US";
+  return new Intl.DateTimeFormat(locale, {
     month: "short",
     day: "numeric",
   }).format(new Date(value));

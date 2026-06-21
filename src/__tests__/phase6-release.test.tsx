@@ -61,44 +61,45 @@ describe("phase6 release smoke", () => {
   it("home page surfaces the release candidate data set", async () => {
     renderApp("/");
 
-    expect(await screen.findByRole("heading", { name: "Hot board" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "热门看板" })).toBeInTheDocument();
     expect((await screen.findAllByText("Agent Memory Systems in Production")).length).toBeGreaterThan(0);
-    expect(screen.getByRole("heading", { name: "For you" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "New on the desk" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "为你推荐" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "最新收录" })).toBeInTheDocument();
   });
 
   it("search reaches document detail and profile reflects read and favorite actions", async () => {
     renderApp("/search");
+    fireEvent.click(screen.getByRole("tab", { name: "本地知识库" }));
 
-    fireEvent.change(screen.getByLabelText("Query"), { target: { value: "multimodal ops" } });
-    fireEvent.change(screen.getByLabelText("Mode"), { target: { value: "keyword" } });
-    fireEvent.click(screen.getByRole("button", { name: "Run search" }));
+    fireEvent.change(screen.getByLabelText("查询"), { target: { value: "multimodal ops" } });
+    fireEvent.change(screen.getByLabelText("模式"), { target: { value: "keyword" } });
+    fireEvent.click(screen.getByRole("button", { name: "执行搜索" }));
 
     expect(await screen.findByText("Multimodal Ops Playbook")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("link", { name: "Multimodal Ops Playbook" }));
 
     expect(await screen.findByRole("heading", { name: "Multimodal Ops Playbook" })).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "Save to favorites" }));
-    expect(await screen.findByRole("button", { name: "Remove favorite" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "收藏" }));
+    expect(await screen.findByRole("button", { name: "取消收藏" })).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "Mark as read" }));
+    fireEvent.click(screen.getByRole("button", { name: "标记已读" }));
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: "Marked as read" })).toBeDisabled();
+      expect(screen.getByRole("button", { name: "已标记已读" })).toBeDisabled();
     });
 
-    fireEvent.click(screen.getByRole("link", { name: "Profile" }));
-    expect(await screen.findByRole("heading", { name: "Profile settings" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("link", { name: "个人" }));
+    expect(await screen.findByRole("heading", { name: "个人设置" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "doc-e2e-multimodal-ops" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "doc-e2e-rag-systems" })).toBeInTheDocument();
 
-    const interestTags = screen.getByLabelText("Interest tags");
+    const interestTags = screen.getByLabelText("兴趣标签");
     await waitFor(() => {
       expect(interestTags).toHaveValue("Agents, RAG, Multimodal");
     });
     fireEvent.change(interestTags, { target: { value: "Agents, RAG, Planning" } });
     expect(interestTags).toHaveValue("Agents, RAG, Planning");
-    fireEvent.click(screen.getByRole("button", { name: "Save preferences" }));
+    fireEvent.click(screen.getByRole("button", { name: "保存设置" }));
 
     await waitFor(() => {
       expect(interestTags).toHaveValue("Agents, RAG, Planning");
@@ -139,15 +140,15 @@ describe("phase6 release smoke", () => {
   it("tags page supports category browsing, sorting, and pagination", async () => {
     renderApp("/tags");
 
-    expect(await screen.findByRole("heading", { name: "Tag atlas" })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Domain" }));
+    expect(await screen.findByRole("heading", { name: "标签图谱" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "领域" }));
     fireEvent.click(await screen.findByRole("link", { name: /Agents/ }));
 
     expect(await screen.findByRole("heading", { name: "Agents" })).toBeInTheDocument();
     expect(await screen.findByText("Page 1 / 2")).toBeInTheDocument();
 
-    fireEvent.change(screen.getByLabelText("Sort by"), { target: { value: "relevance" } });
-    fireEvent.click(await screen.findByRole("button", { name: "Next" }));
+    fireEvent.change(screen.getByLabelText("排序"), { target: { value: "relevance" } });
+    fireEvent.click(await screen.findByRole("button", { name: "下一页" }));
 
     expect(await screen.findByText("Page 2 / 2")).toBeInTheDocument();
     expect(screen.getByText("Agent Archive Note 5")).toBeInTheDocument();
