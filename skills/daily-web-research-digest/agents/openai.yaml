@@ -1,0 +1,12 @@
+interface:
+  display_name: "Daily Web Research Digest"
+  short_description: "Generate daily PaperHub research digests"
+  default_prompt: "Use $daily-web-research-digest to scan today's research updates."
+dependencies:
+  tools:
+    - type: "mcp"
+      value: "paperhub-local"
+      description: "PaperHub local MCP web search, session, and save tools"
+      transport: "stdio"
+policy:
+  allow_implicit_invocation: true

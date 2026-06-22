@@ -41,6 +41,12 @@ export type WebSaveMode = "metadata_only" | "save_content" | "download_pdf";
 export interface WebSearchRequest {
   query: string;
   scope: WebSearchScope;
+  concepts?: {
+    must?: string[];
+    should?: string[];
+    exclude?: string[];
+    requireMustMatch?: boolean;
+  };
   contentTypes?: WebSearchContentType[];
   dateRange?: { start?: string; end?: string };
   languages?: string[];
@@ -83,13 +89,33 @@ export interface ProviderHealth {
   checkedAt: string;
 }
 
+export type WebSearchConnectionDiagnosticStage =
+  | "configuration"
+  | "network"
+  | "authentication"
+  | "schema"
+  | "tool"
+  | "security"
+  | "unknown";
+
+export interface WebSearchConnectionTestDiagnostic {
+  stage: WebSearchConnectionDiagnosticStage;
+  code: string;
+  retryable: boolean;
+  message: string;
+  provider?: WebSearchConnectionProvider;
+  transport?: WebSearchConnection["settings"]["mcpTransport"];
+}
+
 export interface ProviderSearchRequest {
   query: string;
   intent: WebSearchIntent;
   dateRange?: { start?: string; end?: string };
   language?: string;
+  contentTypes?: WebSearchContentType[];
   includeDomains?: string[];
   excludeDomains?: string[];
+  sort?: "relevance" | "recent";
   limit: number;
   cursor?: string;
 }
@@ -137,6 +163,11 @@ export interface ProviderSearchResponse {
   requestId?: string;
   estimatedCredits?: number;
   warning?: string;
+  cache?: {
+    hit: boolean;
+    key: string;
+    cachedAt?: string;
+  };
 }
 
 export interface WebSearchProvider {
@@ -190,11 +221,16 @@ export interface WebSearchResult {
     metadataQualityScore: number;
     queryIntentScore?: number;
     citationImpactScore?: number;
+    shouldCoverageScore?: number;
+    sourceQualityTier?: "official" | "trusted" | "standard" | "low";
+    sortExplanation?: string[];
   };
   match: {
     matchedConcepts: string[];
+    matchedShouldConcepts?: string[];
     matchedFields: string[];
     missingMustConcepts: string[];
+    excludedConcepts?: string[];
   };
   localState: {
     status: "not_saved" | "saving" | "saved" | "save_failed";
@@ -247,6 +283,7 @@ export interface WebSearchConnection {
     mcpToolName?: string;
     mcpCommand?: string;
     mcpArgs?: string[];
+    mcpEndpoint?: string;
     mcpInputAdapter?: McpSearchInputAdapter;
     mcpOutputAdapter?: McpSearchOutputAdapter;
   };

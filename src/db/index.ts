@@ -16,7 +16,7 @@ import { rebuildDocumentSearchTags } from "./search-tags";
 // Migration tracking
 // ---------------------------------------------------------------------------
 
-export const CURRENT_SCHEMA_VERSION = 24;
+export const CURRENT_SCHEMA_VERSION = 25;
 
 interface Migration {
   version: number;
@@ -981,6 +981,28 @@ const MIGRATIONS: Migration[] = [
       );
     `,
     postMigrate: ensureW7Schema,
+  },
+  {
+    version: 25,
+    name: "web-search-provider-response-cache",
+    sql: `
+      CREATE TABLE web_search_provider_cache (
+        cache_key TEXT PRIMARY KEY,
+        provider_id TEXT NOT NULL,
+        normalized_query TEXT NOT NULL,
+        filters_json TEXT NOT NULL,
+        response_json TEXT NOT NULL,
+        status TEXT NOT NULL,
+        result_count INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        expires_at TEXT NOT NULL
+      );
+      CREATE INDEX idx_web_search_provider_cache_provider
+        ON web_search_provider_cache(provider_id, normalized_query);
+      CREATE INDEX idx_web_search_provider_cache_expires
+        ON web_search_provider_cache(expires_at);
+    `,
   },
 ];
 

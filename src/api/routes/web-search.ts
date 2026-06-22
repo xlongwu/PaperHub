@@ -20,10 +20,13 @@ import {
   cancelActiveWebSearch,
   createWebSearchSession,
   executeWebSearchSession,
+  retryWebSearchProviders,
 } from "@/services/web-search-service";
 import type {
   McpSearchOutputAdapter,
   WebSearchContentType,
+  WebSearchConnectionProvider,
+  WebSearchConnectionTestDiagnostic,
   WebSearchRequest,
   WebSearchScope,
 } from "@/web-search/types";
@@ -32,7 +35,6 @@ import { BraveWebSearchProvider } from "@/web-search/providers/brave";
 import { TavilyWebSearchProvider } from "@/web-search/providers/tavily";
 import {
   discoverConfiguredMcpTool,
-  McpWebSearchProvider,
 } from "@/web-search/providers/mcp";
 import {
   generateWebResultSummary,
@@ -81,6 +83,18 @@ webSearchRouter.get("/providers/catalog", (_req, res) => {
         },
       },
       {
+        id: "crossref",
+        displayName: "Crossref",
+        kind: "academic",
+        requiresApiKey: false,
+        defaultBaseUrl: "https://api.crossref.org",
+        capabilities: {
+          supportsDateRange: true,
+          supportsExactLookup: true,
+          supportsPagination: true,
+        },
+      },
+      {
         id: "tavily",
         displayName: "Tavily",
         kind: "web",
@@ -102,6 +116,18 @@ webSearchRouter.get("/providers/catalog", (_req, res) => {
           supportsDateRange: true,
           supportsLanguage: true,
           supportsDomainFilter: true,
+          supportsPagination: true,
+        },
+      },
+      {
+        id: "github",
+        displayName: "GitHub Repositories",
+        kind: "web",
+        requiresApiKey: false,
+        defaultBaseUrl: "https://api.github.com",
+        capabilities: {
+          supportsDateRange: true,
+          supportsLanguage: true,
           supportsPagination: true,
         },
       },
@@ -208,6 +234,42 @@ webSearchRouter.post("/connections/:id/test", async (req, res) => {
     res.status(404).json({ success: false, error: "Web Search connection not found." });
     return;
   }
+  if (connection.provider === "mcp") {
+    try {
+      const discovery = await discoverConfiguredMcpTool(connection);
+      const message = `Discovered ${discovery.tools.length} MCP tool(s).`;
+      const diagnostic = {
+        stage: "tool",
+        code: "MCP_DISCOVERY_OK",
+        retryable: true,
+        message,
+        provider: connection.provider,
+        transport: connection.settings.mcpTransport,
+      } satisfies WebSearchConnectionTestDiagnostic;
+      updateWebSearchConnectionTest(connection.id, "success", message);
+      res.json({
+        success: true,
+        data: {
+          status: "healthy",
+          checkedAt: new Date().toISOString(),
+          message,
+          diagnostic,
+          discoveredTools: discovery.tools,
+          selectedTool: discovery.tool,
+        },
+      });
+    } catch (error) {
+      const diagnostic = buildConnectionDiagnostic(error, connection);
+      const message = redactConnectionMessage(diagnostic.message, connection.apiKey);
+      updateWebSearchConnectionTest(connection.id, "failed", message);
+      res.status(503).json({
+        success: false,
+        error: message,
+        details: { diagnostic },
+      });
+    }
+    return;
+  }
   const provider =
     connection.provider === "openalex"
       ? new OpenAlexWebSearchProvider(fetch, () => connection)
@@ -215,22 +277,39 @@ webSearchRouter.post("/connections/:id/test", async (req, res) => {
         ? new TavilyWebSearchProvider(fetch, () => connection)
         : connection.provider === "brave"
           ? new BraveWebSearchProvider(fetch, () => connection)
-          : connection.provider === "mcp"
-            ? new McpWebSearchProvider(() => connection)
-            : null;
+          : null;
   if (!provider) {
     res.status(400).json({ success: false, error: "Provider test is not implemented." });
     return;
   }
-  const health = await provider.healthCheck();
-  const status = health.status === "healthy" ? "success" : "failed";
-  const message = redactConnectionMessage(health.message ?? health.status, connection.apiKey);
-  updateWebSearchConnectionTest(connection.id, status, message);
-  res.status(status === "success" ? 200 : 503).json({
-    success: status === "success",
-    data: { ...health, message },
-    error: status === "success" ? undefined : message,
-  });
+  try {
+    const health = await provider.healthCheck();
+    const status = health.status === "healthy" ? "success" : "failed";
+    const diagnostic: WebSearchConnectionTestDiagnostic = {
+      stage: health.status === "healthy" ? "unknown" : "network",
+      code: `PROVIDER_${health.status.toUpperCase()}`,
+      retryable: health.status !== "unavailable",
+      message: health.message ?? health.status,
+      provider: connection.provider,
+    };
+    const message = redactConnectionMessage(diagnostic.message, connection.apiKey);
+    updateWebSearchConnectionTest(connection.id, status, message);
+    res.status(status === "success" ? 200 : 503).json({
+      success: status === "success",
+      data: { ...health, message, diagnostic },
+      error: status === "success" ? undefined : message,
+      details: status === "success" ? undefined : { diagnostic },
+    });
+  } catch (error) {
+    const diagnostic = buildConnectionDiagnostic(error, connection);
+    const message = redactConnectionMessage(diagnostic.message, connection.apiKey);
+    updateWebSearchConnectionTest(connection.id, "failed", message);
+    res.status(503).json({
+      success: false,
+      error: message,
+      details: { diagnostic },
+    });
+  }
 });
 
 webSearchRouter.post("/", (req, res) => {
@@ -404,8 +483,19 @@ webSearchRouter.post("/:sessionId/retry", (req, res) => {
     res.status(409).json({ success: false, error: "Only failed or partial sessions can be retried." });
     return;
   }
-  queueMicrotask(() => void executeWebSearchSession(session.id));
-  res.status(202).json({ success: true, data: { sessionId: session.id, status: "planning" } });
+  try {
+    const providerIds = parseRetryProviderIds(req.body);
+    queueMicrotask(() => void retryWebSearchProviders(session.id, providerIds));
+    res.status(202).json({
+      success: true,
+      data: { sessionId: session.id, status: "searching", providerIds },
+    });
+  } catch (error) {
+    res.status(400).json({
+      success: false,
+      error: error instanceof Error ? error.message : "Invalid retry request.",
+    });
+  }
 });
 
 export function startWebSearchCleanup(): () => void {
@@ -453,6 +543,7 @@ export function parseWebSearchRequest(value: unknown): WebSearchRequest {
   return {
     query,
     scope: scope as WebSearchScope,
+    concepts: parseConcepts(input.concepts),
     contentTypes: contentTypes.length > 0 ? (contentTypes as WebSearchContentType[]) : undefined,
     dateRange: parseDateRange(input.dateRange),
     languages: parseStringArray(input.languages, 5),
@@ -466,6 +557,41 @@ export function parseWebSearchRequest(value: unknown): WebSearchRequest {
     autoSummarize: input.autoSummarize === true,
     allowQueryRewrite: input.allowQueryRewrite === true,
   };
+}
+
+function parseConcepts(value: unknown): WebSearchRequest["concepts"] {
+  if (value === undefined) return undefined;
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("concepts must be an object.");
+  }
+  const input = value as Record<string, unknown>;
+  const concepts = {
+    must: parseConceptList(input.must, "concepts.must"),
+    should: parseConceptList(input.should, "concepts.should"),
+    exclude: parseConceptList(input.exclude, "concepts.exclude"),
+    requireMustMatch: input.requireMustMatch === true,
+  };
+  if (
+    concepts.must.length === 0 &&
+    concepts.should.length === 0 &&
+    concepts.exclude.length === 0 &&
+    !concepts.requireMustMatch
+  ) {
+    return undefined;
+  }
+  return concepts;
+}
+
+function parseConceptList(value: unknown, field: string): string[] {
+  if (value === undefined) return [];
+  if (!Array.isArray(value) || value.length > 12 || value.some((item) => typeof item !== "string")) {
+    throw new Error(`${field} must be an array of up to 12 strings.`);
+  }
+  const concepts = [...new Set(value.map((item) => item.trim()).filter(Boolean))];
+  if (concepts.some((concept) => concept.length > 80)) {
+    throw new Error(`${field} items must contain at most 80 characters.`);
+  }
+  return concepts;
 }
 
 function parseStringArray(value: unknown, limit: number): string[] {
@@ -530,6 +656,23 @@ function parseWebSaveRequest(value: unknown): {
   };
 }
 
+function parseRetryProviderIds(value: unknown): string[] | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("Retry request must be an object.");
+  }
+  const input = value as Record<string, unknown>;
+  const providerIds = parseStringArray(
+    input.providerIds ?? input.providers,
+    10,
+  ).map((providerId) => providerId.toLowerCase());
+  const allowed = new Set(["arxiv", "openalex", "crossref", "tavily", "brave", "github", "mcp"]);
+  if (providerIds.some((providerId) => !allowed.has(providerId))) {
+    throw new Error("Retry providers contain an unsupported value.");
+  }
+  return providerIds.length > 0 ? providerIds : undefined;
+}
+
 function writeSse(res: Response, eventId: number, type: string, data: Record<string, unknown>): void {
   res.write(`id: ${eventId}\nevent: ${type}\ndata: ${JSON.stringify(data)}\n\n`);
 }
@@ -563,18 +706,57 @@ function parseConnectionInput(value: unknown, id?: string): WebSearchConnectionW
       : {};
   if (provider === "mcp") {
     const transport = settingsInput.mcpTransport ?? existing?.settings.mcpTransport ?? "stdio";
-    if (transport !== "stdio") {
-      throw new Error("Only stdio Search MCP connections are supported in this release.");
+    if (transport !== "stdio" && transport !== "streamable_http") {
+      throw new Error("settings.mcpTransport must be stdio or streamable_http.");
+    }
+    const apiKey =
+      typeof input.apiKey === "string" && input.apiKey.trim()
+        ? input.apiKey.trim()
+        : input.clearApiKey === true
+          ? undefined
+          : existing?.apiKey;
+    const toolName = readBoundedString(
+      settingsInput.mcpToolName ?? existing?.settings.mcpToolName,
+      "settings.mcpToolName",
+      200,
+    );
+    if (transport === "streamable_http") {
+      const endpoint = readBoundedString(
+        settingsInput.mcpEndpoint ?? existing?.settings.mcpEndpoint,
+        "settings.mcpEndpoint",
+        2048,
+      );
+      if (!apiKey) {
+        throw new Error("HTTP Search MCP connections require a local authentication token.");
+      }
+      return {
+        id,
+        provider,
+        name,
+        enabled: input.enabled === undefined ? (existing?.enabled ?? true) : input.enabled === true,
+        isPrimary:
+          input.isPrimary === undefined ? (existing?.isPrimary ?? false) : input.isPrimary === true,
+        settings: {
+          mcpTransport: "streamable_http",
+          mcpEndpoint: endpoint,
+          mcpToolName: toolName,
+          mcpInputAdapter: parseStringMap(
+            settingsInput.mcpInputAdapter ?? existing?.settings.mcpInputAdapter,
+            "settings.mcpInputAdapter",
+            8,
+          ),
+          mcpOutputAdapter: parseOutputAdapter(
+            settingsInput.mcpOutputAdapter ?? existing?.settings.mcpOutputAdapter,
+          ),
+        },
+        apiKey,
+        clearApiKey: input.clearApiKey === true,
+      };
     }
     const command = readBoundedString(
       settingsInput.mcpCommand ?? existing?.settings.mcpCommand,
       "settings.mcpCommand",
       2048,
-    );
-    const toolName = readBoundedString(
-      settingsInput.mcpToolName ?? existing?.settings.mcpToolName,
-      "settings.mcpToolName",
-      200,
     );
     const args = parseBoundedStringArray(
       settingsInput.mcpArgs ?? existing?.settings.mcpArgs ?? [],
@@ -603,6 +785,8 @@ function parseConnectionInput(value: unknown, id?: string): WebSearchConnectionW
           settingsInput.mcpOutputAdapter ?? existing?.settings.mcpOutputAdapter,
         ),
       },
+      apiKey,
+      clearApiKey: input.clearApiKey === true,
     };
   }
   const baseUrl =
@@ -723,4 +907,55 @@ function parseOutputAdapter(
 
 function redactConnectionMessage(message: string, apiKey: string | undefined): string {
   return redactSensitiveText(message, apiKey ? [apiKey] : []);
+}
+
+function buildConnectionDiagnostic(
+  error: unknown,
+  connection: { provider: WebSearchConnectionProvider; settings: { mcpTransport?: "stdio" | "streamable_http" }; apiKey?: string },
+): WebSearchConnectionTestDiagnostic {
+  const message = error instanceof Error ? error.message : "Web Search connection test failed.";
+  const normalized = message.toLowerCase();
+  const diagnostic: WebSearchConnectionTestDiagnostic = {
+    stage: "unknown",
+    code: "UNKNOWN_ERROR",
+    retryable: true,
+    message,
+    provider: connection.provider,
+    transport: connection.settings.mcpTransport,
+  };
+  if (
+    /not configured|missing|must contain|must be|invalid json|invalid schema|unsupported value|must use https|loopback|trusted/.test(
+      normalized,
+    )
+  ) {
+    diagnostic.stage = normalized.includes("trusted") || normalized.includes("loopback") ? "security" : "configuration";
+    diagnostic.code = "INVALID_CONFIGURATION";
+    diagnostic.retryable = false;
+    return diagnostic;
+  }
+  if (/401|403|unauthor|auth|token/.test(normalized)) {
+    diagnostic.stage = "authentication";
+    diagnostic.code = "AUTHENTICATION_FAILED";
+    diagnostic.retryable = false;
+    return diagnostic;
+  }
+  if (/timeout|timed out|fetch failed|network|dns|econn|enotfound|econnrefused|socket|connection closed/.test(normalized)) {
+    diagnostic.stage = "network";
+    diagnostic.code = "NETWORK_UNAVAILABLE";
+    diagnostic.retryable = true;
+    return diagnostic;
+  }
+  if (/schema|items path|structured content|malformed json|invalid response/.test(normalized)) {
+    diagnostic.stage = "schema";
+    diagnostic.code = "SCHEMA_MISMATCH";
+    diagnostic.retryable = false;
+    return diagnostic;
+  }
+  if (/tool .*not discovered|unknown tool|tools\/list|tools\/call|discovery/.test(normalized)) {
+    diagnostic.stage = "tool";
+    diagnostic.code = "TOOL_DISCOVERY_FAILED";
+    diagnostic.retryable = true;
+    return diagnostic;
+  }
+  return diagnostic;
 }

@@ -12,13 +12,13 @@ const BUDGETS: Record<WebSearchBudgetPreset, WebSearchPlan["budget"]> = {
     maxTotalLatencyMs: 12_000,
   },
   balanced: {
-    maxProviderCalls: 4,
+    maxProviderCalls: 6,
     maxResultsPerProvider: 10,
     maxTotalResults: 30,
     maxTotalLatencyMs: 25_000,
   },
   broad: {
-    maxProviderCalls: 5,
+    maxProviderCalls: 7,
     maxResultsPerProvider: 20,
     maxTotalResults: 80,
     maxTotalLatencyMs: 35_000,
@@ -26,7 +26,9 @@ const BUDGETS: Record<WebSearchBudgetPreset, WebSearchPlan["budget"]> = {
 };
 
 export function createWebSearchPlan(request: WebSearchRequest): WebSearchPlan {
-  const normalizedQuery = normalizeQuery(request.query);
+  const originalNormalizedQuery = normalizeQuery(request.query);
+  const rewrite = rewriteQuerySafely(originalNormalizedQuery, request);
+  const normalizedQuery = rewrite.rewrittenQuery ?? originalNormalizedQuery;
   const intent = detectIntent(normalizedQuery);
   const requestedProviders = new Set(request.providers?.map((value) => value.toLowerCase()));
   const providerAllowed = (providerId: string) =>
@@ -51,6 +53,15 @@ export function createWebSearchPlan(request: WebSearchRequest): WebSearchPlan {
             : "Scholarly metadata and publication discovery",
       });
     }
+    if (providerAllowed("crossref")) {
+      providerCalls.push({
+        providerId: "crossref",
+        query: normalizedQuery,
+        reason: doi
+          ? "DOI metadata completion through Crossref"
+          : "Publication venue, publisher, DOI, and citation metadata enrichment",
+      });
+    }
   }
   if (request.scope !== "academic") {
     if (providerAllowed("tavily")) {
@@ -70,6 +81,13 @@ export function createWebSearchPlan(request: WebSearchRequest): WebSearchPlan {
             : "Fallback technical Web discovery",
       });
     }
+    if (providerAllowed("github") && (intent === "code_lookup" || request.scope === "mixed")) {
+      providerCalls.push({
+        providerId: "github",
+        query: normalizedQuery,
+        reason: "Code repository discovery linked to papers and technical content",
+      });
+    }
   }
   if (requestedProviders.has("mcp")) {
     providerCalls.push({
@@ -78,7 +96,19 @@ export function createWebSearchPlan(request: WebSearchRequest): WebSearchPlan {
       reason: "User-enabled Search MCP provider",
     });
   }
-  const concepts = extractConcepts(normalizedQuery);
+  const requestedConcepts = normalizeRequestedConcepts(request.concepts);
+  const originalConcepts = mergeConceptInputs(
+    extractConcepts(originalNormalizedQuery),
+    requestedConcepts,
+  );
+  const rewrittenConcepts = rewrite.applied ? extractConcepts(normalizedQuery) : originalConcepts;
+  const concepts = {
+    must: originalConcepts.must,
+    should: [...new Set([...originalConcepts.should, ...rewrittenConcepts.must])]
+      .filter((concept) => !originalConcepts.must.includes(concept))
+      .slice(0, 8),
+    exclude: originalConcepts.exclude,
+  };
   const budgetPreset = request.searchBudget ?? "balanced";
   const baseBudget = {
     ...BUDGETS[budgetPreset],
@@ -110,8 +140,87 @@ export function createWebSearchPlan(request: WebSearchRequest): WebSearchPlan {
     concepts,
     providerCalls: selectedCalls.slice(0, budget.maxProviderCalls),
     budget,
-    rewrite: { applied: false },
+    rewrite,
   };
+}
+
+function mergeConceptInputs(
+  extracted: WebSearchPlan["concepts"],
+  requested: WebSearchPlan["concepts"],
+): WebSearchPlan["concepts"] {
+  return {
+    must: [...new Set([...(requested.must.length ? requested.must : extracted.must)])].slice(0, 12),
+    should: [...new Set([...requested.should, ...extracted.should])].slice(0, 12),
+    exclude: [...new Set([...requested.exclude, ...extracted.exclude])].slice(0, 12),
+  };
+}
+
+function normalizeRequestedConcepts(
+  concepts: WebSearchRequest["concepts"],
+): WebSearchPlan["concepts"] {
+  return {
+    must: normalizeConceptList(concepts?.must),
+    should: normalizeConceptList(concepts?.should),
+    exclude: normalizeConceptList(concepts?.exclude),
+  };
+}
+
+function normalizeConceptList(values: string[] | undefined): string[] {
+  if (!values) return [];
+  return [...new Set(values.map(normalizeQuery).filter((value) => value.length > 0))];
+}
+
+function rewriteQuerySafely(
+  query: string,
+  request: WebSearchRequest,
+): NonNullable<WebSearchPlan["rewrite"]> {
+  if (!request.allowQueryRewrite) return { applied: false };
+  if (detectIntent(query) === "exact_identifier") return { applied: false };
+
+  const expansions = acronymExpansions(query);
+  const chineseExpansions = query.match(/[\u4e00-\u9fff]/u)
+    ? chineseResearchExpansions(query)
+    : [];
+  const added = [...new Set([...expansions, ...chineseExpansions])]
+    .filter((term) => !query.toLowerCase().includes(term.toLowerCase()))
+    .slice(0, 6);
+  if (added.length === 0) return { applied: false };
+
+  return {
+    applied: true,
+    rewrittenQuery: normalizeQuery(`${query} ${added.join(" ")}`),
+    reason:
+      "Expanded common research abbreviations while preserving the original query and date filters.",
+  };
+}
+
+function acronymExpansions(query: string): string[] {
+  const patterns: Array<[RegExp, string]> = [
+    [/\bllms?\b/i, "large language models"],
+    [/\brag\b/i, "retrieval augmented generation"],
+    [/\brlhf\b/i, "reinforcement learning from human feedback"],
+    [/\bsft\b/i, "supervised fine tuning"],
+    [/\bmoe\b/i, "mixture of experts"],
+    [/\beval(s|uation)?\b/i, "benchmark evaluation"],
+    [/\bagent(s|ic)?\b/i, "AI agents"],
+  ];
+  return patterns
+    .filter(([pattern]) => pattern.test(query))
+    .map(([, expansion]) => expansion);
+}
+
+function chineseResearchExpansions(query: string): string[] {
+  const patterns: Array<[RegExp, string]> = [
+    [/大模型|语言模型/u, "large language models"],
+    [/检索增强|知识库/u, "retrieval augmented generation"],
+    [/智能体|代理/u, "AI agents"],
+    [/评测|评估/u, "benchmark evaluation"],
+    [/代码|仓库|实现/u, "GitHub implementation repository"],
+    [/论文|文献/u, "academic papers"],
+  ];
+  return patterns
+    .filter(([pattern]) => pattern.test(query))
+    .map(([, expansion]) => expansion);
 }
 
 function selectLowCostMixedCalls(
@@ -123,7 +232,12 @@ function selectLowCostMixedCalls(
     calls.find((call) => call.providerId === "openalex");
   return [
     ...(academic ? [academic] : []),
-    ...calls.filter((call) => call.providerId === "tavily" || call.providerId === "brave"),
+    ...calls.filter((call) => call.providerId === "tavily"),
+    ...calls.filter((call) => call.providerId === "github"),
+    ...calls.filter(
+      (call) =>
+        call.providerId === "brave",
+    ),
   ];
 }
 

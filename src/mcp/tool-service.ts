@@ -20,8 +20,10 @@ import type {
 const MCP_PROVIDER_WHITELIST = new Set([
   "arxiv",
   "openalex",
+  "crossref",
   "tavily",
   "brave",
+  "github",
   "mcp",
 ]);
 const MCP_CONTENT_TYPE_WHITELIST = new Set([

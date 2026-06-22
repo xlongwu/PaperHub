@@ -1,27 +1,41 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { FormEvent, Fragment, useEffect, useMemo, useState, useTransition } from "react";
+import {
+  FormEvent,
+  Fragment,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useTransition,
+} from "react";
 import { useSearchParams } from "react-router-dom";
 import { DocumentCard, EmptyBlock, LoadingBlock, PaginationBar, SectionHeader } from "../components";
 import {
   generateSearchReport,
   createWebSearch,
+  getWebSearchEventsUrl,
   getWebSearchSession,
+  getWebSearchHealth,
   getIndexCoverage,
   getTagCloud,
   recordSearchFeedback,
-  recordWebSearchResultOpen,
+  retryWebSearchSession,
   searchDocuments,
   saveWebSearchResult,
   summarizeWebSearch,
+  summarizeWebSearchResult,
   type TimeRangePreset,
 } from "../lib/api";
 import { SEARCH_UI } from "@/i18n";
 import { useAppLanguage } from "../app-language";
 import type {
   WebSearchBudgetPreset,
+  WebSearchContentType,
+  WebSearchRequest,
   WebSearchScope,
   WebSearchSummary,
 } from "@/web-search/types";
+import { WebResultCard, WebSummaryView } from "../web-search-result-card";
 
 const sourceOptions = [
   { label: "arXiv", value: "arxiv" },
@@ -40,7 +54,26 @@ const timeRangeOptions: Array<{ label: string; value: TimeRangePreset }> = [
 
 const PAGE_SIZE = 10;
 const WEB_SEARCH_STATE_KEY = "paperhub.web-search.state.v1";
+const WEB_SEARCH_EVENT_KEY_PREFIX = "paperhub.web-search.last-event.";
 const LOCAL_SEARCH_STATE_KEY = "paperhub.local-search.state.v1";
+
+const webContentTypeOptions: Array<{ label: string; value: WebSearchContentType }> = [
+  { label: "Papers", value: "paper" },
+  { label: "Official blogs", value: "official_blog" },
+  { label: "Technical articles", value: "technical_article" },
+  { label: "Documentation", value: "documentation" },
+  { label: "Repositories", value: "repository" },
+];
+
+const webProviderOptions = [
+  { label: "arXiv", value: "arxiv" },
+  { label: "OpenAlex", value: "openalex" },
+  { label: "Crossref", value: "crossref" },
+  { label: "Tavily", value: "tavily" },
+  { label: "Brave", value: "brave" },
+  { label: "GitHub", value: "github" },
+  { label: "Search MCP", value: "mcp" },
+];
 
 interface WebSearchDraft {
   query: string;
@@ -52,7 +85,15 @@ interface WebSearchDraft {
   searchBudget: WebSearchBudgetPreset;
   maxResults: number;
   autoSummarize: boolean;
-  includeSearchMcp: boolean;
+  contentTypes: WebSearchContentType[];
+  languages: string;
+  mustConcepts: string;
+  shouldConcepts: string;
+  excludeConcepts: string;
+  requireMustMatch: boolean;
+  sort: "relevance" | "recent";
+  allowQueryRewrite: boolean;
+  providers: string[];
   sessionId?: string;
 }
 
@@ -122,7 +163,24 @@ function WebSearchPanel(): JSX.Element {
   );
   const [maxResults, setMaxResults] = useState(initialDraft.maxResults);
   const [autoSummarize, setAutoSummarize] = useState(initialDraft.autoSummarize);
-  const [includeSearchMcp, setIncludeSearchMcp] = useState(initialDraft.includeSearchMcp);
+  const [contentTypes, setContentTypes] = useState<WebSearchContentType[]>(
+    initialDraft.contentTypes,
+  );
+  const [languages, setLanguages] = useState(initialDraft.languages);
+  const [mustConcepts, setMustConcepts] = useState(initialDraft.mustConcepts);
+  const [shouldConcepts, setShouldConcepts] = useState(initialDraft.shouldConcepts);
+  const [excludeConcepts, setExcludeConcepts] = useState(initialDraft.excludeConcepts);
+  const [requireMustMatch, setRequireMustMatch] = useState(initialDraft.requireMustMatch);
+  const [sort, setSort] = useState<"relevance" | "recent">(initialDraft.sort);
+  const [allowQueryRewrite, setAllowQueryRewrite] = useState(
+    initialDraft.allowQueryRewrite,
+  );
+  const [providers, setProviders] = useState<string[]>(initialDraft.providers);
+  const [advancedOpen, setAdvancedOpen] = useState(() => hasAdvancedWebSearchCriteria(initialDraft));
+  const [sseFailed, setSseFailed] = useState(false);
+  const [latestEvent, setLatestEvent] = useState<{ type: string; id: string } | null>(null);
+  const [resultSummaries, setResultSummaries] = useState<Record<string, WebSearchSummary>>({});
+  const processedEventIds = useRef(new Set<string>());
   const sessionId = params.get("session") ?? initialDraft.sessionId ?? null;
 
   useEffect(() => {
@@ -142,7 +200,15 @@ function WebSearchPanel(): JSX.Element {
       searchBudget,
       maxResults,
       autoSummarize,
-      includeSearchMcp,
+      contentTypes,
+      languages,
+      mustConcepts,
+      shouldConcepts,
+      excludeConcepts,
+      requireMustMatch,
+      sort,
+      allowQueryRewrite,
+      providers,
       sessionId: sessionId ?? undefined,
     });
   }, [
@@ -155,7 +221,15 @@ function WebSearchPanel(): JSX.Element {
     searchBudget,
     maxResults,
     autoSummarize,
-    includeSearchMcp,
+    contentTypes,
+    languages,
+    mustConcepts,
+    shouldConcepts,
+    excludeConcepts,
+    requireMustMatch,
+    sort,
+    allowQueryRewrite,
+    providers,
     sessionId,
   ]);
   const createMutation = useMutation({
@@ -177,13 +251,86 @@ function WebSearchPanel(): JSX.Element {
       const status = queryState.state.data?.status;
       return status && ["completed", "partial", "failed", "cancelled", "expired"].includes(status)
         ? false
-        : 750;
+        : sseFailed || !hasEventSource()
+          ? 750
+          : false;
     },
   });
   const session = sessionQuery.data;
+  const healthQuery = useQuery({
+    queryKey: ["web-search-health"],
+    queryFn: getWebSearchHealth,
+    staleTime: 30_000,
+  });
+  const providerHealth = useMemo(() => {
+    return new Map(
+      (healthQuery.data?.providers ?? []).map((provider) => [provider.providerId, provider]),
+    );
+  }, [healthQuery.data]);
+  const advancedSummary = buildAdvancedWebSearchSummary({
+    contentTypes,
+    languages,
+    includeDomains,
+    excludeDomains,
+    providers,
+    sort,
+    allowQueryRewrite,
+    searchBudget,
+    maxResults,
+    mustConcepts,
+    shouldConcepts,
+    excludeConcepts,
+    requireMustMatch,
+  });
+
+  useEffect(() => {
+    if (!sessionId || !hasEventSource()) return;
+    const terminal = session?.status
+      ? ["completed", "partial", "failed", "cancelled", "expired"].includes(session.status)
+      : false;
+    if (terminal) return;
+    setSseFailed(false);
+    const storageKey = `${WEB_SEARCH_EVENT_KEY_PREFIX}${sessionId}`;
+    const lastEventId = readLastEventId(storageKey);
+    const source = new EventSource(getWebSearchEventsUrl(sessionId, lastEventId));
+    const handleEvent = (event: MessageEvent) => {
+      const eventKey = `${sessionId}:${event.lastEventId || event.type}`;
+      if (processedEventIds.current.has(eventKey)) return;
+      processedEventIds.current.add(eventKey);
+      if (event.lastEventId) {
+        localStorage.setItem(storageKey, event.lastEventId);
+        setLatestEvent({ type: event.type, id: event.lastEventId });
+      }
+      if (event.type !== "heartbeat") void sessionQuery.refetch();
+      if (WEB_SEARCH_TERMINAL_EVENTS.has(event.type)) {
+        source.close();
+      }
+    };
+    for (const type of WEB_SEARCH_SSE_EVENTS) {
+      source.addEventListener(type, handleEvent);
+    }
+    source.onerror = () => {
+      source.close();
+      setSseFailed(true);
+    };
+    return () => {
+      for (const type of WEB_SEARCH_SSE_EVENTS) {
+        source.removeEventListener(type, handleEvent);
+      }
+      source.close();
+    };
+  }, [sessionId, session?.status, sessionQuery.refetch]);
+
   const synthesisMutation = useMutation({
     mutationFn: () => summarizeWebSearch(sessionId!),
     onSuccess: () => void sessionQuery.refetch(),
+  });
+  const resultSummaryMutation = useMutation({
+    mutationFn: (resultId: string) => summarizeWebSearchResult(sessionId!, resultId),
+    onSuccess: (summary, resultId) => {
+      setResultSummaries((current) => ({ ...current, [resultId]: summary }));
+      void sessionQuery.refetch();
+    },
   });
   const saveMutation = useMutation({
     mutationFn: (input: {
@@ -198,6 +345,13 @@ function WebSearchPanel(): JSX.Element {
       }),
     onSuccess: () => void sessionQuery.refetch(),
   });
+  const retryMutation = useMutation({
+    mutationFn: (providerIds?: string[]) => retryWebSearchSession(sessionId!, providerIds),
+    onSuccess: () => {
+      setSseFailed(false);
+      void sessionQuery.refetch();
+    },
+  });
   const groupedResults = useMemo(() => {
     const groups = new Map<string, NonNullable<typeof session>["results"]>();
     for (const result of session?.results ?? []) {
@@ -211,7 +365,12 @@ function WebSearchPanel(): JSX.Element {
               : "Technical articles";
       groups.set(label, [...(groups.get(label) ?? []), result]);
     }
-    return groups;
+    const order = ["Papers", "Official blogs", "Documentation & repositories", "Technical articles"];
+    return new Map(
+      [...groups.entries()].sort(
+        ([a], [b]) => groupOrder(order, a) - groupOrder(order, b),
+      ),
+    );
   }, [session]);
 
   return (
@@ -231,14 +390,22 @@ function WebSearchPanel(): JSX.Element {
               query: query.trim(),
               scope,
               dateRange: from || to ? { start: from || undefined, end: to || undefined } : undefined,
+              contentTypes: contentTypes.length > 0 ? contentTypes : undefined,
+              languages: parseStringList(languages),
               includeDomains: parseDomainList(includeDomains),
               excludeDomains: parseDomainList(excludeDomains),
-              providers: includeSearchMcp
-                ? ["arxiv", "openalex", "tavily", "brave", "mcp"]
-                : undefined,
+              providers: providers.length > 0 ? providers : undefined,
+              sort,
               maxResults,
               searchBudget,
               autoSummarize,
+              allowQueryRewrite,
+              concepts: buildWebConceptInput({
+                mustConcepts,
+                shouldConcepts,
+                excludeConcepts,
+                requireMustMatch,
+              }),
             });
           }}
         >
@@ -285,51 +452,177 @@ function WebSearchPanel(): JSX.Element {
               />
             </label>
           </div>
-          <div className="form-grid">
-            <label className="field">
-              <span>{SEARCH_UI.includeDomains[language]}</span>
+          <details
+            className="advanced-search-box"
+            onToggle={(event) => setAdvancedOpen(event.currentTarget.open)}
+            open={advancedOpen}
+          >
+            <summary>高级 Web 搜索设置</summary>
+            <div className="form-grid">
+              <label className="field">
+                <span>{SEARCH_UI.includeDomains[language]}</span>
+                <input
+                  className="field-input"
+                  onChange={(event) => setIncludeDomains(event.target.value)}
+                  placeholder="openai.com, github.com"
+                  value={includeDomains}
+                />
+              </label>
+              <label className="field">
+                <span>{SEARCH_UI.excludeDomains[language]}</span>
+                <input
+                  className="field-input"
+                  onChange={(event) => setExcludeDomains(event.target.value)}
+                  placeholder="example.com"
+                  value={excludeDomains}
+                />
+              </label>
+              <label className="field">
+                <span>Languages</span>
+                <input
+                  className="field-input"
+                  onChange={(event) => setLanguages(event.target.value)}
+                  placeholder="en, zh"
+                  value={languages}
+                />
+              </label>
+              <label className="field">
+                <span>Must concepts</span>
+                <input
+                  className="field-input"
+                  onChange={(event) => setMustConcepts(event.target.value)}
+                  placeholder="synthetic data, large language models"
+                  value={mustConcepts}
+                />
+              </label>
+              <label className="field">
+                <span>Should concepts</span>
+                <input
+                  className="field-input"
+                  onChange={(event) => setShouldConcepts(event.target.value)}
+                  placeholder="evaluation, human feedback"
+                  value={shouldConcepts}
+                />
+              </label>
+              <label className="field">
+                <span>Exclude concepts</span>
+                <input
+                  className="field-input"
+                  onChange={(event) => setExcludeConcepts(event.target.value)}
+                  placeholder="survey, seo"
+                  value={excludeConcepts}
+                />
+              </label>
+              <label className="field">
+                <span>Sort</span>
+                <select
+                  className="field-input"
+                  onChange={(event) => setSort(event.target.value as "relevance" | "recent")}
+                  value={sort}
+                >
+                  <option value="relevance">Relevance</option>
+                  <option value="recent">Recent first</option>
+                </select>
+              </label>
+              <label className="field">
+                <span>{SEARCH_UI.searchBudget[language]}</span>
+                <select
+                  className="field-input"
+                  onChange={(event) => setSearchBudget(event.target.value as WebSearchBudgetPreset)}
+                  value={searchBudget}
+                >
+                  <option value="low_cost">{SEARCH_UI.budgetLowCost[language]}</option>
+                  <option value="balanced">{SEARCH_UI.budgetBalanced[language]}</option>
+                  <option value="broad">{SEARCH_UI.budgetBroad[language]}</option>
+                </select>
+              </label>
+              <label className="field">
+                <span>{SEARCH_UI.maxResults[language]}</span>
+                <input
+                  className="field-input"
+                  max={100}
+                  min={1}
+                  onChange={(event) =>
+                    setMaxResults(Math.min(100, Math.max(1, Number(event.target.value) || 1)))
+                  }
+                  type="number"
+                  value={maxResults}
+                />
+              </label>
+            </div>
+            <fieldset className="filter-fieldset">
+              <legend>Content types</legend>
+              <div className="chip-row">
+                {webContentTypeOptions.map((option) => (
+                  <label className="checkbox-row compact" key={option.value}>
+                    <input
+                      checked={contentTypes.includes(option.value)}
+                      onChange={() =>
+                        setContentTypes((current) => toggleValue(current, option.value))
+                      }
+                      type="checkbox"
+                    />
+                    <span>{option.label}</span>
+                  </label>
+                ))}
+              </div>
+            </fieldset>
+            <fieldset className="filter-fieldset">
+              <legend>Providers</legend>
+              <p className="empty-description">
+                Leave empty to use the planner defaults for the selected scope.
+              </p>
+              <div className="chip-row">
+                {webProviderOptions.map((option) => {
+                  const availability = getProviderAvailability(option.value, providerHealth);
+                  const checked = providers.includes(option.value);
+                  return (
+                    <label
+                      className={`checkbox-row compact${availability.available ? "" : " muted"}`}
+                      key={option.value}
+                      title={availability.reason}
+                    >
+                      <input
+                        checked={checked}
+                        disabled={!checked && !availability.available}
+                        onChange={() => setProviders((current) => toggleValue(current, option.value))}
+                        type="checkbox"
+                      />
+                      <span>{option.label}</span>
+                      {!availability.available ? (
+                        <span className="provider-status-note">{availability.reason}</span>
+                      ) : null}
+                    </label>
+                  );
+                })}
+              </div>
+            </fieldset>
+            <label className="checkbox-row">
               <input
-                className="field-input"
-                onChange={(event) => setIncludeDomains(event.target.value)}
-                placeholder="openai.com, github.com"
-                value={includeDomains}
+                checked={allowQueryRewrite}
+                onChange={(event) => setAllowQueryRewrite(event.target.checked)}
+                type="checkbox"
               />
+              <span>Allow safe query rewrite</span>
             </label>
-            <label className="field">
-              <span>{SEARCH_UI.excludeDomains[language]}</span>
+            <label className="checkbox-row">
               <input
-                className="field-input"
-                onChange={(event) => setExcludeDomains(event.target.value)}
-                placeholder="example.com"
-                value={excludeDomains}
+                checked={requireMustMatch}
+                onChange={(event) => setRequireMustMatch(event.target.checked)}
+                type="checkbox"
               />
+              <span>Require all must concepts</span>
             </label>
-            <label className="field">
-              <span>{SEARCH_UI.searchBudget[language]}</span>
-              <select
-                className="field-input"
-                onChange={(event) => setSearchBudget(event.target.value as WebSearchBudgetPreset)}
-                value={searchBudget}
-              >
-                <option value="low_cost">{SEARCH_UI.budgetLowCost[language]}</option>
-                <option value="balanced">{SEARCH_UI.budgetBalanced[language]}</option>
-                <option value="broad">{SEARCH_UI.budgetBroad[language]}</option>
-              </select>
-            </label>
-            <label className="field">
-              <span>{SEARCH_UI.maxResults[language]}</span>
-              <input
-                className="field-input"
-                max={100}
-                min={1}
-                onChange={(event) =>
-                  setMaxResults(Math.min(100, Math.max(1, Number(event.target.value) || 1)))
-                }
-                type="number"
-                value={maxResults}
-              />
-            </label>
-          </div>
+          </details>
+          {advancedSummary.length > 0 ? (
+            <div className="active-filter-summary" aria-label="Active Web Search advanced filters">
+              {advancedSummary.map((item) => (
+                <span className="chip" key={item}>
+                  {item}
+                </span>
+              ))}
+            </div>
+          ) : null}
           <label className="checkbox-row">
             <input
               checked={autoSummarize}
@@ -337,14 +630,6 @@ function WebSearchPanel(): JSX.Element {
               type="checkbox"
             />
             <span>{SEARCH_UI.autoSummarize[language]}</span>
-          </label>
-          <label className="checkbox-row">
-            <input
-              checked={includeSearchMcp}
-              onChange={(event) => setIncludeSearchMcp(event.target.checked)}
-              type="checkbox"
-            />
-            <span>{SEARCH_UI.includeMcp[language]}</span>
           </label>
           <button className="primary-button" disabled={createMutation.isPending} type="submit">
             {createMutation.isPending ? SEARCH_UI.searching[language] : SEARCH_UI.searchButton[language]}
@@ -371,6 +656,19 @@ function WebSearchPanel(): JSX.Element {
             title={SEARCH_UI.webResultsTitle[language]}
           />
           {sessionQuery.isLoading ? <LoadingBlock /> : null}
+          {session?.plan?.rewrite ? (
+            <div className="active-filter-summary" aria-label="Web Search query rewrite status">
+              <span className={`chip ${session.plan.rewrite.applied ? "chip-success" : ""}`}>
+                {session.plan.rewrite.applied ? "Query rewritten" : "Original query used"}
+              </span>
+              {session.plan.rewrite.rewrittenQuery ? (
+                <span className="chip">{session.plan.rewrite.rewrittenQuery}</span>
+              ) : null}
+              {session.plan.rewrite.reason ? (
+                <span className="chip">{session.plan.rewrite.reason}</span>
+              ) : null}
+            </div>
+          ) : null}
           {!sessionId ? (
             <EmptyBlock
               description={SEARCH_UI.noSessionDescription[language]}
@@ -411,122 +709,39 @@ function WebSearchPanel(): JSX.Element {
               <Fragment key={group}>
                 <h3 className="section-title">{group}</h3>
                 {results.map((result) => (
-                  <article className="paper-card" key={result.id}>
-                <div className="paper-meta-row">
-                  <span>{result.origin.sourceName ?? result.origin.domain}</span>
-                  <span>{result.contentType}</span>
-                  <span>{result.publishedAt?.slice(0, 10) ?? "Date unavailable"}</span>
-                </div>
-                <a
-                  href={result.url}
-                  onClick={() => {
-                    void recordWebSearchResultOpen(result.sessionId, result.id).catch(
-                      () => undefined,
-                    );
-                  }}
-                  rel="noreferrer"
-                  target="_blank"
-                >
-                  <h3 className="paper-title">{result.title}</h3>
-                </a>
-                <p className="empty-description">{result.authors.join(", ") || "Authors unavailable"}</p>
-                <p>{result.abstract ?? result.snippet ?? "No abstract returned."}</p>
-                <div className="chip-row">
-                  {result.identifiers.arxivId ? (
-                    <span className="chip">arXiv:{result.identifiers.arxivId}</span>
-                  ) : null}
-                  <span className="chip">
-                    {result.localState.status === "saved" ? "Local" : "Temporary"}
-                  </span>
-                </div>
-                <div className="web-result-actions">
-                  <button
-                    className="secondary-button"
-                    disabled={
+                  <WebResultCard
+                    key={result.id}
+                    language={language}
+                    result={result}
+                    resultSummary={resultSummaries[result.id]}
+                    resultSummaryError={
+                      resultSummaryMutation.isError &&
+                      resultSummaryMutation.variables === result.id
+                        ? resultSummaryMutation.error
+                        : undefined
+                    }
+                    resultSummaryPending={
+                      resultSummaryMutation.isPending &&
+                      resultSummaryMutation.variables === result.id
+                    }
+                    saveError={
+                      saveMutation.isError &&
+                      saveMutation.variables?.resultId === result.id
+                        ? saveMutation.error
+                        : undefined
+                    }
+                    savePending={
                       saveMutation.isPending &&
                       saveMutation.variables?.resultId === result.id
                     }
-                    onClick={() =>
+                    onSave={(input) =>
                       saveMutation.mutate({
                         resultId: result.id,
-                        mode: "metadata_only",
+                        ...input,
                       })
                     }
-                    type="button"
-                  >
-                    {SEARCH_UI.saveMetadata[language]}
-                  </button>
-                  <button
-                    className="secondary-button"
-                    disabled={
-                      saveMutation.isPending &&
-                      saveMutation.variables?.resultId === result.id
-                    }
-                    onClick={() =>
-                      saveMutation.mutate({
-                        resultId: result.id,
-                        mode: "save_content",
-                      })
-                    }
-                    type="button"
-                  >
-                    {SEARCH_UI.saveContent[language]}
-                  </button>
-                  <button
-                    className="secondary-button"
-                    disabled={
-                      saveMutation.isPending &&
-                      saveMutation.variables?.resultId === result.id
-                    }
-                    onClick={() =>
-                      saveMutation.mutate({
-                        resultId: result.id,
-                        mode: "metadata_only",
-                        favorite: true,
-                      })
-                    }
-                    type="button"
-                  >
-                    {result.localState.isFavorite ? SEARCH_UI.favorited[language] : SEARCH_UI.saveFavorite[language]}
-                  </button>
-                  {result.metadata?.pdfUrl || result.identifiers.arxivId ? (
-                    <button
-                      className="secondary-button"
-                      disabled={
-                        saveMutation.isPending &&
-                        saveMutation.variables?.resultId === result.id
-                      }
-                      onClick={() =>
-                        saveMutation.mutate({
-                          resultId: result.id,
-                          mode: "download_pdf",
-                        })
-                      }
-                      type="button"
-                    >
-                      {result.localState.hasDownloadedFile
-                        ? SEARCH_UI.pdfDownloaded[language]
-                        : SEARCH_UI.downloadPdf[language]}
-                    </button>
-                  ) : null}
-                  {result.localState.documentId ? (
-                    <a
-                      className="secondary-button"
-                      href={`/documents/${encodeURIComponent(result.localState.documentId)}`}
-                    >
-                      {SEARCH_UI.openLocal[language]}
-                    </a>
-                  ) : null}
-                </div>
-                {saveMutation.isError &&
-                saveMutation.variables?.resultId === result.id ? (
-                  <p className="empty-description">
-                    {saveMutation.error instanceof Error
-                      ? saveMutation.error.message
-                      : SEARCH_UI.saveError[language]}
-                  </p>
-                ) : null}
-                  </article>
+                    onSummarize={() => resultSummaryMutation.mutate(result.id)}
+                  />
                 ))}
               </Fragment>
             ))}
@@ -538,6 +753,12 @@ function WebSearchPanel(): JSX.Element {
             kicker="Session"
             title={session?.status ?? "Idle"}
           />
+          {latestEvent ? (
+            <p className="empty-description">
+              Live event #{latestEvent.id}: {latestEvent.type}
+              {sseFailed ? " · SSE fallback polling active" : ""}
+            </p>
+          ) : null}
           <div className="stack-grid">
             {session?.providerRuns.map((run) => (
               <div className="empty-block" key={run.providerId}>
@@ -549,156 +770,32 @@ function WebSearchPanel(): JSX.Element {
                     ? ` · ${run.estimatedCredits.toFixed(3)} estimated credits`
                     : ""}
                 </p>
+                {!["success", "partial", "not_configured"].includes(run.status) &&
+                ["partial", "failed"].includes(session.status) ? (
+                  <button
+                    className="secondary-button"
+                    disabled={retryMutation.isPending}
+                    onClick={() => retryMutation.mutate([run.providerId])}
+                    type="button"
+                  >
+                    Retry {run.providerId}
+                  </button>
+                ) : null}
               </div>
             ))}
           </div>
+          {session && ["partial", "failed"].includes(session.status) ? (
+            <button
+              className="secondary-button"
+              disabled={retryMutation.isPending}
+              onClick={() => retryMutation.mutate(undefined)}
+              type="button"
+            >
+              Retry failed providers
+            </button>
+          ) : null}
         </aside>
       </div>
-    </>
-  );
-}
-
-function WebSummaryView({ summary }: { summary: WebSearchSummary }): JSX.Element {
-  const synthesis = summary.synthesis;
-  const citationByResult = new Map(
-    summary.citations.map((citation) => [citation.resultId, citation]),
-  );
-  if (!synthesis) return <></>;
-  return (
-    <div className="web-summary-content">
-      {synthesis.reportTitle ? <h2 className="section-title">{synthesis.reportTitle}</h2> : null}
-      {synthesis.researchQuestion ? (
-        <div className="empty-block">
-          <p className="empty-title">研究问题</p>
-          <p>{synthesis.researchQuestion}</p>
-        </div>
-      ) : null}
-      <h3>总体概述</h3>
-      <p>{synthesis.overview}</p>
-      {synthesis.keyFindings.length > 0 ? (
-        <>
-          <h3>核心结论</h3>
-          <ul>
-            {synthesis.keyFindings.map((finding) => (
-              <li key={`${finding.claim}:${finding.citations.join(",")}`}>
-                {finding.claim}{" "}
-                <CitationLinks
-                  citationByResult={citationByResult}
-                  resultIds={finding.citations}
-                />
-              </li>
-            ))}
-          </ul>
-        </>
-      ) : null}
-      {(synthesis.methodSections ?? []).map((section, index) => (
-        <section key={`${section.title}:${index}`}>
-          <h3>{`${index + 1}. ${section.title}`}</h3>
-          <p>{section.summary}</p>
-          {section.designLogic ? (
-            <p>
-              <strong>设计逻辑：</strong>
-              {section.designLogic}
-            </p>
-          ) : null}
-          {section.methodology ? (
-            <p>
-              <strong>方法论与具体流程：</strong>
-              {section.methodology}
-            </p>
-          ) : null}
-          {section.whyEffective ? (
-            <p>
-              <strong>为什么有效：</strong>
-              {section.whyEffective}
-            </p>
-          ) : null}
-          {section.implementation ? (
-            <p>
-              <strong>实施中如何应用：</strong>
-              {section.implementation}
-            </p>
-          ) : null}
-          {section.boundaries ? (
-            <p>
-              <strong>适用边界：</strong>
-              {section.boundaries}
-            </p>
-          ) : null}
-          <CitationLinks citationByResult={citationByResult} resultIds={section.resultIds} />
-        </section>
-      ))}
-      {(synthesis.methodSections?.length ?? 0) === 0 && synthesis.resultGroups.length > 0 ? (
-        <>
-          <h3>方法分类</h3>
-          {synthesis.resultGroups.map((group) => (
-            <section key={group.title}>
-              <h4>{group.title}</h4>
-              <p>{group.summary}</p>
-              <CitationLinks citationByResult={citationByResult} resultIds={group.resultIds} />
-            </section>
-          ))}
-        </>
-      ) : null}
-      {synthesis.comparison ? (
-        <section>
-          <h3>跨方法比较</h3>
-          <p>{synthesis.comparison}</p>
-        </section>
-      ) : null}
-      {(synthesis.recommendations?.length ?? 0) > 0 ? (
-        <section>
-          <h3>实施建议</h3>
-          <ol>
-            {synthesis.recommendations?.map((recommendation) => (
-              <li key={recommendation}>{recommendation}</li>
-            ))}
-          </ol>
-        </section>
-      ) : null}
-      {synthesis.conclusion ? (
-        <section>
-          <h3>最终结论</h3>
-          <p>{synthesis.conclusion}</p>
-        </section>
-      ) : null}
-      {synthesis.limitations.length > 0 ? (
-        <div className="empty-block">
-          <p className="empty-title">Evidence limitations</p>
-          {synthesis.limitations.map((limitation) => (
-            <p className="empty-description" key={limitation}>
-              {limitation}
-            </p>
-          ))}
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
-function CitationLinks({
-  citationByResult,
-  resultIds,
-}: {
-  citationByResult: Map<string, WebSearchSummary["citations"][number]>;
-  resultIds: string[];
-}): JSX.Element {
-  return (
-    <>
-      {resultIds.map((resultId) => {
-        const citation = citationByResult.get(resultId);
-        return citation ? (
-          <a
-            aria-label={`Citation ${citation.number}: ${citation.title}`}
-            href={citation.url}
-            key={resultId}
-            rel="noreferrer"
-            target="_blank"
-          >
-            [{citation.number}]
-          </a>
-        ) : null;
-      })}
     </>
   );
 }
@@ -714,7 +811,15 @@ function readWebSearchDraft(): WebSearchDraft {
     searchBudget: "balanced",
     maxResults: 20,
     autoSummarize: true,
-    includeSearchMcp: false,
+    contentTypes: [],
+    languages: "",
+    mustConcepts: "",
+    shouldConcepts: "",
+    excludeConcepts: "",
+    requireMustMatch: false,
+    sort: "relevance",
+    allowQueryRewrite: false,
+    providers: [],
   };
   if (typeof window === "undefined") return fallback;
   try {
@@ -729,6 +834,25 @@ function readWebSearchDraft(): WebSearchDraft {
         ? stored.searchBudget!
         : fallback.searchBudget,
       maxResults: Math.min(100, Math.max(1, Number(stored.maxResults) || fallback.maxResults)),
+      contentTypes: Array.isArray(stored.contentTypes)
+        ? stored.contentTypes.filter((value): value is WebSearchContentType =>
+            ["paper", "official_blog", "technical_article", "documentation", "repository"].includes(
+              String(value),
+            ),
+          )
+        : fallback.contentTypes,
+      languages: typeof stored.languages === "string" ? stored.languages : fallback.languages,
+      mustConcepts: typeof stored.mustConcepts === "string" ? stored.mustConcepts : fallback.mustConcepts,
+      shouldConcepts:
+        typeof stored.shouldConcepts === "string" ? stored.shouldConcepts : fallback.shouldConcepts,
+      excludeConcepts:
+        typeof stored.excludeConcepts === "string" ? stored.excludeConcepts : fallback.excludeConcepts,
+      requireMustMatch: stored.requireMustMatch === true,
+      sort: stored.sort === "recent" ? "recent" : fallback.sort,
+      allowQueryRewrite: stored.allowQueryRewrite === true,
+      providers: Array.isArray(stored.providers)
+        ? stored.providers.filter((value): value is string => typeof value === "string")
+        : fallback.providers,
     };
   } catch {
     return fallback;
@@ -752,6 +876,145 @@ function buildWebSearchRestoreParams(draft: WebSearchDraft): URLSearchParams {
 function parseDomainList(value: string): string[] | undefined {
   const domains = [...new Set(value.split(/[\s,;]+/).map((item) => item.trim()).filter(Boolean))];
   return domains.length > 0 ? domains : undefined;
+}
+
+function parseStringList(value: string): string[] | undefined {
+  const items = [...new Set(value.split(/[\s,;]+/).map((item) => item.trim()).filter(Boolean))];
+  return items.length > 0 ? items : undefined;
+}
+
+function toggleValue<T>(values: T[], value: T): T[] {
+  return values.includes(value) ? values.filter((item) => item !== value) : [...values, value];
+}
+
+function groupOrder(order: string[], group: string): number {
+  const index = order.indexOf(group);
+  return index === -1 ? order.length : index;
+}
+
+function hasAdvancedWebSearchCriteria(draft: WebSearchDraft): boolean {
+  return buildAdvancedWebSearchSummary(draft).length > 0;
+}
+
+function buildAdvancedWebSearchSummary(input: {
+  contentTypes: WebSearchContentType[];
+  languages: string;
+  includeDomains: string;
+  excludeDomains: string;
+  mustConcepts: string;
+  shouldConcepts: string;
+  excludeConcepts: string;
+  requireMustMatch: boolean;
+  providers: string[];
+  sort: "relevance" | "recent";
+  allowQueryRewrite: boolean;
+  searchBudget: WebSearchBudgetPreset;
+  maxResults: number;
+}): string[] {
+  const items: string[] = [];
+  if (input.contentTypes.length > 0) items.push(`Types: ${input.contentTypes.join(", ")}`);
+  if (parseStringList(input.languages)?.length) items.push(`Languages: ${input.languages}`);
+  if (parseDomainList(input.includeDomains)?.length) items.push(`Include: ${input.includeDomains}`);
+  if (parseDomainList(input.excludeDomains)?.length) items.push(`Exclude: ${input.excludeDomains}`);
+  if (parseStringList(input.mustConcepts)?.length) items.push(`Must: ${input.mustConcepts}`);
+  if (parseStringList(input.shouldConcepts)?.length) items.push(`Should: ${input.shouldConcepts}`);
+  if (parseStringList(input.excludeConcepts)?.length) items.push(`Concept exclude: ${input.excludeConcepts}`);
+  if (input.requireMustMatch) items.push("Require all must concepts");
+  if (input.providers.length > 0) items.push(`Providers: ${input.providers.join(", ")}`);
+  if (input.sort === "recent") items.push("Sort: recent");
+  if (input.allowQueryRewrite) items.push("Safe rewrite enabled");
+  if (input.searchBudget !== "balanced") items.push(`Budget: ${input.searchBudget}`);
+  if (input.maxResults !== 20) items.push(`Max: ${input.maxResults}`);
+  return items;
+}
+
+function buildWebConceptInput(input: {
+  mustConcepts: string;
+  shouldConcepts: string;
+  excludeConcepts: string;
+  requireMustMatch: boolean;
+}): WebSearchRequest["concepts"] {
+  const must = parseStringList(input.mustConcepts);
+  const should = parseStringList(input.shouldConcepts);
+  const exclude = parseStringList(input.excludeConcepts);
+  if (
+    !must?.length &&
+    !should?.length &&
+    !exclude?.length &&
+    !input.requireMustMatch
+  ) {
+    return undefined;
+  }
+  return {
+    ...(must?.length ? { must } : {}),
+    ...(should?.length ? { should } : {}),
+    ...(exclude?.length ? { exclude } : {}),
+    ...(input.requireMustMatch ? { requireMustMatch: true } : {}),
+  };
+}
+
+function getProviderAvailability(
+  providerId: string,
+  providerHealth: Map<
+    string,
+    {
+      configured: boolean;
+      enabled: boolean;
+      lastTestStatus?: "success" | "failed";
+    }
+  >,
+): { available: boolean; reason: string } {
+  const health = providerHealth.get(providerId);
+  if (!health) return { available: true, reason: "Health not loaded yet" };
+  if (!health.configured) return { available: false, reason: "Not configured" };
+  if (!health.enabled) return { available: false, reason: "Disabled" };
+  if (health.lastTestStatus === "failed") return { available: false, reason: "Connection test failed" };
+  return { available: true, reason: "Available" };
+}
+
+const WEB_SEARCH_SSE_EVENTS = [
+  "plan.completed",
+  "query.rewritten",
+  "provider.started",
+  "provider.completed",
+  "provider.failed",
+  "provider.partial",
+  "provider.timeout",
+  "provider.rate_limited",
+  "provider.not_configured",
+  "provider.cache_hit",
+  "provider.failover",
+  "aggregation.started",
+  "aggregation.completed",
+  "summary.started",
+  "summary.completed",
+  "summary.skipped",
+  "retry.started",
+  "retry.completed",
+  "session.completed",
+  "session.partial",
+  "session.failed",
+  "session.cancelled",
+  "session.interrupted",
+  "heartbeat",
+] as const;
+
+const WEB_SEARCH_TERMINAL_EVENTS = new Set<string>([
+  "session.completed",
+  "session.partial",
+  "session.failed",
+  "session.cancelled",
+  "session.interrupted",
+]);
+
+function hasEventSource(): boolean {
+  return typeof window !== "undefined" && typeof window.EventSource !== "undefined";
+}
+
+function readLastEventId(storageKey: string): number {
+  const value = typeof window === "undefined" ? null : localStorage.getItem(storageKey);
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : 0;
 }
 
 function LocalSearchPanel(): JSX.Element {

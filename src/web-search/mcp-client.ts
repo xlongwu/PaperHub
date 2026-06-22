@@ -22,7 +22,14 @@ export interface McpToolResult {
   isError?: boolean;
 }
 
-export class McpStdioClient {
+export interface McpClient {
+  connect(): Promise<void>;
+  listTools(): Promise<McpToolDefinition[]>;
+  callTool(name: string, args: Record<string, unknown>): Promise<McpToolResult>;
+  close(): void;
+}
+
+export class McpStdioClient implements McpClient {
   private child?: ChildProcessWithoutNullStreams;
   private nextId = 1;
   private buffer = "";
@@ -169,25 +176,114 @@ export class McpStdioClient {
   }
 }
 
+export class McpHttpClient implements McpClient {
+  private nextId = 1;
+  private sessionId?: string;
+
+  constructor(
+    private readonly endpoint: string,
+    private readonly authToken: string,
+    private readonly timeoutMs: number,
+    private readonly signal?: AbortSignal,
+    private readonly fetchImpl: typeof fetch = fetch,
+  ) {}
+
+  async connect(): Promise<void> {
+    validateMcpHttpEndpoint(this.endpoint);
+    if (!this.authToken.trim()) {
+      throw new Error("HTTP Search MCP requires a local authentication token.");
+    }
+    if (this.signal?.aborted) throw new Error("MCP connection was cancelled.");
+    await this.request("initialize", {
+      protocolVersion: "2024-11-05",
+      capabilities: {},
+      clientInfo: { name: "paperhub-search-provider", version: "0.1.1" },
+    });
+    await this.notify("notifications/initialized", {});
+  }
+
+  async listTools(): Promise<McpToolDefinition[]> {
+    const result = (await this.request("tools/list", {})) as { tools?: McpToolDefinition[] };
+    if (!Array.isArray(result.tools)) throw new Error("MCP tools/list returned an invalid schema.");
+    return result.tools;
+  }
+
+  async callTool(name: string, args: Record<string, unknown>): Promise<McpToolResult> {
+    const result = (await this.request("tools/call", {
+      name,
+      arguments: args,
+    })) as McpToolResult;
+    if (!result || typeof result !== "object") {
+      throw new Error("MCP tools/call returned an invalid schema.");
+    }
+    if (result.isError) {
+      throw new Error(readToolText(result) || `MCP tool "${name}" failed.`);
+    }
+    return result;
+  }
+
+  close(): void {
+    this.sessionId = undefined;
+  }
+
+  private request(method: string, params: Record<string, unknown>): Promise<unknown> {
+    return this.send({ jsonrpc: "2.0", id: this.nextId++, method, params });
+  }
+
+  private async notify(method: string, params: Record<string, unknown>): Promise<void> {
+    await this.send({ jsonrpc: "2.0", method, params });
+  }
+
+  private async send(payload: Record<string, unknown>): Promise<unknown> {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
+    const onAbort = () => controller.abort();
+    this.signal?.addEventListener("abort", onAbort, { once: true });
+    try {
+      const response = await this.fetchImpl(this.endpoint, {
+        method: "POST",
+        headers: {
+          "Accept": "application/json, text/event-stream",
+          "Authorization": `Bearer ${this.authToken}`,
+          "Content-Type": "application/json",
+          "MCP-Protocol-Version": "2024-11-05",
+          "Origin": "http://127.0.0.1",
+          ...(this.sessionId ? { "Mcp-Session-Id": this.sessionId } : {}),
+        },
+        body: JSON.stringify(payload),
+        signal: controller.signal,
+      });
+      const sessionId = response.headers.get("mcp-session-id");
+      if (sessionId) this.sessionId = sessionId;
+      const body = await readMcpHttpResponse(response);
+      if (!response.ok) {
+        throw new Error(`MCP HTTP request failed (${response.status}): ${body.slice(0, 500)}`);
+      }
+      if (!("id" in payload)) return undefined;
+      const parsed = parseJsonRpcHttpResponse(body);
+      if (parsed.error) throw new Error(parsed.error.message);
+      return parsed.result;
+    } catch (error) {
+      if (controller.signal.aborted) throw new Error("MCP request timed out.");
+      throw error;
+    } finally {
+      clearTimeout(timeout);
+      this.signal?.removeEventListener("abort", onAbort);
+    }
+  }
+}
+
 export async function withMcpClient<T>(
   connection: WebSearchConnectionConfig,
   timeoutMs: number,
   signal: AbortSignal | undefined,
-  operation: (client: McpStdioClient) => Promise<T>,
+  operation: (client: McpClient) => Promise<T>,
 ): Promise<T> {
   const settings = connection.settings;
-  if (settings.mcpTransport !== "stdio") {
-    throw new Error("Only stdio Search MCP connections are supported in this release.");
-  }
-  if (!settings.mcpCommand || !settings.mcpToolName) {
-    throw new Error("Search MCP command and tool name are required.");
-  }
-  const client = new McpStdioClient(
-    settings.mcpCommand,
-    settings.mcpArgs ?? [],
-    timeoutMs,
-    signal,
-  );
+  const client =
+    settings.mcpTransport === "streamable_http"
+      ? createHttpClient(connection, timeoutMs, signal)
+      : createStdioClient(connection, timeoutMs, signal);
   try {
     await client.connect();
     return await operation(client);
@@ -204,4 +300,109 @@ export function readToolText(result: McpToolResult): string {
       .join("\n")
       .trim() ?? ""
   );
+}
+
+export function validateMcpHttpEndpoint(endpoint: string): URL {
+  let parsed: URL;
+  try {
+    parsed = new URL(endpoint);
+  } catch {
+    throw new Error("settings.mcpEndpoint must be a valid HTTP(S) URL.");
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    throw new Error("settings.mcpEndpoint must use HTTP or HTTPS.");
+  }
+  if (parsed.username || parsed.password) {
+    throw new Error("settings.mcpEndpoint must not include credentials.");
+  }
+  const hostname = normalizeHostname(parsed.hostname);
+  if (hostname === "0.0.0.0" || hostname === "::" || hostname === "[::]") {
+    throw new Error("HTTP Search MCP must not target 0.0.0.0.");
+  }
+  if (isLoopbackHostname(hostname)) return parsed;
+  if (!trustedMcpHttpHosts().has(hostname)) {
+    throw new Error("HTTP Search MCP endpoint must be loopback or explicitly trusted.");
+  }
+  if (parsed.protocol !== "https:") {
+    throw new Error("Trusted non-loopback HTTP Search MCP endpoints must use HTTPS.");
+  }
+  return parsed;
+}
+
+function createStdioClient(
+  connection: WebSearchConnectionConfig,
+  timeoutMs: number,
+  signal: AbortSignal | undefined,
+): McpStdioClient {
+  const settings = connection.settings;
+  if (!settings.mcpCommand || !settings.mcpToolName) {
+    throw new Error("Search MCP command and tool name are required.");
+  }
+  return new McpStdioClient(
+    settings.mcpCommand,
+    settings.mcpArgs ?? [],
+    timeoutMs,
+    signal,
+  );
+}
+
+function createHttpClient(
+  connection: WebSearchConnectionConfig,
+  timeoutMs: number,
+  signal: AbortSignal | undefined,
+): McpHttpClient {
+  const endpoint = connection.settings.mcpEndpoint;
+  if (!endpoint || !connection.settings.mcpToolName) {
+    throw new Error("HTTP Search MCP endpoint and tool name are required.");
+  }
+  if (!connection.apiKey) {
+    throw new Error("HTTP Search MCP requires a local authentication token.");
+  }
+  return new McpHttpClient(endpoint, connection.apiKey, timeoutMs, signal);
+}
+
+async function readMcpHttpResponse(response: Response): Promise<string> {
+  const text = await response.text();
+  const contentType = response.headers.get("content-type") ?? "";
+  if (!contentType.includes("text/event-stream")) return text;
+  const dataLines = text
+    .split(/\r?\n/)
+    .filter((line) => line.startsWith("data:"))
+    .map((line) => line.slice(5).trim())
+    .filter(Boolean);
+  return dataLines.at(-1) ?? "";
+}
+
+function parseJsonRpcHttpResponse(text: string): JsonRpcResponse {
+  try {
+    const parsed = JSON.parse(text) as JsonRpcResponse;
+    if (!parsed || parsed.jsonrpc !== "2.0") {
+      throw new Error("invalid");
+    }
+    return parsed;
+  } catch {
+    throw new Error("MCP HTTP server returned malformed JSON.");
+  }
+}
+
+function trustedMcpHttpHosts(): Set<string> {
+  return new Set(
+    (process.env["PAPERHUB_TRUSTED_MCP_HTTP_HOSTS"] ?? "")
+      .split(",")
+      .map((value) => normalizeHostname(value.trim()))
+      .filter(Boolean),
+  );
+}
+
+function isLoopbackHostname(hostname: string): boolean {
+  return (
+    hostname === "localhost" ||
+    hostname === "127.0.0.1" ||
+    hostname === "::1" ||
+    hostname === "[::1]"
+  );
+}
+
+function normalizeHostname(hostname: string): string {
+  return hostname.toLowerCase().replace(/^\[(.*)\]$/, "$1");
 }

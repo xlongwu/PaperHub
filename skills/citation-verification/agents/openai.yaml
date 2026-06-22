@@ -1,0 +1,12 @@
+interface:
+  display_name: "Citation Verification"
+  short_description: "Verify citations with PaperHub evidence"
+  default_prompt: "Use $citation-verification to check these citations."
+dependencies:
+  tools:
+    - type: "mcp"
+      value: "paperhub-local"
+      description: "PaperHub local MCP library, web search, result, and summary tools"
+      transport: "stdio"
+policy:
+  allow_implicit_invocation: true

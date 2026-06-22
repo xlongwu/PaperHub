@@ -45,8 +45,8 @@ export function getWebSearchMetricsForRange(
 export function getWebSearchHealth(): WebSearchHealth {
   const metrics = getWebSearchMetricsForRange();
   const connections = listWebSearchConnections();
-  const providers = ["arxiv", "openalex", "tavily", "brave", "mcp"].map((providerId) => {
-    if (providerId === "arxiv") {
+  const providers = ["arxiv", "openalex", "crossref", "tavily", "brave", "github", "mcp"].map((providerId) => {
+    if (providerId === "arxiv" || providerId === "crossref" || providerId === "github") {
       return { providerId, configured: true, enabled: true };
     }
     const connection = connections.find((item) => item.provider === providerId);

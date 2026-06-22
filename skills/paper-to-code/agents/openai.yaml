@@ -1,0 +1,12 @@
+interface:
+  display_name: "Paper to Code"
+  short_description: "Find implementation repositories for papers"
+  default_prompt: "Use $paper-to-code to find code linked to this paper."
+dependencies:
+  tools:
+    - type: "mcp"
+      value: "paperhub-local"
+      description: "PaperHub local MCP search, session, result, and local document tools"
+      transport: "stdio"
+policy:
+  allow_implicit_invocation: true

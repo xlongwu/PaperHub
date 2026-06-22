@@ -320,25 +320,33 @@ async function collectResultEvidence(
       fetchedAt = cached.fetchedAt;
     } else {
       try {
-        const fetched = await safeFetch(result.url, options.safeFetchOptions);
+        const fetched = await safeFetch(result.url, {
+          respectRobotsTxt: true,
+          ...options.safeFetchOptions,
+        });
         fetchedAt = fetched.fetchedAt;
         if (fetched.contentType !== "application/pdf") {
-          const extracted = extractHtmlContent(new TextDecoder().decode(fetched.body), fetched.finalUrl);
+          const html = new TextDecoder().decode(fetched.body);
+          const extracted = extractHtmlContent(html, fetched.finalUrl);
           if (extracted.text) {
-            pageText = extracted.text;
-            upsertCachedWebContent({
-              cacheKey: contentCacheKey(result.url),
-              url: result.url,
-              canonicalUrl: extracted.canonicalUrl ?? fetched.finalUrl,
-              contentType: fetched.contentType,
-              title: extracted.title,
-              author: extracted.author,
-              publishedAt: extracted.publishedAt,
-              textContent: extracted.text,
-              contentHash: fetched.contentHash,
-              fetchedAt,
-              expiresAt: new Date(Date.now() + CONTENT_CACHE_TTL_MS).toISOString(),
-            });
+            if (looksPaywalled(html, extracted.text)) {
+              console.warn(`[web-search-summary] paywalled content downgraded for ${result.id}`);
+            } else {
+              pageText = extracted.text;
+              upsertCachedWebContent({
+                cacheKey: contentCacheKey(result.url),
+                url: result.url,
+                canonicalUrl: extracted.canonicalUrl ?? fetched.finalUrl,
+                contentType: fetched.contentType,
+                title: extracted.title,
+                author: extracted.author,
+                publishedAt: extracted.publishedAt,
+                textContent: extracted.text,
+                contentHash: fetched.contentHash,
+                fetchedAt,
+                expiresAt: new Date(Date.now() + CONTENT_CACHE_TTL_MS).toISOString(),
+              });
+            }
           }
         }
       } catch (error) {
@@ -353,6 +361,20 @@ async function collectResultEvidence(
   const chunks = buildEvidenceChunks(result, pageText, fetchedAt);
   replaceEvidenceChunks(result.sessionId, result.id, chunks, result.expiresAt);
   return chunks;
+}
+
+function looksPaywalled(html: string, text: string): boolean {
+  const combined = `${html.slice(0, 20_000)} ${text.slice(0, 20_000)}`.toLowerCase();
+  return [
+    "subscribe to continue",
+    "purchase access",
+    "institutional access",
+    "log in to access",
+    "login to access",
+    "paywall",
+    "article access",
+    "rent this article",
+  ].some((needle) => combined.includes(needle));
 }
 
 function buildSummaryPrompt(

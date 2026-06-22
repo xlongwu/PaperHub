@@ -1,0 +1,12 @@
+interface:
+  display_name: "Zotero Sync"
+  short_description: "Stage PaperHub records for Zotero sync"
+  default_prompt: "Use $zotero-sync to prepare these PaperHub papers for Zotero."
+dependencies:
+  tools:
+    - type: "mcp"
+      value: "paperhub-local"
+      description: "PaperHub local MCP local library, web result, and save tools"
+      transport: "stdio"
+policy:
+  allow_implicit_invocation: true

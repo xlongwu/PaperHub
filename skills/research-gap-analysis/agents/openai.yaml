@@ -1,0 +1,12 @@
+interface:
+  display_name: "Research Gap Analysis"
+  short_description: "Find research gaps from PaperHub evidence"
+  default_prompt: "Use $research-gap-analysis to identify evidence-backed research gaps."
+dependencies:
+  tools:
+    - type: "mcp"
+      value: "paperhub-local"
+      description: "PaperHub local MCP library, web search, session, and synthesis tools"
+      transport: "stdio"
+policy:
+  allow_implicit_invocation: true

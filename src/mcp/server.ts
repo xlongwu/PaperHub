@@ -35,7 +35,7 @@ const TOOLS = [
       dateRange: dateRangeSchema(),
       languages: arraySchema(stringSchema("Language code")),
       providers: arraySchema(
-        enumSchema(["arxiv", "openalex", "tavily", "brave", "mcp"]),
+        enumSchema(["arxiv", "openalex", "crossref", "tavily", "brave", "github", "mcp"]),
       ),
       includeDomains: arraySchema(stringSchema("Domain")),
       excludeDomains: arraySchema(stringSchema("Domain")),

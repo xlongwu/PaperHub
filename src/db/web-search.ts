@@ -1,5 +1,6 @@
 import { getDb } from "./index";
 import type {
+  ProviderSearchResponse,
   ProviderRunStatus,
   WebSearchEvent,
   WebSearchPlan,
@@ -161,6 +162,14 @@ export function insertWebSearchResults(results: WebSearchResult[]): void {
       );
     });
   })();
+}
+
+export function replaceWebSearchResults(
+  sessionId: string,
+  results: WebSearchResult[],
+): void {
+  getDb().prepare("DELETE FROM web_search_results WHERE session_id = ?").run(sessionId);
+  insertWebSearchResults(results);
 }
 
 export function listWebSearchResults(sessionId: string): WebSearchResult[] {
@@ -331,6 +340,7 @@ export function cleanupExpiredWebSearchData(now = new Date()): {
   sessions: number;
   results: number;
   providerRuns: number;
+  providerResponses: number;
   evidence: number;
   summaries: number;
   content: number;
@@ -356,13 +366,16 @@ export function cleanupExpiredWebSearchData(now = new Date()): {
     const providerRuns = db
       .prepare("DELETE FROM web_search_provider_runs WHERE expires_at <= ?")
       .run(isoNow).changes;
+    const providerResponses = db
+      .prepare("DELETE FROM web_search_provider_cache WHERE expires_at <= ?")
+      .run(isoNow).changes;
     const sessions = db
       .prepare(
         `DELETE FROM web_search_sessions
          WHERE expires_at <= ? AND status = 'expired'`,
       )
       .run(deleteBefore).changes;
-    return { sessions, results, providerRuns };
+    return { sessions, results, providerRuns, providerResponses };
   })();
   const usageEvents = db
     .prepare("DELETE FROM web_search_usage_events WHERE created_at <= ?")
@@ -486,6 +499,7 @@ export function getWebSearchCacheCounts(): {
   evidence: number;
   summaries: number;
   content: number;
+  providerResponses: number;
 } {
   const db = getDb();
   const count = (table: string): number =>
@@ -496,7 +510,64 @@ export function getWebSearchCacheCounts(): {
     evidence: count("web_search_result_evidence"),
     summaries: count("web_search_summaries"),
     content: count("web_content_cache"),
+    providerResponses: count("web_search_provider_cache"),
   };
+}
+
+export function getCachedWebSearchProviderResponse(
+  cacheKey: string,
+  now = new Date(),
+): { response: ProviderSearchResponse; cachedAt: string } | null {
+  const row = getDb()
+    .prepare(
+      `SELECT response_json, created_at
+       FROM web_search_provider_cache
+       WHERE cache_key = ? AND expires_at > ?`,
+    )
+    .get(cacheKey, now.toISOString()) as
+    | { response_json: string; created_at: string }
+    | undefined;
+  if (!row) return null;
+  return {
+    response: parseJson<ProviderSearchResponse>(row.response_json),
+    cachedAt: row.created_at,
+  };
+}
+
+export function upsertCachedWebSearchProviderResponse(input: {
+  cacheKey: string;
+  providerId: string;
+  normalizedQuery: string;
+  filters: Record<string, unknown>;
+  response: ProviderSearchResponse;
+  expiresAt: string;
+}): void {
+  const now = new Date().toISOString();
+  getDb()
+    .prepare(
+      `INSERT INTO web_search_provider_cache(
+         cache_key, provider_id, normalized_query, filters_json, response_json,
+         status, result_count, created_at, updated_at, expires_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(cache_key) DO UPDATE SET
+         response_json = excluded.response_json,
+         status = excluded.status,
+         result_count = excluded.result_count,
+         updated_at = excluded.updated_at,
+         expires_at = excluded.expires_at`,
+    )
+    .run(
+      input.cacheKey,
+      input.providerId,
+      input.normalizedQuery,
+      JSON.stringify(input.filters),
+      JSON.stringify(input.response),
+      input.response.status,
+      input.response.items.length,
+      now,
+      now,
+      input.expiresAt,
+    );
 }
 
 function listWebSearchProviderRuns(sessionId: string): WebSearchProviderRun[] {

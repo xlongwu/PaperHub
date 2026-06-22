@@ -3971,3 +3971,110 @@ docs/w7-manual-checklist.md
 ```
 
 Windows 正式签收仍需在 x64 实机分别执行 NSIS 与 Portable 搜索、总结、保存、重启恢复测试。
+
+---
+
+# 附录 H：未完成功能清单
+
+> 更新日期：2026-06-22  
+> 范围：基于当前代码实现对照 V3 方案的剩余工作  
+> 状态说明：以下条目不否定已完成的 Web Search、MCP、Skills、安全和监控主链路；仅记录尚未完全覆盖方案要求的功能点。
+
+## H.2 行为细节待加强
+
+### H.2.1 内容类型分组与排序
+
+当前结果支持按内容类型分组展示，并实现组内排序。
+
+待加强：
+
+* Mixed 模式下显式固定分组顺序；
+* 官方博客、文档、Repository 的来源质量 Tier；
+* 防止低质量 SEO 页面压过官方来源；
+* UI 展示排序解释。
+
+### H.2.2 Concept Coverage
+
+当前排序计算 Must Concept 命中比例。
+
+待加强：
+
+* 区分 Must / Should / Exclude 的完整 UI 与 API 输入；
+* 对缺失 Must Concept 的结果执行硬过滤或显式降级；
+* 多概念查询避免只命中一个概念的结果进入顶部；
+* 在 Web Result 中展示 missing concepts。
+
+### H.2.3 单条深度总结体验
+
+后端已有：
+
+```http
+POST /api/web-search/:sessionId/results/:resultId/summarize
+```
+
+待补齐：
+
+* WebResultCard 中提供单条深度总结按钮；
+* 展示单条总结缓存状态；
+* 展示引用、证据片段和抓取失败原因；
+* Summary 失败后允许重试，不影响结果列表。
+
+### H.2.4 版权与 robots 策略
+
+当前 Safe Fetch 已限制抓取协议、目标地址、大小和内容类型。
+
+待补齐：
+
+* robots.txt / Provider 条款策略；
+* 付费墙正文识别与降级；
+* 未保存完整正文的严格保留策略审计；
+* 批量导出版权内容限制。
+
+## H.3 发布与验收待办
+
+### H.3.1 Windows 实机签收
+
+仍需在 Windows x64 实机完成：
+
+* NSIS 安装版搜索、总结、保存、收藏、PDF 下载；
+* Portable 版本同样流程；
+* 重启后 SecretStore、Session 恢复和已保存 Document 验证；
+* MCP stdio Server 在桌面包内可启动；
+* 三个 Skills 随包可用。
+
+### H.3.2 全链路真实 Provider 验证
+
+当前测试以单元和 Mock Provider 为主。
+
+待补齐：
+
+* arXiv 真实网络检索；
+* OpenAlex 真实 API Key 连接测试；
+* Crossref 真实网络检索；
+* Tavily / Brave 真实 Key 连接测试；
+* GitHub 真实 API 检索和可选 Token 限流验证；
+* stdio Search MCP 真实工具发现和搜索；
+* HTTP Search MCP 真实工具发现和搜索；
+* Provider 限流、超时和失败回退手工验收。
+
+## H.4 当前验证基线
+
+已通过的 V3 / W7 相关本地验证：
+
+```bash
+pnpm typecheck
+pnpm lint
+pnpm test src/__tests__/web-search.test.ts src/__tests__/ui-search.test.tsx
+pnpm test src/__tests__/web-search.test.ts src/__tests__/w7-security-release.test.ts
+```
+
+验证结果：
+
+```text
+typecheck   passed
+lint        passed
+Web/UI      Test Files 2 passed, Tests 56 passed
+W7 baseline Test Files 2 passed, Tests 53 passed
+```
+
+说明：普通沙箱下监听 `127.0.0.1` 的测试会因权限限制失败；提升权限后同一组测试全部通过。

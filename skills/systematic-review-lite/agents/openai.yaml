@@ -1,0 +1,12 @@
+interface:
+  display_name: "Systematic Review Lite"
+  short_description: "Run bounded structured literature reviews"
+  default_prompt: "Use $systematic-review-lite to produce a bounded evidence review."
+dependencies:
+  tools:
+    - type: "mcp"
+      value: "paperhub-local"
+      description: "PaperHub local MCP search, session, and synthesis tools"
+      transport: "stdio"
+policy:
+  allow_implicit_invocation: true

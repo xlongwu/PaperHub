@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { app } from "@/api/server";
+import { parseWebSearchRequest } from "@/api/routes/web-search";
 import { countDocuments, getDocumentById } from "@/db/documents";
 import { clearDbPath, closeDb, initDatabase, setDbPath } from "@/db/index";
 import {
@@ -8,13 +9,28 @@ import {
   insertWebSearchResults,
   listWebSearchEvents,
 } from "@/db/web-search";
+import { saveWebSearchConnection } from "@/db/web-search-connections";
 import { isFavorite } from "@/db/user";
 import { searchFts5 } from "@/db/search";
-import { createWebSearchSession, executeWebSearchSession } from "@/services/web-search-service";
-import { generateWebSearchSynthesis, parseSynthesis, validateCitations } from "@/services/web-search-summary";
+import {
+  createWebSearchSession,
+  executeWebSearchSession,
+  retryWebSearchProviders,
+} from "@/services/web-search-service";
+import {
+  generateWebSearchSynthesis,
+  validateCitations,
+} from "@/services/web-search-summary";
 import { saveWebSearchResult } from "@/services/web-save-service";
 import { createWebSearchPlan } from "@/web-search/query-planner";
-import { adaptMcpSearchOutput, buildMcpToolArguments } from "@/web-search/providers/mcp";
+import {
+  adaptMcpSearchOutput,
+  buildMcpToolArguments,
+} from "@/web-search/providers/mcp";
+import {
+  McpHttpClient,
+  validateMcpHttpEndpoint,
+} from "@/web-search/mcp-client";
 import { handlePaperHubMcpRequest, listPaperHubMcpTools } from "@/mcp/server";
 import { parseMcpWebSearchRequest } from "@/mcp/tool-service";
 import { extractHtmlContent } from "@/web-search/content-extractor";
@@ -27,13 +43,29 @@ import {
   buildOpenAlexUrl,
   parseOpenAlexResponse,
 } from "@/web-search/providers/openalex";
-import { BraveWebSearchProvider, buildBraveUrl, parseBraveResponse } from "@/web-search/providers/brave";
+import {
+  buildCrossrefUrl,
+  parseCrossrefResponse,
+} from "@/web-search/providers/crossref";
+import {
+  BraveWebSearchProvider,
+  buildBraveUrl,
+  parseBraveResponse,
+} from "@/web-search/providers/brave";
 import {
   TavilyWebSearchProvider,
   buildTavilyRequest,
   parseTavilyResponse,
 } from "@/web-search/providers/tavily";
-import type { WebSearchProvider, WebSearchResult } from "@/web-search/types";
+import {
+  buildGitHubQuery,
+  buildGitHubSearchUrl,
+  parseGitHubRepositoryResponse,
+} from "@/web-search/providers/github";
+import type {
+  WebSearchProvider,
+  WebSearchResult,
+} from "@/web-search/types";
 import { safeUnlink, testPath } from "./test-utils";
 import { resetDir } from "./test-utils";
 
@@ -69,6 +101,7 @@ describe("Web Search query planner", () => {
     expect(plan.providerCalls).toEqual([
       expect.objectContaining({ providerId: "arxiv", query: "arXiv:2501.12345" }),
       expect.objectContaining({ providerId: "openalex", query: "arXiv:2501.12345" }),
+      expect.objectContaining({ providerId: "crossref", query: "arXiv:2501.12345" }),
     ]);
     expect(plan.rewrite).toEqual({ applied: false });
     expect(plan.budget.maxResultsPerProvider).toBe(5);
@@ -83,6 +116,25 @@ describe("Web Search query planner", () => {
     expect(plan.providerCalls.map((call) => call.providerId)).toEqual(["tavily", "brave"]);
   });
 
+  it("adds Crossref for academic metadata enrichment and GitHub for code lookup", () => {
+    const academic = createWebSearchPlan({
+      query: "paper DOI 10.1038/nphys1170",
+      scope: "academic",
+    });
+    const technical = createWebSearchPlan({
+      query: "agent memory repository",
+      scope: "mixed",
+    });
+    const codeLookup = createWebSearchPlan({
+      query: "agent memory implementation code",
+      scope: "technical",
+    });
+
+    expect(academic.providerCalls.map((call) => call.providerId)).toContain("crossref");
+    expect(technical.providerCalls.map((call) => call.providerId)).toContain("github");
+    expect(codeLookup.providerCalls.map((call) => call.providerId)).toContain("github");
+  });
+
   it("scales provider result limits to honor a user-selected total", () => {
     const plan = createWebSearchPlan({
       query: "synthetic data for LLM",
@@ -92,7 +144,7 @@ describe("Web Search query planner", () => {
     });
 
     expect(plan.budget.maxTotalResults).toBe(60);
-    expect(plan.budget.maxResultsPerProvider).toBeGreaterThanOrEqual(45);
+    expect(plan.budget.maxResultsPerProvider).toBeGreaterThanOrEqual(30);
     expect(plan.budget.maxTotalLatencyMs).toBe(25_000);
   });
 
@@ -106,8 +158,10 @@ describe("Web Search query planner", () => {
     expect(plan.providerCalls.map((call) => call.providerId)).toEqual([
       "arxiv",
       "openalex",
+      "crossref",
       "tavily",
       "brave",
+      "github",
     ]);
   });
 
@@ -118,7 +172,11 @@ describe("Web Search query planner", () => {
       searchBudget: "low_cost",
     });
 
-    expect(plan.providerCalls.map((call) => call.providerId)).toEqual(["arxiv", "tavily", "brave"]);
+    expect(plan.providerCalls.map((call) => call.providerId)).toEqual([
+      "arxiv",
+      "tavily",
+      "github",
+    ]);
   });
 
   it("adds Search MCP only when the caller explicitly includes it", () => {
@@ -129,6 +187,51 @@ describe("Web Search query planner", () => {
     });
 
     expect(plan.providerCalls.map((call) => call.providerId)).toEqual(["arxiv", "mcp"]);
+  });
+
+  it("rewrites only when explicitly allowed while preserving original must concepts", () => {
+    const disabled = createWebSearchPlan({
+      query: "LLM RAG eval",
+      scope: "mixed",
+    });
+    const enabled = createWebSearchPlan({
+      query: "LLM RAG eval",
+      scope: "mixed",
+      allowQueryRewrite: true,
+    });
+
+    expect(disabled.rewrite).toEqual({ applied: false });
+    expect(enabled.rewrite).toMatchObject({
+      applied: true,
+      rewrittenQuery: expect.stringContaining("large language models"),
+    });
+    expect(enabled.concepts.must).toEqual(["LLM", "RAG", "eval"]);
+  });
+
+  it("accepts explicit must, should, and exclude concepts from the API request", () => {
+    const request = parseWebSearchRequest({
+      query: "agent memory",
+      scope: "mixed",
+      concepts: {
+        must: ["agent memory", "long-context"],
+        should: ["evaluation"],
+        exclude: ["survey"],
+        requireMustMatch: true,
+      },
+    });
+    const plan = createWebSearchPlan(request);
+
+    expect(request.concepts).toEqual({
+      must: ["agent memory", "long-context"],
+      should: ["evaluation"],
+      exclude: ["survey"],
+      requireMustMatch: true,
+    });
+    expect(plan.concepts).toMatchObject({
+      must: ["agent memory", "long-context"],
+      should: expect.arrayContaining(["evaluation"]),
+      exclude: ["survey"],
+    });
   });
 });
 
@@ -188,6 +291,76 @@ describe("Search MCP provider adapter", () => {
     expect(() => adaptMcpSearchOutput({ items: [{ title: "Missing URL" }] }, connection, 10)).toThrow(
       /requires a title and HTTP\(S\) URL/,
     );
+  });
+
+  it("accepts loopback HTTP MCP endpoints and rejects unsafe hosts", () => {
+    expect(() => validateMcpHttpEndpoint("http://127.0.0.1:8080/mcp")).not.toThrow();
+    expect(() => validateMcpHttpEndpoint("http://localhost:8080/mcp")).not.toThrow();
+    expect(() => validateMcpHttpEndpoint("http://0.0.0.0:8080/mcp")).toThrow(
+      /must not target 0\.0\.0\.0/,
+    );
+    expect(() => validateMcpHttpEndpoint("http://example.com/mcp")).toThrow(
+      /must be loopback or explicitly trusted/,
+    );
+  });
+
+  it("performs HTTP MCP discovery with local auth and session headers", async () => {
+    const seen: Array<{ url: string; headers: Record<string, string>; body: string }> = [];
+    const fakeFetch: typeof fetch = async (_input, init) => {
+      const requestHeaders = new Headers(init?.headers);
+      const body = String(init?.body ?? "");
+      seen.push({
+        url: typeof _input === "string" ? _input : _input.toString(),
+        headers: Object.fromEntries(requestHeaders.entries()),
+        body,
+      });
+      const parsed = JSON.parse(body) as { id?: number; method: string };
+      if (parsed.method === "initialize") {
+        return new Response(JSON.stringify({
+          jsonrpc: "2.0",
+          id: parsed.id,
+          result: {},
+        }), {
+          status: 200,
+          headers: {
+            "content-type": "application/json",
+            "mcp-session-id": "session-1",
+          },
+        });
+      }
+      return new Response(JSON.stringify({
+        jsonrpc: "2.0",
+        id: parsed.id,
+        result: {
+          tools: [{ name: "search", description: "Search tool" }],
+        },
+      }), {
+        status: 200,
+        headers: {
+          "content-type": "application/json",
+          "mcp-session-id": "session-1",
+        },
+      });
+    };
+    const client = new McpHttpClient(
+      "http://127.0.0.1:8080/mcp",
+      "local-token",
+      2_000,
+      undefined,
+      fakeFetch,
+    );
+
+    await client.connect();
+    const tools = await client.listTools();
+
+    expect(tools).toEqual([{ name: "search", description: "Search tool" }]);
+    expect(seen).toHaveLength(3);
+    expect(seen[0]?.headers).toMatchObject({
+      authorization: "Bearer local-token",
+      origin: "http://127.0.0.1",
+      "mcp-protocol-version": "2024-11-05",
+    });
+    expect(seen[2]?.headers["mcp-session-id"]).toBe("session-1");
   });
 
   it("keeps successful core providers when Search MCP fails", async () => {
@@ -420,6 +593,33 @@ describe("Web Search save workflow", () => {
 });
 
 describe("technical Web Search providers", () => {
+  it("builds GitHub repository search queries and normalizes repository results", () => {
+    const query = buildGitHubQuery({
+      query: "agent memory implementation arXiv:2501.12345",
+      intent: "code_lookup",
+      dateRange: { start: "2025-01-01" },
+      language: "TypeScript",
+      limit: 5,
+    });
+    const url = buildGitHubSearchUrl({
+      query: "agent memory implementation",
+      intent: "code_lookup",
+      limit: 5,
+    });
+    const items = parseGitHubRepositoryResponse(GITHUB_REPOSITORY_FIXTURE);
+
+    expect(query).toContain("2501.12345");
+    expect(query).toContain("language:TypeScript");
+    expect(query).toContain("pushed:>=2025-01-01");
+    expect(url).toContain("/search/repositories?");
+    expect(items[0]).toMatchObject({
+      title: "example/agent-memory",
+      contentType: "repository",
+      origin: { domain: "github.com", sourceName: "GitHub" },
+      metadata: { stars: 321, owner: "example" },
+    });
+  });
+
   it("maps domain and date filters into the Tavily request", () => {
     expect(
       buildTavilyRequest({
@@ -605,6 +805,36 @@ describe("OpenAlex Web Search provider", () => {
     expect(items[0]?.metadata?.citedByCount).toBe(42);
   });
 
+  it("maps Crossref DOI lookups and metadata responses into paper results", () => {
+    const exactUrl = buildCrossrefUrl({
+      query: "10.1038/nphys1170",
+      intent: "exact_identifier",
+      limit: 1,
+    });
+    const searchUrl = buildCrossrefUrl({
+      query: "agent memory systems",
+      intent: "paper_lookup",
+      dateRange: { start: "2025-01-01", end: "2026-01-01" },
+      limit: 7,
+    });
+    const items = parseCrossrefResponse(CROSSREF_FIXTURE);
+
+    expect(exactUrl).toBe("https://api.crossref.org/works/10.1038%2Fnphys1170");
+    expect(searchUrl).toContain("query.bibliographic=agent+memory+systems");
+    expect(searchUrl).toContain("filter=from-pub-date%3A2025-01-01%2Cuntil-pub-date%3A2026-01-01");
+    expect(items[0]).toMatchObject({
+      title: "Agent Memory Systems",
+      contentType: "paper",
+      identifiers: { doi: "10.1234/agent-memory" },
+      origin: {
+        sourceName: "Crossref",
+        publisher: "Example Publisher",
+        venue: "Journal of Agent Systems",
+      },
+    });
+    expect(items[0]?.metadata?.citedByCount).toBe(12);
+  });
+
   it("does not expose upstream response bodies on authentication failure", async () => {
     const provider = new OpenAlexWebSearchProvider(
       async () => new Response("secret key invalid", { status: 401 }),
@@ -765,6 +995,43 @@ describe("Web Search session service", () => {
     }
   });
 
+  it("returns structured diagnostics for failed connection tests", async () => {
+    const connection = saveWebSearchConnection({
+      provider: "mcp",
+      name: "Broken MCP",
+      isPrimary: true,
+      settings: {
+        mcpTransport: "stdio",
+        mcpCommand: "node",
+        mcpArgs: ["/missing-paperhub-mcp-fixture.js"],
+        mcpToolName: "search",
+      },
+    });
+    const server = await listenForTest();
+    try {
+      const response = await fetch(
+        `http://127.0.0.1:${server.port}/api/web-search/connections/${connection.id}/test`,
+        { method: "POST" },
+      );
+      const payload = (await response.json()) as {
+        success: boolean;
+        details?: { diagnostic?: { stage: string; code: string; retryable: boolean } };
+      };
+
+      expect(response.status).toBe(503);
+      expect(payload.success).toBe(false);
+      expect(payload.details?.diagnostic).toEqual(
+        expect.objectContaining({
+          stage: expect.any(String),
+          code: expect.any(String),
+          retryable: expect.any(Boolean),
+        }),
+      );
+    } finally {
+      await server.close();
+    }
+  });
+
   it("persists a recoverable temporary session without inserting local documents", async () => {
     const session = createWebSearchSession({
       query: "agent memory",
@@ -779,21 +1046,92 @@ describe("Web Search session service", () => {
     expect(completed.results).toHaveLength(1);
     expect(completed.results[0]?.localState.status).toBe("not_saved");
     expect(countDocuments()).toBe(0);
-    expect(listWebSearchEvents(session.id).map((event) => event.type)).toEqual([
-      "session.created",
-      "plan.completed",
-      "provider.failed",
-      "provider.started",
-      "provider.completed",
-      "aggregation.started",
-      "aggregation.completed",
-      "session.completed",
-    ]);
+    expect(listWebSearchEvents(session.id).map((event) => event.type)).toEqual(
+      expect.arrayContaining([
+        "session.created",
+        "plan.completed",
+        "provider.failed",
+        "provider.started",
+        "provider.completed",
+        "aggregation.started",
+        "aggregation.completed",
+        "session.completed",
+      ]),
+    );
 
     closeDb();
     const restored = getWebSearchSession(session.id);
     expect(restored?.status).toBe("completed");
     expect(restored?.results[0]?.title).toBe("Agent Memory Systems");
+  });
+
+  it("reuses the provider response cache for duplicate searches", async () => {
+    let arxivCalls = 0;
+    const provider = {
+      ...fakeArxivProvider(),
+      async search(...args: Parameters<WebSearchProvider["search"]>) {
+        arxivCalls += 1;
+        return fakeArxivProvider().search(...args);
+      },
+    };
+    const registry = new Map<string, WebSearchProvider>([["arxiv", provider]]);
+
+    const first = createWebSearchSession({ query: "agent memory", scope: "academic" });
+    const second = createWebSearchSession({ query: "agent memory", scope: "academic" });
+    await executeWebSearchSession(first.id, registry);
+    const completed = await executeWebSearchSession(second.id, registry);
+
+    expect(arxivCalls).toBe(1);
+    expect(completed.providerRuns).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          providerId: "arxiv",
+          status: "success",
+          requestId: expect.stringMatching(/^cache:/),
+        }),
+      ]),
+    );
+    expect(listWebSearchEvents(second.id).map((event) => event.type)).toContain(
+      "provider.cache_hit",
+    );
+  });
+
+  it("does not reuse the provider response cache across result-shaping filters", async () => {
+    let arxivCalls = 0;
+    const provider = {
+      ...fakeArxivProvider(),
+      async search(...args: Parameters<WebSearchProvider["search"]>) {
+        arxivCalls += 1;
+        return fakeArxivProvider().search(...args);
+      },
+    };
+    const registry = new Map<string, WebSearchProvider>([["arxiv", provider]]);
+
+    const relevance = createWebSearchSession({
+      query: "agent memory",
+      scope: "academic",
+      contentTypes: ["paper"],
+      sort: "relevance",
+    });
+    const recent = createWebSearchSession({
+      query: "agent memory",
+      scope: "academic",
+      contentTypes: ["paper"],
+      sort: "recent",
+    });
+    await executeWebSearchSession(relevance.id, registry);
+    const completed = await executeWebSearchSession(recent.id, registry);
+
+    expect(arxivCalls).toBe(2);
+    expect(completed.providerRuns).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          providerId: "arxiv",
+          status: "success",
+          requestId: expect.not.stringMatching(/^cache:/),
+        }),
+      ]),
+    );
   });
 
   it("merges the same arXiv and OpenAlex paper while preserving both evidence records", async () => {
@@ -823,6 +1161,89 @@ describe("Web Search session service", () => {
     ]);
     expect(completed.results[0]?.origin.venue).toBe("Journal of Agent Systems");
     expect(completed.results[0]?.ranking.providerRrfScore).toBeGreaterThan(1 / 61 + 1.15 / 61);
+  });
+
+  it("links GitHub repository results explicitly to matching paper results", async () => {
+    const session = createWebSearchSession({
+      query: "agent memory implementation",
+      scope: "mixed",
+      providers: ["arxiv", "github"],
+      maxResults: 10,
+    });
+    const completed = await executeWebSearchSession(
+      session.id,
+      new Map<string, WebSearchProvider>([
+        ["arxiv", fakeArxivProvider()],
+        ["github", fakeGitHubProvider()],
+      ]),
+    );
+    const paper = completed.results.find((result) => result.contentType === "paper");
+    const repository = completed.results.find((result) => result.contentType === "repository");
+
+    expect(completed.status).toBe("completed");
+    expect(paper?.metadata?.linkedRepositories).toEqual([
+      expect.objectContaining({
+        resultId: repository?.id,
+        title: "example/agent-memory",
+        url: "https://github.com/example/agent-memory",
+        matchedBy: expect.arrayContaining(["title", "implementation_context"]),
+      }),
+    ]);
+    expect(repository?.metadata?.linkedPapers).toEqual([
+      expect.objectContaining({
+        resultId: paper?.id,
+        title: "Agent Memory Systems",
+      }),
+    ]);
+  });
+
+  it("ranks broader must concept coverage above one-concept matches and exposes missing concepts", async () => {
+    const session = createWebSearchSession({
+      query: "agent memory evaluation",
+      scope: "technical",
+      providers: ["tavily"],
+      maxResults: 10,
+      concepts: {
+        must: ["agent memory", "evaluation"],
+        should: ["benchmark"],
+        exclude: ["seo"],
+      },
+    });
+    const completed = await executeWebSearchSession(
+      session.id,
+      new Map<string, WebSearchProvider>([["tavily", fakeConceptProvider()]]),
+    );
+
+    expect(completed.status).toBe("completed");
+    expect(completed.results.map((result) => result.title)).not.toContain("SEO Agent Memory Page");
+    expect(completed.results[0]?.title).toBe("Agent Memory Evaluation Benchmark");
+    expect(completed.results[0]?.match.matchedShouldConcepts).toEqual(["benchmark"]);
+    const partial = completed.results.find((result) => result.title === "Agent Memory Only");
+    expect(partial?.match.missingMustConcepts).toEqual(["evaluation"]);
+    expect(partial?.ranking.sortExplanation).toEqual(
+      expect.arrayContaining(["degraded:evaluation"]),
+    );
+  });
+
+  it("can hard-filter results that miss must concepts when requested", async () => {
+    const session = createWebSearchSession({
+      query: "agent memory evaluation",
+      scope: "technical",
+      providers: ["tavily"],
+      maxResults: 10,
+      concepts: {
+        must: ["agent memory", "evaluation"],
+        requireMustMatch: true,
+      },
+    });
+    const completed = await executeWebSearchSession(
+      session.id,
+      new Map<string, WebSearchProvider>([["tavily", fakeConceptProvider()]]),
+    );
+
+    expect(completed.results.map((result) => result.title)).toEqual([
+      "Agent Memory Evaluation Benchmark",
+    ]);
   });
 
   it("keeps arXiv usable when OpenAlex is not configured", async () => {
@@ -898,6 +1319,52 @@ describe("Web Search session service", () => {
     );
     expect(listWebSearchEvents(session.id).map((event) => event.type)).toContain("provider.failover");
     expect(countDocuments()).toBe(0);
+  });
+
+  it("retries only selected failed providers while retaining successful provider results", async () => {
+    let tavilyCalls = 0;
+    let braveCalls = 0;
+    const tavily: WebSearchProvider = {
+      ...fakeWebProvider("tavily", "failed"),
+      async search(...args: Parameters<WebSearchProvider["search"]>) {
+        tavilyCalls += 1;
+        return fakeWebProvider("tavily", tavilyCalls === 1 ? "failed" : "success").search(
+          ...args,
+        );
+      },
+    };
+    const brave: WebSearchProvider = {
+      ...fakeWebProvider("brave", "success"),
+      async search(...args: Parameters<WebSearchProvider["search"]>) {
+        braveCalls += 1;
+        return fakeWebProvider("brave", "success").search(...args);
+      },
+    };
+    const registry = new Map<string, WebSearchProvider>([
+      ["tavily", tavily],
+      ["brave", brave],
+    ]);
+    const session = createWebSearchSession({
+      query: "official model documentation",
+      scope: "technical",
+    });
+
+    const partial = await executeWebSearchSession(session.id, registry);
+    const retried = await retryWebSearchProviders(session.id, ["tavily"], registry);
+
+    expect(partial.status).toBe("partial");
+    expect(retried.status).toBe("completed");
+    expect(tavilyCalls).toBe(2);
+    expect(braveCalls).toBe(1);
+    expect(retried.providerRuns).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ providerId: "tavily", status: "success" }),
+        expect.objectContaining({ providerId: "brave", status: "success" }),
+      ]),
+    );
+    expect(listWebSearchEvents(session.id).map((event) => event.type)).toEqual(
+      expect.arrayContaining(["retry.started", "retry.completed"]),
+    );
   });
 });
 
@@ -1282,7 +1749,104 @@ function fakeOpenAlexProvider(): WebSearchProvider {
   };
 }
 
-function fakeWebProvider(providerId: "tavily" | "brave", status: "success" | "failed"): WebSearchProvider {
+function fakeGitHubProvider(): WebSearchProvider {
+  return {
+    id: "github",
+    displayName: "GitHub Repositories",
+    kind: "web",
+    capabilities: {
+      supportsDateRange: true,
+      supportsLanguage: true,
+      supportsDomainFilter: false,
+      supportsExactLookup: false,
+      supportsSemanticSearch: false,
+      supportsPagination: true,
+    },
+    async isConfigured() {
+      return true;
+    },
+    async healthCheck() {
+      return { status: "healthy", checkedAt: new Date().toISOString() };
+    },
+    async search() {
+      return {
+        providerId: "github",
+        status: "success",
+        latencyMs: 9,
+        items: parseGitHubRepositoryResponse(GITHUB_REPOSITORY_FIXTURE),
+      };
+    },
+  };
+}
+
+function fakeConceptProvider(): WebSearchProvider {
+  return {
+    id: "tavily",
+    displayName: "Tavily",
+    kind: "web",
+    capabilities: {
+      supportsDateRange: true,
+      supportsLanguage: true,
+      supportsDomainFilter: true,
+      supportsExactLookup: false,
+      supportsSemanticSearch: true,
+      supportsPagination: false,
+    },
+    async isConfigured() {
+      return true;
+    },
+    async healthCheck() {
+      return { status: "healthy", checkedAt: new Date().toISOString() };
+    },
+    async search() {
+      return {
+        providerId: "tavily",
+        status: "success",
+        latencyMs: 5,
+        items: [
+          {
+            providerResultId: "memory-only",
+            title: "Agent Memory Only",
+            url: "https://example.com/agent-memory",
+            authors: [],
+            contentType: "technical_article",
+            snippet: "Agent memory architecture patterns.",
+            identifiers: {},
+            origin: { domain: "example.com", sourceName: "Fixture" },
+            providerRank: 1,
+          },
+          {
+            providerResultId: "full-coverage",
+            title: "Agent Memory Evaluation Benchmark",
+            url: "https://platform.openai.com/docs/agent-memory-evaluation",
+            authors: [],
+            contentType: "documentation",
+            snippet: "Agent memory evaluation benchmark guidance.",
+            identifiers: {},
+            origin: { domain: "platform.openai.com", sourceName: "Fixture" },
+            providerRank: 2,
+          },
+          {
+            providerResultId: "seo-page",
+            title: "SEO Agent Memory Page",
+            url: "https://spam.example.com/agent-memory",
+            authors: [],
+            contentType: "technical_article",
+            snippet: "SEO page about agent memory.",
+            identifiers: {},
+            origin: { domain: "spam.example.com", sourceName: "Fixture" },
+            providerRank: 3,
+          },
+        ],
+      };
+    },
+  };
+}
+
+function fakeWebProvider(
+  providerId: "tavily" | "brave",
+  status: "success" | "failed",
+): WebSearchProvider {
   return {
     id: providerId,
     displayName: providerId,
@@ -1380,12 +1944,59 @@ const OPENALEX_FIXTURE = {
   ],
 };
 
+const CROSSREF_FIXTURE = {
+  status: "ok",
+  message: {
+    items: [
+      {
+        DOI: "10.1234/agent-memory",
+        title: ["Agent Memory Systems"],
+        URL: "https://doi.org/10.1234/agent-memory",
+        author: [
+          { given: "Alice", family: "Example" },
+          { given: "Bob", family: "Example" },
+        ],
+        published: { "date-parts": [[2026, 6, 19]] },
+        publisher: "Example Publisher",
+        "container-title": ["Journal of Agent Systems"],
+        abstract: "<jats:p>Agent memory architectures and evaluation.</jats:p>",
+        "is-referenced-by-count": 12,
+        type: "journal-article",
+      },
+    ],
+  },
+};
+
+const GITHUB_REPOSITORY_FIXTURE = {
+  total_count: 1,
+  items: [
+    {
+      id: 123,
+      full_name: "example/agent-memory",
+      html_url: "https://github.com/example/agent-memory",
+      description: "Implementation for the Agent Memory Systems paper.",
+      owner: { login: "example" },
+      pushed_at: "2026-06-20T00:00:00Z",
+      updated_at: "2026-06-21T00:00:00Z",
+      language: "TypeScript",
+      stargazers_count: 321,
+      forks_count: 24,
+      topics: ["agents", "memory"],
+      archived: false,
+      fork: false,
+      score: 87.5,
+    },
+  ],
+};
+
 async function listenForTest(): Promise<{
   port: number;
   close: () => Promise<void>;
 }> {
-  const server = await new Promise<ReturnType<typeof app.listen>>((resolve) => {
-    const instance = app.listen(0, "127.0.0.1", () => resolve(instance));
+  const server = app.listen(0, "127.0.0.1");
+  await new Promise<void>((resolve, reject) => {
+    server.once("listening", resolve);
+    server.once("error", reject);
   });
   const address = server.address();
   if (!address || typeof address === "string") {

@@ -72,11 +72,13 @@ export class McpWebSearchProvider implements WebSearchProvider {
 
   async isConfigured(): Promise<boolean> {
     const connection = this.resolveConnection();
+    const transport = connection?.settings.mcpTransport ?? "stdio";
     return Boolean(
       connection?.enabled &&
-        connection.settings.mcpTransport === "stdio" &&
-        connection.settings.mcpCommand &&
-        connection.settings.mcpToolName,
+        connection.settings.mcpToolName &&
+        (transport === "streamable_http"
+          ? connection.settings.mcpEndpoint && connection.apiKey
+          : connection.settings.mcpCommand),
     );
   }
 
@@ -90,8 +92,12 @@ export class McpWebSearchProvider implements WebSearchProvider {
       };
     }
     try {
-      await discoverConfiguredMcpTool(connection);
-      return { status: "healthy", checkedAt: new Date().toISOString() };
+      const discovery = await discoverConfiguredMcpTool(connection);
+      return {
+        status: "healthy",
+        message: `Discovered ${discovery.tools.length} MCP tool(s).`,
+        checkedAt: new Date().toISOString(),
+      };
     } catch (error) {
       return {
         status: "unavailable",
@@ -150,13 +156,21 @@ export const mcpWebSearchProvider = new McpWebSearchProvider();
 export async function discoverConfiguredMcpTool(
   connection: WebSearchConnectionConfig,
   timeoutMs = 5_000,
-): Promise<void> {
-  await withMcpClient(connection, timeoutMs, undefined, async (client) => {
+): Promise<{ tool: { name: string; description?: string }; tools: Array<{ name: string; description?: string }> }> {
+  return withMcpClient(connection, timeoutMs, undefined, async (client) => {
     const tools = await client.listTools();
     const toolName = connection.settings.mcpToolName;
-    if (!toolName || !tools.some((tool) => tool.name === toolName)) {
+    const tool = tools.find((entry) => entry.name === toolName);
+    if (!toolName || !tool) {
       throw new Error(`Configured MCP tool "${toolName ?? ""}" was not discovered.`);
     }
+    return {
+      tool: { name: tool.name, description: tool.description },
+      tools: tools.map((entry) => ({
+        name: entry.name,
+        description: entry.description,
+      })),
+    };
   });
 }
 

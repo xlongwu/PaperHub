@@ -5,6 +5,8 @@ import { isIP } from "node:net";
 const DEFAULT_MAX_BYTES = 2 * 1024 * 1024;
 const DEFAULT_TIMEOUT_MS = 15_000;
 const DEFAULT_MAX_REDIRECTS = 4;
+const ROBOTS_MAX_BYTES = 128 * 1024;
+const SAFE_FETCH_USER_AGENT = "PaperHub/0.1 safe-content-fetcher";
 const ALLOWED_CONTENT_TYPES = new Set([
   "text/html",
   "text/plain",
@@ -19,6 +21,8 @@ export interface SafeFetchOptions {
   maxBytes?: number;
   maxRedirects?: number;
   allowedContentTypes?: ReadonlySet<string>;
+  respectRobotsTxt?: boolean;
+  robotsUserAgent?: string;
   signal?: AbortSignal;
 }
 
@@ -47,6 +51,16 @@ export async function safeFetch(
 
   while (true) {
     await assertPublicTarget(current, resolveHostname);
+    if (options.respectRobotsTxt) {
+      await assertRobotsAllowed(
+        current,
+        fetchImpl,
+        resolveHostname,
+        timeoutMs,
+        options.robotsUserAgent ?? SAFE_FETCH_USER_AGENT,
+        options.signal,
+      );
+    }
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), timeoutMs);
     const abortFromParent = () => controller.abort();
@@ -59,7 +73,7 @@ export async function safeFetch(
         signal: controller.signal,
         headers: {
           Accept: "text/html,application/xhtml+xml,text/plain,application/pdf;q=0.8",
-          "User-Agent": "PaperHub/0.1 safe-content-fetcher",
+          "User-Agent": options.robotsUserAgent ?? SAFE_FETCH_USER_AGENT,
         },
       });
     } catch (error) {
@@ -105,6 +119,79 @@ export async function safeFetch(
       redirectCount,
     };
   }
+}
+
+async function assertRobotsAllowed(
+  target: URL,
+  fetchImpl: typeof fetch,
+  resolveHostname: (hostname: string) => Promise<string[]>,
+  timeoutMs: number,
+  userAgent: string,
+  parentSignal?: AbortSignal,
+): Promise<void> {
+  const robotsUrl = new URL("/robots.txt", target);
+  await assertPublicTarget(robotsUrl, resolveHostname);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  const abortFromParent = () => controller.abort();
+  parentSignal?.addEventListener("abort", abortFromParent, { once: true });
+  try {
+    const response = await fetchImpl(robotsUrl, {
+      method: "GET",
+      redirect: "follow",
+      signal: controller.signal,
+      headers: { "User-Agent": userAgent },
+    });
+    if (response.status === 404 || response.status === 410) return;
+    if (!response.ok || !response.body) return;
+    const body = await readBoundedBody(response, ROBOTS_MAX_BYTES, timeoutMs, parentSignal);
+    const text = new TextDecoder().decode(body);
+    if (!robotsAllows(text, userAgent, target.pathname || "/")) {
+      throw new Error("Safe Fetch blocked by robots.txt.");
+    }
+  } catch (error) {
+    if (error instanceof Error && error.message.includes("robots.txt")) throw error;
+  } finally {
+    clearTimeout(timeout);
+    parentSignal?.removeEventListener("abort", abortFromParent);
+  }
+}
+
+function robotsAllows(robotsText: string, userAgent: string, path: string): boolean {
+  const groups: Array<{ agents: string[]; disallow: string[]; allow: string[] }> = [];
+  let current: { agents: string[]; disallow: string[]; allow: string[] } | undefined;
+  for (const rawLine of robotsText.split(/\r?\n/)) {
+    const line = rawLine.replace(/#.*/, "").trim();
+    if (!line) continue;
+    const separator = line.indexOf(":");
+    if (separator === -1) continue;
+    const key = line.slice(0, separator).trim().toLowerCase();
+    const value = line.slice(separator + 1).trim();
+    if (key === "user-agent") {
+      current = { agents: [value.toLowerCase()], disallow: [], allow: [] };
+      groups.push(current);
+      continue;
+    }
+    if (!current) continue;
+    if (key === "disallow") current.disallow.push(value);
+    if (key === "allow") current.allow.push(value);
+  }
+  const ua = userAgent.toLowerCase();
+  const applicable = groups.filter((group) =>
+    group.agents.some((agent) => agent === "*" || ua.includes(agent)),
+  );
+  const rules = applicable.length > 0 ? applicable : groups.filter((group) => group.agents.includes("*"));
+  const longestAllow = longestMatchingRule(rules.flatMap((group) => group.allow), path);
+  const longestDisallow = longestMatchingRule(rules.flatMap((group) => group.disallow), path);
+  if (!longestDisallow) return true;
+  if (!longestAllow) return false;
+  return longestAllow.length >= longestDisallow.length;
+}
+
+function longestMatchingRule(rules: string[], path: string): string | undefined {
+  return rules
+    .filter((rule) => rule && path.startsWith(rule))
+    .sort((a, b) => b.length - a.length)[0];
 }
 
 export function isBlockedIpAddress(address: string): boolean {

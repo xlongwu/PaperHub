@@ -47,13 +47,13 @@ PaperHub currently focuses on structured and stable sources:
 
 The search system uses a quality-evaluated multi-path architecture:
 
-| Path | Strategy | Handles |
-|------|----------|---------|
-| Exact | Title/subtitle exact match | Precise lookups |
-| Strict | FTS5 phrase match with CJK bigram | Structured queries |
-| Broad | FTS5 token match with porter stemming | General keywords |
-| CJK | N-gram decomposition for Chinese text | Mixed-language content |
-| Vector | Cosine similarity via `sqlite-vec` | Semantic / conceptual matches |
+| Path   | Strategy                              | Handles                       |
+| ------ | ------------------------------------- | ----------------------------- |
+| Exact  | Title/subtitle exact match            | Precise lookups               |
+| Strict | FTS5 phrase match with CJK bigram     | Structured queries            |
+| Broad  | FTS5 token match with porter stemming | General keywords              |
+| CJK    | N-gram decomposition for Chinese text | Mixed-language content        |
+| Vector | Cosine similarity via `sqlite-vec`    | Semantic / conceptual matches |
 
 Paths are merged via **Reciprocal Rank Fusion (RRF, k=60)** with feature-based re-ranking (recency boost, source weighting, tag overlap). Zero-result queries automatically fall back to broader strategies.
 
@@ -61,12 +61,12 @@ Paths are merged via **Reciprocal Rank Fusion (RRF, k=60)** with feature-based r
 
 Evaluated on a curated query corpus with standard IR metrics:
 
-| Metric | v1 Baseline | v2 Engine | Improvement |
-|--------|------------|-----------|-------------|
-| Recall@20 | 74.44% | **90.00%** | +15.56% |
-| NDCG@10 | 68.29% | **82.66%** | +14.37% |
-| MRR@10 | 72.22% | **90.00%** | +17.78% |
-| Zero-result rate | 13.33% | **0.00%** | −13.33% |
+| Metric           | v1 Baseline | v2 Engine  | Improvement |
+| ---------------- | ----------- | ---------- | ----------- |
+| Recall@20        | 74.44%      | **90.00%** | +15.56%     |
+| NDCG@10          | 68.29%      | **82.66%** | +14.37%     |
+| MRR@10           | 72.22%      | **90.00%** | +17.78%     |
+| Zero-result rate | 13.33%      | **0.00%**  | −13.33%     |
 
 Run search evaluation:
 
@@ -194,21 +194,18 @@ pnpm arxiv:backfill:recent     # backfill last 30 days
 
 ## Desktop Build
 
-Build an unpacked desktop directory (for development):
-
-```bash
-pnpm desktop:build:dir
-```
-
-Build desktop release artifacts (Windows: NSIS installer + portable exe):
+Windows desktop release artifacts are built with Electron. Run on a Windows host:
 
 ```bash
 pnpm desktop:build
 ```
 
 The `electron-builder` config in `package.json` produces:
+
 - `PaperHub-{version}-setup-x64.exe` — standard NSIS installer
 - `PaperHub-{version}-portable-x64.exe` — portable executable
+
+You can also double-click `Build-Windows.bat` to run the full build.
 
 ## LLM & Embedding Management
 

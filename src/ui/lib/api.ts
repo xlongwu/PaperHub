@@ -3,6 +3,7 @@ import type { SearchMatchExplanation, SearchQueryPlan } from "@/search-contract"
 import type { SearchRerankerMetadata } from "@/search-reranker";
 import type {
   WebSearchConnection,
+  WebSearchConnectionTestDiagnostic,
   WebSearchRequest,
   WebSearchSummary,
   WebSearchSession,
@@ -26,6 +27,18 @@ export interface ApiEnvelope<T> {
     limit?: number;
     total?: number;
   };
+}
+
+export class ApiRequestError extends Error {
+  readonly errorCode?: string;
+  readonly details?: Record<string, unknown>;
+
+  constructor(message: string, options: { errorCode?: string; details?: Record<string, unknown> } = {}) {
+    super(message);
+    this.name = "ApiRequestError";
+    this.errorCode = options.errorCode;
+    this.details = options.details;
+  }
 }
 
 export interface SearchResponse {
@@ -235,6 +248,15 @@ export interface WebSearchHealth {
   };
 }
 
+export interface WebSearchProviderCatalogItem {
+  id: string;
+  displayName: string;
+  kind: "academic" | "web" | "mcp";
+  requiresApiKey: boolean;
+  defaultBaseUrl?: string;
+  capabilities: Record<string, boolean>;
+}
+
 export interface WebSearchMetrics {
   range: { from: string; to: string };
   providers: Array<{
@@ -410,6 +432,21 @@ export async function summarizeWebSearchResult(
   return response.data;
 }
 
+export async function retryWebSearchSession(
+  sessionId: string,
+  providerIds?: string[],
+): Promise<{ sessionId: string; status: string; providerIds?: string[] }> {
+  const response = await apiPost<{
+    sessionId: string;
+    status: string;
+    providerIds?: string[];
+  }>(`/api/web-search/${encodeURIComponent(sessionId)}/retry`, {
+    providerIds,
+  });
+  if (!response.data) throw new Error("Web Search retry was not started.");
+  return response.data;
+}
+
 export async function saveWebSearchResult(
   sessionId: string,
   resultId: string,
@@ -427,8 +464,21 @@ export async function saveWebSearchResult(
   return response.data;
 }
 
+export function getWebSearchEventsUrl(sessionId: string, afterEventId?: number): string {
+  const query =
+    afterEventId && afterEventId > 0
+      ? `?after=${encodeURIComponent(String(afterEventId))}`
+      : "";
+  return toApiUrl(`/api/web-search/${encodeURIComponent(sessionId)}/events${query}`);
+}
+
 export async function getWebSearchConnections(): Promise<WebSearchConnection[]> {
   const response = await apiGet<WebSearchConnection[]>("/api/web-search/connections");
+  return response.data ?? [];
+}
+
+export async function getWebSearchProviderCatalog(): Promise<WebSearchProviderCatalogItem[]> {
+  const response = await apiGet<WebSearchProviderCatalogItem[]>("/api/web-search/providers/catalog");
   return response.data ?? [];
 }
 
@@ -461,8 +511,21 @@ export async function activateWebSearchConnection(id: string): Promise<WebSearch
   return response.data;
 }
 
-export async function testWebSearchConnection(id: string): Promise<void> {
-  await apiPost(`/api/web-search/connections/${encodeURIComponent(id)}/test`, {});
+export interface WebSearchConnectionTestResult {
+  status: "healthy" | "degraded" | "unavailable";
+  checkedAt: string;
+  message?: string;
+  diagnostic?: WebSearchConnectionTestDiagnostic;
+  discoveredTools?: Array<{ name: string; description?: string }>;
+  selectedTool?: { name: string; description?: string };
+}
+
+export async function testWebSearchConnection(id: string): Promise<WebSearchConnectionTestResult | undefined> {
+  const response = await apiPost<WebSearchConnectionTestResult>(
+    `/api/web-search/connections/${encodeURIComponent(id)}/test`,
+    {},
+  );
+  return response.data;
 }
 
 export async function getWebSearchHealth(): Promise<WebSearchHealth> {
@@ -783,7 +846,10 @@ async function apiRequest<T>(endpoint: string, init: RequestInit): Promise<ApiEn
   const payload = (await response.json()) as ApiEnvelope<T>;
 
   if (!response.ok || payload.success === false) {
-    throw new Error(payload.error ?? `Request failed for ${endpoint}`);
+    throw new ApiRequestError(payload.error ?? `Request failed for ${endpoint}`, {
+      errorCode: payload.errorCode,
+      details: payload.details,
+    });
   }
 
   return payload;

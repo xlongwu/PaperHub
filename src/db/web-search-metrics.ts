@@ -81,7 +81,7 @@ export function recordWebSearchUsageEvent(input: {
 export function getWebSearchMetrics(from: string, to: string): WebSearchMetricsReport {
   const providerRows = getDb()
     .prepare(
-      `SELECT provider_id, status, result_count, latency_ms, estimated_credits
+      `SELECT provider_id, status, result_count, latency_ms, estimated_credits, request_id
        FROM web_search_provider_runs
        WHERE created_at >= ? AND created_at <= ?`,
     )
@@ -91,6 +91,7 @@ export function getWebSearchMetrics(from: string, to: string): WebSearchMetricsR
     result_count: number;
     latency_ms: number | null;
     estimated_credits: number | null;
+    request_id: string | null;
   }>;
   const providers = [...new Set(providerRows.map((row) => row.provider_id))]
     .sort()
@@ -113,7 +114,7 @@ export function getWebSearchMetrics(from: string, to: string): WebSearchMetricsR
           (sum, row) => sum + (row.estimated_credits ?? 0),
           0,
         ),
-        cacheHitRate: 0,
+        cacheHitRate: ratio(rows, (row) => row.request_id?.startsWith("cache:") === true),
       };
     });
 

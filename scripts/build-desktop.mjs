@@ -11,13 +11,7 @@ const outputDirRel = buildConfig?.directories?.output ?? "dist-desktop";
 const outputDir = path.resolve(rootDir, outputDirRel);
 const isWindows = process.platform === "win32";
 const args = process.argv.slice(2);
-const targetArgs = args.includes("--dir")
-  ? ["--dir", "--win", "--x64"]
-  : args.includes("--portable")
-    ? ["--win", "portable", "--x64"]
-    : args.includes("--nsis")
-      ? ["--win", "nsis", "--x64"]
-      : ["--win", "nsis", "portable", "--x64"];
+const targetArgs = getTargetArgs();
 const electronVersion = readPackageJson().devDependencies.electron.replace(/^[^\d]*/, "");
 const electronDist = resolveElectronDist();
 const require = createRequire(import.meta.url);
@@ -64,7 +58,9 @@ try {
     },
   );
 } finally {
-  restoreHostBetterSqlite(hostBetterSqliteSnapshot);
+  if (hostBetterSqliteSnapshot) {
+    restoreHostBetterSqlite(hostBetterSqliteSnapshot);
+  }
   if (electronBetterSqliteSnapshot) {
     restorePackagedBetterSqlite(electronBetterSqliteSnapshot);
   }
@@ -76,13 +72,26 @@ copyQuickTestLauncher();
 
 function assertReleaseHost() {
   if (!isWindows) {
-    throw new Error("PaperHub Windows packaging must run on a Windows host.");
+    throw new Error("PaperHub Windows desktop packaging must run on a Windows host.");
   }
 
   // Relaxed from Node 20.x requirement — electron-builder 26+ works on newer Node
   if (nodeMajor < 20) {
     throw new Error(`PaperHub Windows packaging requires Node.js 20.x or later. Current: ${process.version}`);
   }
+}
+
+function getTargetArgs() {
+  if (args.includes("--dir")) {
+    return ["--dir", "--win", "--x64"];
+  }
+  if (args.includes("--portable")) {
+    return ["--win", "portable", "--x64"];
+  }
+  if (args.includes("--nsis")) {
+    return ["--win", "nsis", "--x64"];
+  }
+  return ["--win", "nsis", "portable", "--x64"];
 }
 
 function cleanOutputDirectory() {
@@ -113,7 +122,7 @@ async function ensureHostBetterSqlite() {
   });
   await runNode([prebuildInstaller], {
     cwd: packageDir,
-    env: process.env,
+    env: buildEnv,
   });
   await verifyHostBetterSqlite();
 }
@@ -123,7 +132,7 @@ function verifyHostBetterSqlite() {
     ["-e", "const Database=require('better-sqlite3');const db=new Database(':memory:');db.close();"],
     {
       cwd: rootDir,
-      env: process.env,
+      env: buildEnv,
       stdio: "ignore",
     },
   );
