@@ -70,6 +70,7 @@ try {
   }
 }
 
+await verifyReleasePrivacy();
 verifyPackagedUi();
 copyQuickTestLauncher();
 
@@ -80,9 +81,7 @@ function assertReleaseHost() {
 
   // Relaxed from Node 20.x requirement — electron-builder 26+ works on newer Node
   if (nodeMajor < 20) {
-    throw new Error(
-      `PaperHub Windows packaging requires Node.js 20.x or later. Current: ${process.version}`,
-    );
+    throw new Error(`PaperHub Windows packaging requires Node.js 20.x or later. Current: ${process.version}`);
   }
 }
 
@@ -121,10 +120,7 @@ async function ensureHostBetterSqlite() {
 
 function verifyHostBetterSqlite() {
   return runNode(
-    [
-      "-e",
-      "const Database=require('better-sqlite3');const db=new Database(':memory:');db.close();",
-    ],
+    ["-e", "const Database=require('better-sqlite3');const db=new Database(':memory:');db.close();"],
     {
       cwd: rootDir,
       env: process.env,
@@ -250,6 +246,14 @@ function verifyPackagedUi() {
   }
 
   console.log(`[desktop-build] Verified packaged W7 UI and resources: ${bundlePath}`);
+}
+
+async function verifyReleasePrivacy() {
+  const appDir = path.join(outputDir, "win-unpacked", "resources", "app");
+  await runNode(["scripts/verify-release-privacy.mjs", "--app-dir", appDir, "--root-dir", rootDir], {
+    cwd: rootDir,
+    env: process.env,
+  });
 }
 
 function copyQuickTestLauncher() {

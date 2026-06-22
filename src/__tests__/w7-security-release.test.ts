@@ -1,15 +1,10 @@
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
+import { spawnSync } from "node:child_process";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { app } from "@/api/server";
-import {
-  clearDbPath,
-  closeDb,
-  CURRENT_SCHEMA_VERSION,
-  getDb,
-  initDatabase,
-  setDbPath,
-} from "@/db/index";
+import { clearDbPath, closeDb, CURRENT_SCHEMA_VERSION, getDb, initDatabase, setDbPath } from "@/db/index";
 import {
   createWebSearchSessionRecord,
   getWebSearchSession,
@@ -18,10 +13,7 @@ import {
   updateWebSearchSession,
   updateWebSearchResultLocalState,
 } from "@/db/web-search";
-import {
-  getWebSearchMetrics,
-  recordWebSearchUsageEvent,
-} from "@/db/web-search-metrics";
+import { getWebSearchMetrics, recordWebSearchUsageEvent } from "@/db/web-search-metrics";
 import { saveLlmConnection } from "@/db/llm-connections";
 import { saveStoredEmbeddingSettings } from "@/db/embedding-settings";
 import { saveWebSearchConnection } from "@/db/web-search-connections";
@@ -194,12 +186,11 @@ describe("W7 observability and recovery", () => {
 
 describe("W7 security boundaries", () => {
   it("redacts credential-shaped strings and sensitive object fields", () => {
-    expect(redactSensitiveText("Authorization: Bearer abcdefghijklmnop")).not.toContain(
-      "abcdefghijklmnop",
-    );
-    expect(
-      redactLogValue({ apiKey: "sk-example-secret", nested: { token: "token-value" } }),
-    ).toEqual({ apiKey: "[REDACTED]", nested: { token: "[REDACTED]" } });
+    expect(redactSensitiveText("Authorization: Bearer abcdefghijklmnop")).not.toContain("abcdefghijklmnop");
+    expect(redactLogValue({ apiKey: "sk-example-secret", nested: { token: "token-value" } })).toEqual({
+      apiKey: "[REDACTED]",
+      nested: { token: "[REDACTED]" },
+    });
   });
 
   it("rejects mapped loopback addresses, oversized headers, and oversized decoded bodies", async () => {
@@ -258,6 +249,68 @@ describe("W7 security boundaries", () => {
     expect(source).toContain("safeStorage.encryptString");
     expect(source).toContain("PAPERHUB_SECRET_KEY_B64");
   });
+
+  it("excludes personal state from desktop releases and runs a privacy gate", () => {
+    const packageJson = JSON.parse(fs.readFileSync(path.resolve("package.json"), "utf8")) as {
+      build: { files: string[] };
+    };
+    const buildScript = fs.readFileSync(path.resolve("scripts/build-desktop.mjs"), "utf8");
+    const privacyScript = fs.readFileSync(path.resolve("scripts/verify-release-privacy.mjs"), "utf8");
+
+    expect(packageJson.build.files).not.toContain("digests/**/*");
+    expect(packageJson.build.files).toEqual(
+      expect.arrayContaining([
+        "!**/.env",
+        "!**/*.db",
+        "!**/*.log",
+        "!data/**",
+        "!logs/**",
+        "!secrets/**",
+        "!digests/**",
+        "!src/__tests__/**",
+        "!src/test-support/**",
+        "!scripts/**",
+      ]),
+    );
+    expect(buildScript).toContain("await verifyReleasePrivacy()");
+    expect(privacyScript).toContain("configured credential");
+    expect(privacyScript).toContain("paperhub-secret-key.bin");
+  });
+
+  it("rejects packaged private files and configured credential values", () => {
+    const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "paperhub-release-privacy-"));
+    const appDir = path.join(fixtureRoot, "app");
+    const projectDir = path.join(fixtureRoot, "project");
+    fs.mkdirSync(appDir, { recursive: true });
+    fs.mkdirSync(projectDir, { recursive: true });
+    fs.writeFileSync(path.join(projectDir, ".env"), "OPENAI_API_KEY=sk-test-private-release-value-12345\n");
+    fs.writeFileSync(path.join(appDir, "safe.js"), "console.log('safe release');\n");
+
+    const verify = () =>
+      spawnSync(
+        process.execPath,
+        [path.resolve("scripts/verify-release-privacy.mjs"), "--app-dir", appDir, "--root-dir", projectDir],
+        { encoding: "utf8" },
+      );
+
+    try {
+      expect(verify().status).toBe(0);
+
+      fs.writeFileSync(path.join(appDir, ".env"), "SHOULD_NOT_SHIP=true\n");
+      expect(verify().status).not.toBe(0);
+      fs.unlinkSync(path.join(appDir, ".env"));
+
+      fs.writeFileSync(
+        path.join(appDir, "bundle.js"),
+        "const key = 'sk-test-private-release-value-12345';\n",
+      );
+      const leaked = verify();
+      expect(leaked.status).not.toBe(0);
+      expect(`${leaked.stdout}${leaked.stderr}`).not.toContain("sk-test-private-release-value-12345");
+    } finally {
+      fs.rmSync(fixtureRoot, { recursive: true, force: true });
+    }
+  });
 });
 
 function downgradeToV23WithPlaintextSecret(): void {
@@ -281,11 +334,8 @@ function downgradeToV23WithPlaintextSecret(): void {
 }
 
 function currentVersion(): number {
-  return (
-    getDb()
-      .prepare("SELECT MAX(version) AS version FROM schema_version")
-      .get() as { version: number }
-  ).version;
+  return (getDb().prepare("SELECT MAX(version) AS version FROM schema_version").get() as { version: number })
+    .version;
 }
 
 function cleanupFiles(): void {

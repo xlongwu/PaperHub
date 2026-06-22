@@ -102,12 +102,25 @@
       "dist-ui/**/*",
       "desktop/**/*",
       "src/**/*",
-      "digests/**/*",
       "总结prompt模版.md",
-      "scripts/seed-phase6-fixtures.ts",
       "skills/**/*",
       "tsconfig.json",
-      "package.json"
+      "package.json",
+      "!**/.env",
+      "!**/.env.*",
+      "!**/*.db",
+      "!**/*.sqlite",
+      "!**/*.sqlite3",
+      "!**/*.log",
+      "!data/**",
+      "!logs/**",
+      "!secrets/**",
+      "!digests/**",
+      "!src/__tests__/**",
+      "!src/test-support/**",
+      "!scripts/**",
+      "!config.yml",
+      "!paperhub.yml"
     ],
     "win": {
       "target": [

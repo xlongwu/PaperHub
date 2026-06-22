@@ -11,16 +11,10 @@ import {
 import { isFavorite } from "@/db/user";
 import { searchFts5 } from "@/db/search";
 import { createWebSearchSession, executeWebSearchSession } from "@/services/web-search-service";
-import {
-  generateWebSearchSynthesis,
-  validateCitations,
-} from "@/services/web-search-summary";
+import { generateWebSearchSynthesis, parseSynthesis, validateCitations } from "@/services/web-search-summary";
 import { saveWebSearchResult } from "@/services/web-save-service";
 import { createWebSearchPlan } from "@/web-search/query-planner";
-import {
-  adaptMcpSearchOutput,
-  buildMcpToolArguments,
-} from "@/web-search/providers/mcp";
+import { adaptMcpSearchOutput, buildMcpToolArguments } from "@/web-search/providers/mcp";
 import { handlePaperHubMcpRequest, listPaperHubMcpTools } from "@/mcp/server";
 import { parseMcpWebSearchRequest } from "@/mcp/tool-service";
 import { extractHtmlContent } from "@/web-search/content-extractor";
@@ -33,20 +27,13 @@ import {
   buildOpenAlexUrl,
   parseOpenAlexResponse,
 } from "@/web-search/providers/openalex";
-import {
-  BraveWebSearchProvider,
-  buildBraveUrl,
-  parseBraveResponse,
-} from "@/web-search/providers/brave";
+import { BraveWebSearchProvider, buildBraveUrl, parseBraveResponse } from "@/web-search/providers/brave";
 import {
   TavilyWebSearchProvider,
   buildTavilyRequest,
   parseTavilyResponse,
 } from "@/web-search/providers/tavily";
-import type {
-  WebSearchProvider,
-  WebSearchResult,
-} from "@/web-search/types";
+import type { WebSearchProvider, WebSearchResult } from "@/web-search/types";
 import { safeUnlink, testPath } from "./test-utils";
 import { resetDir } from "./test-utils";
 
@@ -131,11 +118,7 @@ describe("Web Search query planner", () => {
       searchBudget: "low_cost",
     });
 
-    expect(plan.providerCalls.map((call) => call.providerId)).toEqual([
-      "arxiv",
-      "tavily",
-      "brave",
-    ]);
+    expect(plan.providerCalls.map((call) => call.providerId)).toEqual(["arxiv", "tavily", "brave"]);
   });
 
   it("adds Search MCP only when the caller explicitly includes it", () => {
@@ -202,13 +185,9 @@ describe("Search MCP provider adapter", () => {
       origin: { domain: "example.org", sourceName: "Fixture MCP" },
     });
 
-    expect(() =>
-      adaptMcpSearchOutput(
-        { items: [{ title: "Missing URL" }] },
-        connection,
-        10,
-      ),
-    ).toThrow(/requires a title and HTTP\(S\) URL/);
+    expect(() => adaptMcpSearchOutput({ items: [{ title: "Missing URL" }] }, connection, 10)).toThrow(
+      /requires a title and HTTP\(S\) URL/,
+    );
   });
 
   it("keeps successful core providers when Search MCP fails", async () => {
@@ -265,8 +244,7 @@ describe("PaperHub local MCP tools", () => {
       "get_local_document",
     ]);
     expect(
-      listPaperHubMcpTools().find((tool) => tool.name === "save_web_result")
-        ?.annotations.readOnlyHint,
+      listPaperHubMcpTools().find((tool) => tool.name === "save_web_result")?.annotations.readOnlyHint,
     ).toBe(false);
   });
 
@@ -323,9 +301,7 @@ describe("Web Search save workflow", () => {
     expect(second.documentId).toBe(first.documentId);
     expect(second.status).toBe("duplicate");
     expect(countDocuments()).toBe(1);
-    expect(searchFts5({ query: "Agent Memory Systems", limit: 10 })[0]?.document.id).toBe(
-      first.documentId,
-    );
+    expect(searchFts5({ query: "Agent Memory Systems", limit: 10 })[0]?.document.id).toBe(first.documentId);
     expect(getDocumentById(first.documentId)).toMatchObject({
       canonicalUrl: "https://example.com/article",
       externalIds: { arxivId: "2501.12345" },
@@ -389,7 +365,7 @@ describe("Web Search save workflow", () => {
   it("safely fetches and stores extracted page content", async () => {
     seedSaveSession();
     const html =
-      "<html><head><link rel=\"canonical\" href=\"https://example.com/article\" /></head>" +
+      '<html><head><link rel="canonical" href="https://example.com/article" /></head>' +
       "<body><article><h1>Agent Memory Systems</h1><p>Saved body text.</p></article></body></html>";
 
     const saved = await saveWebSearchResult(
@@ -666,9 +642,7 @@ describe("arXiv Web Search provider", () => {
     );
 
     expect(url.hostname).toBe("export.arxiv.org");
-    expect(url.searchParams.get("search_query")).toContain(
-      'all:"synthetic data" AND all:LLM',
-    );
+    expect(url.searchParams.get("search_query")).toContain('all:"synthetic data" AND all:LLM');
     expect(url.searchParams.get("search_query")).toContain("submittedDate:[202601010000 TO 202606202359]");
     expect(url.searchParams.get("max_results")).toBe("10");
   });
@@ -696,9 +670,7 @@ describe("arXiv Web Search provider", () => {
         limit: 10,
       }),
     );
-    expect(url.searchParams.get("search_query")).toBe(
-      'all:"synthetic data" AND all:LLM',
-    );
+    expect(url.searchParams.get("search_query")).toBe('all:"synthetic data" AND all:LLM');
   });
 
   it("reports rate limits without exposing response bodies", async () => {
@@ -758,9 +730,7 @@ describe("Web Search session service", () => {
     expect(completed.status).toBe("completed");
     expect(completed.results).toEqual([]);
     expect(completed.summary).toBeUndefined();
-    expect(listWebSearchEvents(session.id).map((event) => event.type)).toContain(
-      "summary.skipped",
-    );
+    expect(listWebSearchEvents(session.id).map((event) => event.type)).toContain("summary.skipped");
   });
 
   it("stores OpenAlex credentials without returning them from the connection API", async () => {
@@ -932,11 +902,33 @@ describe("Web Search session service", () => {
 });
 
 describe("Web Search W4 evidence and summary security", () => {
+  it("keeps usable report sections when an LLM omits optional JSON arrays", () => {
+    const parsed = parseSynthesis(
+      JSON.stringify({
+        reportTitle: "方法分类综述",
+        summary: "按方法类型综合现有证据。",
+        methodSections: {
+          数据生成: {
+            summary: "通过提示与约束生成训练样本。",
+            methodology: "先定义任务，再生成并验证。",
+            resultIds: ["wr_1"],
+          },
+        },
+        comparison: ["生成法覆盖广", "筛选法精度高"],
+        recommendations: "先建立质量门槛。",
+      }),
+    );
+
+    expect(parsed.overview).toBe("按方法类型综合现有证据。");
+    expect(parsed.methodSections).toHaveLength(1);
+    expect(parsed.methodSections?.[0]?.title).toBe("数据生成");
+    expect(parsed.comparison).toContain("筛选法精度高");
+    expect(parsed.recommendations).toEqual(["先建立质量门槛。"]);
+  });
+
   it("blocks unsafe protocols, private targets, and redirects to loopback", async () => {
     await expect(safeFetch("file:///etc/passwd")).rejects.toThrow("only allows HTTP and HTTPS");
-    await expect(safeFetch("http://127.0.0.1/private")).rejects.toThrow(
-      "private, reserved, or unresolved",
-    );
+    await expect(safeFetch("http://127.0.0.1/private")).rejects.toThrow("private, reserved, or unresolved");
 
     let calls = 0;
     await expect(
@@ -994,16 +986,12 @@ describe("Web Search W4 evidence and summary security", () => {
           { claim: "Grounded claim", citations: [result.id, result.id, "missing"] },
           { claim: "Unsupported claim", citations: ["missing"] },
         ],
-        resultGroups: [
-          { title: "Group", resultIds: [result.id, "missing"], summary: "Summary" },
-        ],
+        resultGroups: [{ title: "Group", resultIds: [result.id, "missing"], summary: "Summary" }],
         limitations: [],
       },
       [result],
     );
-    expect(validated.keyFindings).toEqual([
-      { claim: "Grounded claim", citations: [result.id] },
-    ]);
+    expect(validated.keyFindings).toEqual([{ claim: "Grounded claim", citations: [result.id] }]);
     expect(validated.resultGroups[0]?.resultIds).toEqual([result.id]);
     expect(validated.limitations.join(" ")).toContain("证据不足");
   });
@@ -1039,9 +1027,7 @@ describe("Web Search W4 evidence and summary security", () => {
             { claim: "The paper studies memory evaluation.", citations: [resultId] },
             { claim: "Invented claim.", citations: ["wr_missing"] },
           ],
-          resultGroups: [
-            { title: "Papers", resultIds: [resultId], summary: "One paper." },
-          ],
+          resultGroups: [{ title: "Papers", resultIds: [resultId], summary: "One paper." }],
           limitations: [],
         });
       },
@@ -1093,7 +1079,7 @@ describe("Web Search W4 evidence and summary security", () => {
       },
     });
 
-    expect(budgets).toEqual([4096, 8192]);
+    expect(budgets).toEqual([4096, 16384]);
     expect(summary.status).toBe("completed");
     expect(summary.synthesis?.overview).toBe("Retried overview.");
   });
@@ -1296,10 +1282,7 @@ function fakeOpenAlexProvider(): WebSearchProvider {
   };
 }
 
-function fakeWebProvider(
-  providerId: "tavily" | "brave",
-  status: "success" | "failed",
-): WebSearchProvider {
+function fakeWebProvider(providerId: "tavily" | "brave", status: "success" | "failed"): WebSearchProvider {
   return {
     id: providerId,
     displayName: providerId,

@@ -2,22 +2,16 @@ import { getActiveLlmConnection, getLlmConnection } from "@/db/llm-connections";
 import { getStoredLlmProviderSettings } from "@/db/llm-settings";
 import { getLlmProviderPreset } from "./catalog";
 import { extractJsonPath, renderJsonTemplate, renderTemplateString } from "./template";
-import type {
-  JsonTemplate,
-  LlmConnectionConfig,
-  LlmProvider,
-} from "./types";
+import type { JsonTemplate, LlmConnectionConfig, LlmProvider } from "./types";
 
 const REQUEST_TIMEOUT_MS = 30_000;
 const LONG_REQUEST_TIMEOUT_MS = 60_000;
+const DEEP_REPORT_TIMEOUT_MS = 120_000;
 const MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
 const CONNECTION_TEST_PROMPT = "Reply with exactly: PaperHub connection OK";
 const CONNECTION_TEST_MAX_TOKENS = 256;
 
-const LEGACY_ENV: Record<
-  string,
-  { apiKey: string; model: string; baseUrl?: string }
-> = {
+const LEGACY_ENV: Record<string, { apiKey: string; model: string; baseUrl?: string }> = {
   anthropic: {
     apiKey: "ANTHROPIC_API_KEY",
     model: "ANTHROPIC_MODEL",
@@ -42,11 +36,7 @@ const LEGACY_ENV: Record<
   },
 };
 
-export type LlmRuntimeSource =
-  | "environment_connection"
-  | "environment_provider"
-  | "stored"
-  | "default";
+export type LlmRuntimeSource = "environment_connection" | "environment_provider" | "stored" | "default";
 
 export interface ResolvedLlmRuntime {
   connection: LlmConnectionConfig;
@@ -117,14 +107,8 @@ export function resolveLegacyProvider(
       name: preset.label,
       presetId: preset.id,
       protocol: preset.protocol,
-      baseUrl:
-        process.env[env.baseUrl ?? ""]?.trim() ||
-        stored?.baseUrl?.trim() ||
-        preset.baseUrl,
-      model:
-        process.env[env.model]?.trim() ||
-        stored?.model?.trim() ||
-        preset.defaultModel,
+      baseUrl: process.env[env.baseUrl ?? ""]?.trim() || stored?.baseUrl?.trim() || preset.baseUrl,
+      model: process.env[env.model]?.trim() || stored?.model?.trim() || preset.defaultModel,
       apiKey,
       auth: structuredClone(preset.auth),
       request: structuredClone(preset.request),
@@ -152,7 +136,12 @@ export async function callLlmConnection(
     headers: buildHeaders(connection, connection.request.headers),
     body,
     apiKey: connection.apiKey,
-    timeoutMs: maxTokens > 4_096 ? LONG_REQUEST_TIMEOUT_MS : REQUEST_TIMEOUT_MS,
+    timeoutMs:
+      maxTokens > 8_192
+        ? DEEP_REPORT_TIMEOUT_MS
+        : maxTokens > 4_096
+          ? LONG_REQUEST_TIMEOUT_MS
+          : REQUEST_TIMEOUT_MS,
   });
   const text = extractJsonPath(payload, connection.request.responsePath);
   if (typeof text !== "string" || !text.trim()) {
@@ -161,36 +150,21 @@ export async function callLlmConnection(
   return text;
 }
 
-export async function probeLlmConnection(
-  connection: LlmConnectionConfig,
-): Promise<string> {
-  return callLlmConnection(
-    connection,
-    CONNECTION_TEST_PROMPT,
-    CONNECTION_TEST_MAX_TOKENS,
-  );
+export async function probeLlmConnection(connection: LlmConnectionConfig): Promise<string> {
+  return callLlmConnection(connection, CONNECTION_TEST_PROMPT, CONNECTION_TEST_MAX_TOKENS);
 }
 
-export async function discoverLlmModels(
-  connection: LlmConnectionConfig,
-): Promise<string[]> {
+export async function discoverLlmModels(connection: LlmConnectionConfig): Promise<string[]> {
   if (!connection.models) {
     throw new Error("This connection does not define a model discovery request.");
   }
   const template = connection.models;
   const variables = { prompt: "", model: connection.model, maxTokens: 1 };
-  const url = buildRequestUrl(
-    connection.baseUrl,
-    renderTemplateString(template.path, variables),
-    connection,
-  );
+  const url = buildRequestUrl(connection.baseUrl, renderTemplateString(template.path, variables), connection);
   const payload = await requestJson(url, {
     method: template.method,
     headers: buildHeaders(connection, template.headers),
-    body:
-      template.method === "GET"
-        ? undefined
-        : renderJsonTemplate(template.body ?? {}, variables),
+    body: template.method === "GET" ? undefined : renderJsonTemplate(template.body ?? {}, variables),
     apiKey: connection.apiKey,
   });
   const list = extractJsonPath(payload, template.listPath);
@@ -220,10 +194,7 @@ async function requestJson(url: URL, options: RequestJsonOptions): Promise<unkno
     const response = await fetch(url, {
       method: options.method,
       headers: options.headers,
-      body:
-        options.method === "GET" || options.body === undefined
-          ? undefined
-          : JSON.stringify(options.body),
+      body: options.method === "GET" || options.body === undefined ? undefined : JSON.stringify(options.body),
       redirect: "manual",
       signal: controller.signal,
     });
@@ -272,18 +243,11 @@ export function normalizeLlmRequestError(error: unknown, apiKey?: string): Error
   const code = collectErrorCodes(error)[0];
   const suffix = code ? ` (${code})` : "";
   return new Error(
-    redactSecrets(
-      `LLM network request failed${suffix}: ${networkErrorGuidance(code)}`,
-      apiKey,
-    ),
+    redactSecrets(`LLM network request failed${suffix}: ${networkErrorGuidance(code)}`, apiKey),
   );
 }
 
-function buildRequestUrl(
-  baseUrl: string,
-  requestPath: string,
-  connection: LlmConnectionConfig,
-): URL {
+function buildRequestUrl(baseUrl: string, requestPath: string, connection: LlmConnectionConfig): URL {
   const base = validateHttpUrl(baseUrl);
   const url = /^https?:\/\//i.test(requestPath)
     ? validateHttpUrl(requestPath)
@@ -353,10 +317,7 @@ function collectErrorCodes(error: unknown, seen = new Set<unknown>()): string[] 
     cause?: unknown;
     errors?: unknown;
   };
-  const codes =
-    typeof value.code === "string" && value.code.trim()
-      ? [value.code.trim().toUpperCase()]
-      : [];
+  const codes = typeof value.code === "string" && value.code.trim() ? [value.code.trim().toUpperCase()] : [];
   codes.push(...collectErrorCodes(value.cause, seen));
   if (Array.isArray(value.errors)) {
     for (const nested of value.errors) {
@@ -373,11 +334,7 @@ function networkErrorGuidance(code?: string): string {
   if (code === "ECONNREFUSED") {
     return "The endpoint refused the connection. Check the API Base URL and whether the service is reachable.";
   }
-  if (
-    code === "ETIMEDOUT" ||
-    code === "ESOCKETTIMEDOUT" ||
-    code === "UND_ERR_CONNECT_TIMEOUT"
-  ) {
+  if (code === "ETIMEDOUT" || code === "ESOCKETTIMEDOUT" || code === "UND_ERR_CONNECT_TIMEOUT") {
     return "The endpoint timed out. Check the internet connection, proxy, firewall, and API service status.";
   }
   if (code === "EACCES" || code === "EPERM") {
@@ -389,18 +346,13 @@ function networkErrorGuidance(code?: string): string {
   return "The endpoint could not be reached. Check the API Base URL, internet connection, proxy, and firewall.";
 }
 
-function describeMissingResponseText(
-  payload: unknown,
-  responsePath: string,
-): string {
+function describeMissingResponseText(payload: unknown, responsePath: string): string {
   const finishReason =
     extractJsonPath(payload, "$.choices[0].finish_reason") ??
     extractJsonPath(payload, "$.candidates[0].finishReason");
   if (
     typeof finishReason === "string" &&
-    ["length", "max_tokens", "max_output_tokens"].includes(
-      finishReason.toLowerCase(),
-    )
+    ["length", "max_tokens", "max_output_tokens"].includes(finishReason.toLowerCase())
   ) {
     return (
       `The response did not contain text at ${responsePath}. ` +

@@ -22,7 +22,7 @@ import type {
 } from "@/web-search/types";
 
 const SUMMARY_TOKENS = 4_096;
-const SUMMARY_RETRY_TOKENS = 8_192;
+const SUMMARY_RETRY_TOKENS = 16_384;
 const CONTENT_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 const MAX_SYNTHESIS_RESULTS = 20;
 
@@ -94,9 +94,7 @@ export async function generateWebSearchSynthesis(
       fallback: "extractive",
       evidenceCount: selected.length,
     });
-    console.warn(
-      `[web-search-summary] synthesis used extractive fallback: ${safeSummaryError(error)}`,
-    );
+    console.warn(`[web-search-summary] synthesis used extractive fallback: ${safeSummaryError(error)}`);
     return fallback;
   }
 }
@@ -162,26 +160,19 @@ export async function generateWebResultSummary(
       fallback: "extractive",
       evidenceCount: 1,
     });
-    console.warn(
-      `[web-search-summary] result summary used extractive fallback: ${safeSummaryError(error)}`,
-    );
+    console.warn(`[web-search-summary] result summary used extractive fallback: ${safeSummaryError(error)}`);
     return fallback;
   }
 }
 
-export function validateCitations(
-  value: WebSearchSynthesis,
-  results: WebSearchResult[],
-): WebSearchSynthesis {
+export function validateCitations(value: WebSearchSynthesis, results: WebSearchResult[]): WebSearchSynthesis {
   const validIds = new Set(results.map((result) => result.id));
   const limitations = [...new Set(value.limitations.filter(isNonEmptyString))];
   const keyFindings = value.keyFindings
     .filter((finding) => isNonEmptyString(finding.claim))
     .map((finding) => ({
       claim: finding.claim.trim(),
-      citations: [
-        ...new Set(finding.citations.filter((citation) => validIds.has(citation))),
-      ],
+      citations: [...new Set(finding.citations.filter((citation) => validIds.has(citation)))],
     }))
     .filter((finding) => {
       if (finding.citations.length > 0) return true;
@@ -218,9 +209,7 @@ export function validateCitations(
     resultGroups,
     methodSections,
     comparison: value.comparison?.trim(),
-    recommendations: (value.recommendations ?? [])
-      .filter(isNonEmptyString)
-      .map((item) => item.trim()),
+    recommendations: (value.recommendations ?? []).filter(isNonEmptyString).map((item) => item.trim()),
     conclusion: value.conclusion?.trim(),
     limitations: [...new Set(limitations)],
   };
@@ -230,27 +219,24 @@ export function parseSynthesis(raw: string): WebSearchSynthesis {
   const match = raw.match(/```(?:json)?\s*([\s\S]*?)```/i);
   const candidate = (match?.[1] ?? extractJsonObject(raw)).trim();
   const parsed = JSON.parse(candidate) as Record<string, unknown>;
-  if (
-    typeof parsed.overview !== "string" ||
-    !Array.isArray(parsed.keyFindings) ||
-    !Array.isArray(parsed.resultGroups) ||
-    !Array.isArray(parsed.limitations)
-  ) {
+  const overview = firstString(parsed.overview, parsed.summary, parsed.executiveSummary);
+  const methodSectionEntries = normalizeObjectArray(parsed.methodSections);
+  const findingEntries = normalizeObjectArray(parsed.keyFindings);
+  if (!overview && methodSectionEntries.length === 0 && findingEntries.length === 0) {
     throw new Error("Summary output does not match the required JSON schema.");
   }
   return {
     reportTitle: typeof parsed.reportTitle === "string" ? parsed.reportTitle : undefined,
-    researchQuestion:
-      typeof parsed.researchQuestion === "string" ? parsed.researchQuestion : undefined,
-    overview: parsed.overview,
-    keyFindings: parsed.keyFindings.map((item) => {
+    researchQuestion: typeof parsed.researchQuestion === "string" ? parsed.researchQuestion : undefined,
+    overview: overview ?? "已按方法类型整理检索证据。",
+    keyFindings: findingEntries.map((item) => {
       const entry = asRecord(item);
       return {
-        claim: typeof entry.claim === "string" ? entry.claim : "",
+        claim: firstString(entry.claim, entry.finding, entry.summary) ?? "",
         citations: stringArray(entry.citations),
       };
     }),
-    resultGroups: parsed.resultGroups.map((item) => {
+    resultGroups: normalizeObjectArray(parsed.resultGroups).map((item) => {
       const entry = asRecord(item);
       return {
         title: typeof entry.title === "string" ? entry.title : "",
@@ -258,27 +244,64 @@ export function parseSynthesis(raw: string): WebSearchSynthesis {
         summary: typeof entry.summary === "string" ? entry.summary : "",
       };
     }),
-    methodSections: Array.isArray(parsed.methodSections)
-      ? parsed.methodSections.map((item) => {
-          const entry = asRecord(item);
-          return {
-            title: typeof entry.title === "string" ? entry.title : "",
-            summary: typeof entry.summary === "string" ? entry.summary : "",
-            designLogic: typeof entry.designLogic === "string" ? entry.designLogic : undefined,
-            methodology: typeof entry.methodology === "string" ? entry.methodology : undefined,
-            whyEffective: typeof entry.whyEffective === "string" ? entry.whyEffective : undefined,
-            implementation:
-              typeof entry.implementation === "string" ? entry.implementation : undefined,
-            boundaries: typeof entry.boundaries === "string" ? entry.boundaries : undefined,
-            resultIds: stringArray(entry.resultIds),
-          };
-        })
-      : [],
-    comparison: typeof parsed.comparison === "string" ? parsed.comparison : undefined,
-    recommendations: stringArray(parsed.recommendations),
+    methodSections:
+      methodSectionEntries.length > 0
+        ? methodSectionEntries.map((item) => {
+            const entry = asRecord(item);
+            return {
+              title: typeof entry.title === "string" ? entry.title : "",
+              summary: typeof entry.summary === "string" ? entry.summary : "",
+              designLogic: typeof entry.designLogic === "string" ? entry.designLogic : undefined,
+              methodology: typeof entry.methodology === "string" ? entry.methodology : undefined,
+              whyEffective: typeof entry.whyEffective === "string" ? entry.whyEffective : undefined,
+              implementation: typeof entry.implementation === "string" ? entry.implementation : undefined,
+              boundaries: typeof entry.boundaries === "string" ? entry.boundaries : undefined,
+              resultIds: stringArray(entry.resultIds),
+            };
+          })
+        : [],
+    comparison: textValue(parsed.comparison),
+    recommendations: textArray(parsed.recommendations),
     conclusion: typeof parsed.conclusion === "string" ? parsed.conclusion : undefined,
-    limitations: stringArray(parsed.limitations),
+    limitations: textArray(parsed.limitations),
   };
+}
+
+function normalizeObjectArray(value: unknown): unknown[] {
+  if (Array.isArray(value)) {
+    return value;
+  }
+  if (!value || typeof value !== "object") {
+    return [];
+  }
+  return Object.entries(value as Record<string, unknown>).map(([title, item]) => {
+    if (typeof item === "string") {
+      return { title, summary: item };
+    }
+    return { title, ...asRecord(item) };
+  });
+}
+
+function firstString(...values: unknown[]): string | undefined {
+  return values.find((value): value is string => typeof value === "string" && Boolean(value.trim()));
+}
+
+function textValue(value: unknown): string | undefined {
+  if (typeof value === "string") {
+    return value;
+  }
+  if (Array.isArray(value)) {
+    const items = value.filter(isNonEmptyString);
+    return items.length > 0 ? items.join("\n") : undefined;
+  }
+  return undefined;
+}
+
+function textArray(value: unknown): string[] {
+  if (typeof value === "string") {
+    return value.trim() ? [value.trim()] : [];
+  }
+  return stringArray(value);
 }
 
 async function collectResultEvidence(
@@ -397,9 +420,7 @@ function saveSummary(input: {
 }): WebSearchSummary {
   const now = new Date().toISOString();
   const citedClaims = input.synthesis.keyFindings.length;
-  const evidenceInsufficient = input.synthesis.limitations.filter((item) =>
-    item.includes("证据不足"),
-  ).length;
+  const evidenceInsufficient = input.synthesis.limitations.filter((item) => item.includes("证据不足")).length;
   return upsertWebSearchSummary({
     id: `wss_${randomUUID().replace(/-/g, "")}`,
     sessionId: input.sessionId,
@@ -466,10 +487,7 @@ function extractJsonObject(raw: string): string {
   return start >= 0 && end > start ? raw.slice(start, end + 1) : raw;
 }
 
-function buildExtractiveFallback(
-  results: WebSearchResult[],
-  error: unknown,
-): WebSearchSynthesis {
+function buildExtractiveFallback(results: WebSearchResult[], error: unknown): WebSearchSynthesis {
   const selected = results.slice(0, 12);
   const methodGroups = groupResultsByMethod(selected);
   return {
@@ -492,9 +510,11 @@ function buildExtractiveFallback(
       title,
       summary: group.map((result) => extractResultText(result)).join(" "),
       designLogic: "该分类根据标题与摘要中的研究目标、数据构建方式和验证机制自动归纳。",
-      methodology: "对每篇工作单独阅读全文与实验设置，抽取共性的数据流程、训练目标和评价指标，合并为可复用步骤。",
+      methodology:
+        "对每篇工作单独阅读全文与实验设置，抽取共性的数据流程、训练目标和评价指标，合并为可复用步骤。",
       whyEffective: "暂缺 LLM 详细分析；请阅读原文实验部分后人工补充各方法有效原因。",
-      implementation: "建议优先阅读标题与摘要直接匹配查询意图的高质量工作，将共同机制合并为方法分类后指导实践。",
+      implementation:
+        "建议优先阅读标题与摘要直接匹配查询意图的高质量工作，将共同机制合并为方法分类后指导实践。",
       boundaries: "当前为提取式归纳，不能替代对论文方法和实验的完整推理。",
       resultIds: group.map((result) => result.id),
     })),
@@ -512,24 +532,21 @@ function buildExtractiveFallback(
   };
 }
 
-function groupResultsByMethod(
-  results: WebSearchResult[],
-): Array<[string, WebSearchResult[]]> {
+function groupResultsByMethod(results: WebSearchResult[]): Array<[string, WebSearchResult[]]> {
   const groups = new Map<string, WebSearchResult[]>();
   for (const result of results) {
     const text = normalizeMethodText(`${result.title} ${result.abstract ?? result.snippet ?? ""}`);
-    const title =
-      /review|survey|taxonomy|systematic/.test(text)
-        ? "综述、分类与评测"
-        : /retriev|rag|search|embedding/.test(text)
-          ? "检索增强与数据筛选"
-          : /instruction|fine tun|training|distill/.test(text)
-            ? "训练数据构建与模型优化"
-            : /privacy|safety|bias|responsib/.test(text)
-              ? "安全、隐私与质量控制"
-              : /agent|reason|feedback|correct|critic/.test(text)
-                ? "反馈、推理与纠错"
-                : "合成数据生成与应用";
+    const title = /review|survey|taxonomy|systematic/.test(text)
+      ? "综述、分类与评测"
+      : /retriev|rag|search|embedding/.test(text)
+        ? "检索增强与数据筛选"
+        : /instruction|fine tun|training|distill/.test(text)
+          ? "训练数据构建与模型优化"
+          : /privacy|safety|bias|responsib/.test(text)
+            ? "安全、隐私与质量控制"
+            : /agent|reason|feedback|correct|critic/.test(text)
+              ? "反馈、推理与纠错"
+              : "合成数据生成与应用";
     groups.set(title, [...(groups.get(title) ?? []), result]);
   }
   return [...groups.entries()];
@@ -545,9 +562,10 @@ function extractResultText(result: WebSearchResult): string {
 }
 
 function safeSummaryError(error: unknown): string {
-  return redactSensitiveText(
-    error instanceof Error ? error.message : "Summary generation failed.",
-  ).slice(0, 500);
+  return redactSensitiveText(error instanceof Error ? error.message : "Summary generation failed.").slice(
+    0,
+    500,
+  );
 }
 
 function buildCitationCatalog(results: WebSearchResult[]): WebSearchCitation[] {

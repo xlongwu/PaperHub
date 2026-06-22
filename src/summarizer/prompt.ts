@@ -8,11 +8,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { getAppRootDir } from "@/config";
-import type {
-  Document,
-  DocumentLanguage,
-  SummaryLevel,
-} from "@/types";
+import type { Document, DocumentLanguage, SummaryLevel } from "@/types";
 
 const SUMMARY_TEMPLATE_FILENAME = "总结prompt模版.md";
 
@@ -26,20 +22,13 @@ export interface SummaryPromptOptions {
   processingNote?: string;
 }
 
-let cachedTemplate:
-  | { path: string; modifiedAt: number; content: string }
-  | null = null;
+let cachedTemplate: { path: string; modifiedAt: number; content: string } | null = null;
 
-export function buildSummaryPrompt(
-  doc: Document,
-  options: SummaryPromptOptions = {},
-): string {
+export function buildSummaryPrompt(doc: Document, options: SummaryPromptOptions = {}): string {
   const lang = options.lang ?? "zh";
   const summaryLevel = options.summaryLevel ?? "short";
   const fullText = doc.fullText?.trim();
   const content = options.content ?? fullText ?? "";
-  const inputScope =
-    options.inputScope ?? (fullText ? "full_text" : "abstract_only");
   const focusTopics =
     options.focusTopics && options.focusTopics.length > 0
       ? options.focusTopics.join(", ")
@@ -51,10 +40,12 @@ export function buildSummaryPrompt(
   // Build full_text: when content is available (from full text or evidence notes), use it.
   // When only abstract is available, indicate that full text is not provided.
   const fullTextForTemplate = content
-    ? (processingNote ? `${processingNote}\n\n${content}` : content)
-    : (lang === "zh"
-        ? "论文未提供完整正文。以下总结仅基于摘要生成。"
-        : "Full text is not available. The summary below is based solely on the abstract.");
+    ? processingNote
+      ? `${processingNote}\n\n${content}`
+      : content
+    : lang === "zh"
+      ? "论文未提供完整正文。以下总结仅基于摘要生成。"
+      : "Full text is not available. The summary below is based solely on the abstract.";
 
   return interpolateTemplate(loadSummaryTemplate(), {
     // Map to template placeholders exactly as defined in 总结prompt模版.md
@@ -68,7 +59,7 @@ export function buildSummaryPrompt(
     output_language: lang === "zh" ? "中文" : "English",
     summary_level: summaryLevel,
     // Also replace Chinese placeholder used in output structure section header
-    "\u8BBA\u6587\u6807\u9898": doc.title,  // 论文标题
+    "\u8BBA\u6587\u6807\u9898": doc.title, // 论文标题
   });
 }
 
@@ -143,35 +134,23 @@ function loadSummaryTemplate(): string {
   for (const candidate of candidates) {
     try {
       const modifiedAt = fs.statSync(candidate).mtimeMs;
-      if (
-        cachedTemplate?.path === candidate &&
-        cachedTemplate.modifiedAt === modifiedAt
-      ) {
+      if (cachedTemplate?.path === candidate && cachedTemplate.modifiedAt === modifiedAt) {
         return cachedTemplate.content;
       }
       const content = fs.readFileSync(candidate, "utf-8");
       cachedTemplate = { path: candidate, modifiedAt, content };
       return content;
     } catch (error) {
-      if (
-        !(error instanceof Error) ||
-        !("code" in error) ||
-        error.code !== "ENOENT"
-      ) {
+      if (!(error instanceof Error) || !("code" in error) || error.code !== "ENOENT") {
         throw error;
       }
     }
   }
 
-  throw new Error(
-    `PaperHub summary template not found: ${SUMMARY_TEMPLATE_FILENAME}`,
-  );
+  throw new Error(`PaperHub summary template not found: ${SUMMARY_TEMPLATE_FILENAME}`);
 }
 
-function interpolateTemplate(
-  template: string,
-  values: Record<string, string>,
-): string {
+function interpolateTemplate(template: string, values: Record<string, string>): string {
   let result = template;
   for (const [key, value] of Object.entries(values)) {
     result = result.split(`{{${key}}}`).join(value);
