@@ -17,20 +17,11 @@ import {
   executeWebSearchSession,
   retryWebSearchProviders,
 } from "@/services/web-search-service";
-import {
-  generateWebSearchSynthesis,
-  validateCitations,
-} from "@/services/web-search-summary";
+import { generateWebSearchSynthesis, parseSynthesis, validateCitations } from "@/services/web-search-summary";
 import { saveWebSearchResult } from "@/services/web-save-service";
 import { createWebSearchPlan } from "@/web-search/query-planner";
-import {
-  adaptMcpSearchOutput,
-  buildMcpToolArguments,
-} from "@/web-search/providers/mcp";
-import {
-  McpHttpClient,
-  validateMcpHttpEndpoint,
-} from "@/web-search/mcp-client";
+import { adaptMcpSearchOutput, buildMcpToolArguments } from "@/web-search/providers/mcp";
+import { McpHttpClient, validateMcpHttpEndpoint } from "@/web-search/mcp-client";
 import { handlePaperHubMcpRequest, listPaperHubMcpTools } from "@/mcp/server";
 import { parseMcpWebSearchRequest } from "@/mcp/tool-service";
 import { extractHtmlContent } from "@/web-search/content-extractor";
@@ -43,15 +34,8 @@ import {
   buildOpenAlexUrl,
   parseOpenAlexResponse,
 } from "@/web-search/providers/openalex";
-import {
-  buildCrossrefUrl,
-  parseCrossrefResponse,
-} from "@/web-search/providers/crossref";
-import {
-  BraveWebSearchProvider,
-  buildBraveUrl,
-  parseBraveResponse,
-} from "@/web-search/providers/brave";
+import { buildCrossrefUrl, parseCrossrefResponse } from "@/web-search/providers/crossref";
+import { BraveWebSearchProvider, buildBraveUrl, parseBraveResponse } from "@/web-search/providers/brave";
 import {
   TavilyWebSearchProvider,
   buildTavilyRequest,
@@ -62,10 +46,7 @@ import {
   buildGitHubSearchUrl,
   parseGitHubRepositoryResponse,
 } from "@/web-search/providers/github";
-import type {
-  WebSearchProvider,
-  WebSearchResult,
-} from "@/web-search/types";
+import type { WebSearchProvider, WebSearchResult } from "@/web-search/types";
 import { safeUnlink, testPath } from "./test-utils";
 import { resetDir } from "./test-utils";
 
@@ -172,11 +153,7 @@ describe("Web Search query planner", () => {
       searchBudget: "low_cost",
     });
 
-    expect(plan.providerCalls.map((call) => call.providerId)).toEqual([
-      "arxiv",
-      "tavily",
-      "github",
-    ]);
+    expect(plan.providerCalls.map((call) => call.providerId)).toEqual(["arxiv", "tavily", "github"]);
   });
 
   it("adds Search MCP only when the caller explicitly includes it", () => {
@@ -296,9 +273,7 @@ describe("Search MCP provider adapter", () => {
   it("accepts loopback HTTP MCP endpoints and rejects unsafe hosts", () => {
     expect(() => validateMcpHttpEndpoint("http://127.0.0.1:8080/mcp")).not.toThrow();
     expect(() => validateMcpHttpEndpoint("http://localhost:8080/mcp")).not.toThrow();
-    expect(() => validateMcpHttpEndpoint("http://0.0.0.0:8080/mcp")).toThrow(
-      /must not target 0\.0\.0\.0/,
-    );
+    expect(() => validateMcpHttpEndpoint("http://0.0.0.0:8080/mcp")).toThrow(/must not target 0\.0\.0\.0/);
     expect(() => validateMcpHttpEndpoint("http://example.com/mcp")).toThrow(
       /must be loopback or explicitly trusted/,
     );
@@ -316,39 +291,39 @@ describe("Search MCP provider adapter", () => {
       });
       const parsed = JSON.parse(body) as { id?: number; method: string };
       if (parsed.method === "initialize") {
-        return new Response(JSON.stringify({
+        return new Response(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            id: parsed.id,
+            result: {},
+          }),
+          {
+            status: 200,
+            headers: {
+              "content-type": "application/json",
+              "mcp-session-id": "session-1",
+            },
+          },
+        );
+      }
+      return new Response(
+        JSON.stringify({
           jsonrpc: "2.0",
           id: parsed.id,
-          result: {},
-        }), {
+          result: {
+            tools: [{ name: "search", description: "Search tool" }],
+          },
+        }),
+        {
           status: 200,
           headers: {
             "content-type": "application/json",
             "mcp-session-id": "session-1",
           },
-        });
-      }
-      return new Response(JSON.stringify({
-        jsonrpc: "2.0",
-        id: parsed.id,
-        result: {
-          tools: [{ name: "search", description: "Search tool" }],
         },
-      }), {
-        status: 200,
-        headers: {
-          "content-type": "application/json",
-          "mcp-session-id": "session-1",
-        },
-      });
+      );
     };
-    const client = new McpHttpClient(
-      "http://127.0.0.1:8080/mcp",
-      "local-token",
-      2_000,
-      undefined,
-      fakeFetch,
-    );
+    const client = new McpHttpClient("http://127.0.0.1:8080/mcp", "local-token", 2_000, undefined, fakeFetch);
 
     await client.connect();
     const tools = await client.listTools();
@@ -1091,9 +1066,7 @@ describe("Web Search session service", () => {
         }),
       ]),
     );
-    expect(listWebSearchEvents(second.id).map((event) => event.type)).toContain(
-      "provider.cache_hit",
-    );
+    expect(listWebSearchEvents(second.id).map((event) => event.type)).toContain("provider.cache_hit");
   });
 
   it("does not reuse the provider response cache across result-shaping filters", async () => {
@@ -1220,9 +1193,7 @@ describe("Web Search session service", () => {
     expect(completed.results[0]?.match.matchedShouldConcepts).toEqual(["benchmark"]);
     const partial = completed.results.find((result) => result.title === "Agent Memory Only");
     expect(partial?.match.missingMustConcepts).toEqual(["evaluation"]);
-    expect(partial?.ranking.sortExplanation).toEqual(
-      expect.arrayContaining(["degraded:evaluation"]),
-    );
+    expect(partial?.ranking.sortExplanation).toEqual(expect.arrayContaining(["degraded:evaluation"]));
   });
 
   it("can hard-filter results that miss must concepts when requested", async () => {
@@ -1241,9 +1212,7 @@ describe("Web Search session service", () => {
       new Map<string, WebSearchProvider>([["tavily", fakeConceptProvider()]]),
     );
 
-    expect(completed.results.map((result) => result.title)).toEqual([
-      "Agent Memory Evaluation Benchmark",
-    ]);
+    expect(completed.results.map((result) => result.title)).toEqual(["Agent Memory Evaluation Benchmark"]);
   });
 
   it("keeps arXiv usable when OpenAlex is not configured", async () => {
@@ -1328,9 +1297,7 @@ describe("Web Search session service", () => {
       ...fakeWebProvider("tavily", "failed"),
       async search(...args: Parameters<WebSearchProvider["search"]>) {
         tavilyCalls += 1;
-        return fakeWebProvider("tavily", tavilyCalls === 1 ? "failed" : "success").search(
-          ...args,
-        );
+        return fakeWebProvider("tavily", tavilyCalls === 1 ? "failed" : "success").search(...args);
       },
     };
     const brave: WebSearchProvider = {
@@ -1843,10 +1810,7 @@ function fakeConceptProvider(): WebSearchProvider {
   };
 }
 
-function fakeWebProvider(
-  providerId: "tavily" | "brave",
-  status: "success" | "failed",
-): WebSearchProvider {
+function fakeWebProvider(providerId: "tavily" | "brave", status: "success" | "failed"): WebSearchProvider {
   return {
     id: providerId,
     displayName: providerId,
