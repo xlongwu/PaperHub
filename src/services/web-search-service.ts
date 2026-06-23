@@ -110,13 +110,10 @@ export async function executeWebSearchSession(
       providerCount: usable.length,
     });
     const latestSession = getWebSearchSession(sessionId)!;
-    const results = aggregateResults(
-      sessionId,
-      plan,
-      session.request,
-      usable,
-      latestSession.expiresAt,
-    ).slice(0, plan.budget.maxTotalResults);
+    const results = aggregateResults(sessionId, plan, session.request, usable, latestSession.expiresAt).slice(
+      0,
+      plan.budget.maxTotalResults,
+    );
     insertWebSearchResults(results);
     const rawResults = usable.reduce((sum, response) => sum + response.items.length, 0);
     recordWebSearchUsageEvent({
@@ -132,9 +129,7 @@ export async function executeWebSearchSession(
       resultCount: results.length,
     });
 
-    const partial = responses.some(
-      (response) => !["success", "not_configured"].includes(response.status),
-    );
+    const partial = responses.some((response) => !["success", "not_configured"].includes(response.status));
     if (session.request.autoSummarize && results.length > 0) {
       updateWebSearchSession({ id: sessionId, status: "summarizing" });
       await generateWebSearchSynthesis(sessionId);
@@ -178,8 +173,9 @@ export async function retryWebSearchProviders(
   const failedProviders = session.providerRuns
     .filter((run) => !["success", "partial", "not_configured"].includes(run.status))
     .map((run) => run.providerId);
-  const retryProviders = (requested.size > 0 ? [...requested] : failedProviders)
-    .filter((providerId) => plannedProviders.has(providerId));
+  const retryProviders = (requested.size > 0 ? [...requested] : failedProviders).filter((providerId) =>
+    plannedProviders.has(providerId),
+  );
   if (retryProviders.length === 0) {
     throw new Error("No failed planned providers were selected for retry.");
   }
@@ -225,16 +221,8 @@ export async function retryWebSearchProviders(
       retry: true,
     });
     const latestSession = getWebSearchSession(sessionId)!;
-    const previousLocalState = new Map(
-      session.results.map((result) => [result.id, result.localState]),
-    );
-    const results = aggregateResults(
-      sessionId,
-      plan,
-      session.request,
-      usable,
-      latestSession.expiresAt,
-    )
+    const previousLocalState = new Map(session.results.map((result) => [result.id, result.localState]));
+    const results = aggregateResults(sessionId, plan, session.request, usable, latestSession.expiresAt)
       .map((result) => ({
         ...result,
         localState: previousLocalState.get(result.id) ?? result.localState,
@@ -290,14 +278,7 @@ async function executeProviderPlan(
   );
   const responses = await Promise.all(
     academicCalls.map((call) =>
-      executeProviderCall(
-        sessionId,
-        call.providerId,
-        plan,
-        request,
-        signal,
-        providerRegistry,
-      ),
+      executeProviderCall(sessionId, call.providerId, plan, request, signal, providerRegistry),
     ),
   );
   if (webCalls.length === 0) return responses;
@@ -306,14 +287,7 @@ async function executeProviderPlan(
     responses.push(
       ...(await Promise.all(
         webCalls.map((call) =>
-          executeProviderCall(
-            sessionId,
-            call.providerId,
-            plan,
-            request,
-            signal,
-            providerRegistry,
-          ),
+          executeProviderCall(sessionId, call.providerId, plan, request, signal, providerRegistry),
         ),
       )),
     );
@@ -326,26 +300,12 @@ async function executeProviderPlan(
   const mcpCall = webCalls.find((call) => call.providerId === "mcp");
   if (mcpCall) {
     responses.push(
-      await executeProviderCall(
-        sessionId,
-        mcpCall.providerId,
-        plan,
-        request,
-        signal,
-        providerRegistry,
-      ),
+      await executeProviderCall(sessionId, mcpCall.providerId, plan, request, signal, providerRegistry),
     );
   }
   if (githubCall) {
     responses.push(
-      await executeProviderCall(
-        sessionId,
-        githubCall.providerId,
-        plan,
-        request,
-        signal,
-        providerRegistry,
-      ),
+      await executeProviderCall(sessionId, githubCall.providerId, plan, request, signal, providerRegistry),
     );
   }
   const primary = tavilyCall ?? braveCall;
@@ -370,14 +330,7 @@ async function executeProviderPlan(
       reason: primaryResponse.status,
     });
     responses.push(
-      await executeProviderCall(
-        sessionId,
-        braveCall.providerId,
-        plan,
-        request,
-        signal,
-        providerRegistry,
-      ),
+      await executeProviderCall(sessionId, braveCall.providerId, plan, request, signal, providerRegistry),
     );
   }
   return responses;
@@ -457,10 +410,11 @@ async function executeProviderCall(
 
   upsertWebSearchProviderRun({ sessionId, providerId, status: "running" });
   appendWebSearchEvent(sessionId, "provider.started", { providerId });
-  const response = await provider.search(
-    providerRequest,
-    { sessionId, signal, timeoutMs: plan.budget.maxTotalLatencyMs },
-  );
+  const response = await provider.search(providerRequest, {
+    sessionId,
+    signal,
+    timeoutMs: plan.budget.maxTotalLatencyMs,
+  });
   if (response.status === "success" || response.status === "partial") {
     upsertCachedWebSearchProviderResponse({
       cacheKey,
@@ -540,108 +494,110 @@ function aggregateResults(
     }
   }
 
-  const results = attachRepositoryAssociations(merged
-    .map(({ item, evidence }) => {
-      const searchable = `${item.title} ${item.abstract ?? ""} ${item.snippet ?? ""}`.toLowerCase();
-      const matchedConcepts = plan.concepts.must.filter((concept) =>
-        searchable.includes(concept.toLowerCase()),
-      );
-      const missingMustConcepts = plan.concepts.must.filter((concept) => !matchedConcepts.includes(concept));
-      const matchedShouldConcepts = plan.concepts.should.filter((concept) =>
-        searchable.includes(concept.toLowerCase()),
-      );
-      const excludedConcepts = plan.concepts.exclude.filter((concept) =>
-        searchable.includes(concept.toLowerCase()),
-      );
-      const providerRrfScore =
-        evidence.reduce(
-          (sum, entry) => sum + providerWeight(entry.providerId) / (60 + entry.providerRank),
-          0,
-        ) * (evidence.length > 1 ? 1.1 : 1);
-      const mustCoverageScore =
-        plan.concepts.must.length === 0 ? 1 : matchedConcepts.length / plan.concepts.must.length;
-      const shouldCoverageScore =
-        plan.concepts.should.length === 0
-          ? 0
-          : matchedShouldConcepts.length / plan.concepts.should.length;
-      const freshnessScore = scoreFreshness(item.publishedAt);
-      const metadataQualityScore = scoreMetadata(item);
-      const queryIntentScore = scoreQueryIntent(request.query, item, plan.concepts.must);
-      const citationImpactScore = scoreCitationImpact(item);
-      const sourceQualityTier = sourceQualityTierFor(item);
-      const sourceQualityScore = sourceQualityScoreForTier(sourceQualityTier);
-      const conceptCoverageScore = Math.min(1, mustCoverageScore * 0.85 + shouldCoverageScore * 0.15);
-      const hardPenalty =
-        excludedConcepts.length > 0
-          ? -2
-          : missingMustConcepts.length === 0
-            ? 0.15
-            : -Math.min(0.6, missingMustConcepts.length * 0.2);
-      const aggregateScore =
-        providerRrfScore * 3 +
-        conceptCoverageScore * 1.5 +
-        shouldCoverageScore * 0.4 +
-        queryIntentScore * 3 +
-        freshnessScore * 0.75 +
-        citationImpactScore * 1.25 +
-        sourceQualityScore +
-        metadataQualityScore +
-        hardPenalty;
-      const sortExplanation = [
-        `source:${sourceQualityTier}`,
-        `must:${matchedConcepts.length}/${Math.max(1, plan.concepts.must.length)}`,
-        `should:${matchedShouldConcepts.length}/${Math.max(1, plan.concepts.should.length)}`,
-        excludedConcepts.length > 0 ? `excluded:${excludedConcepts.join(", ")}` : undefined,
-        missingMustConcepts.length > 0 ? `degraded:${missingMustConcepts.join(", ")}` : undefined,
-      ].filter((item): item is string => Boolean(item));
-      return {
-        id: createResultId(sessionId, item),
-        sessionId,
-        title: item.title,
-        url: item.url,
-        canonicalUrl: item.canonicalUrl,
-        authors: item.authors,
-        publishedAt: item.publishedAt,
-        language: item.language,
-        contentType: item.contentType,
-        abstract: item.abstract,
-        snippet: item.snippet,
-        metadata: item.metadata,
-        identifiers: item.identifiers,
-        origin: item.origin,
-        providerEvidence: evidence,
-        ranking: {
-          aggregateScore,
-          providerRrfScore,
-          conceptCoverageScore,
-          freshnessScore,
-          sourceQualityScore,
-          metadataQualityScore,
-          queryIntentScore,
-          citationImpactScore,
-          shouldCoverageScore,
-          sourceQualityTier,
-          sortExplanation,
-        },
-        match: {
-          matchedConcepts,
-          matchedShouldConcepts,
-          matchedFields: matchedConcepts.length > 0 ? ["title_or_abstract"] : [],
-          missingMustConcepts,
-          excludedConcepts,
-        },
-        localState: { status: "not_saved" as const },
-        createdAt: now,
-        expiresAt,
-      };
-    })
-    .filter((result) => {
-      if ((result.match.excludedConcepts?.length ?? 0) > 0) return false;
-      if (request.concepts?.requireMustMatch === true && result.match.missingMustConcepts.length > 0) {
-        return false;
-      }
-      return true;
-    }));
+  const results = attachRepositoryAssociations(
+    merged
+      .map(({ item, evidence }) => {
+        const searchable = `${item.title} ${item.abstract ?? ""} ${item.snippet ?? ""}`.toLowerCase();
+        const matchedConcepts = plan.concepts.must.filter((concept) =>
+          searchable.includes(concept.toLowerCase()),
+        );
+        const missingMustConcepts = plan.concepts.must.filter(
+          (concept) => !matchedConcepts.includes(concept),
+        );
+        const matchedShouldConcepts = plan.concepts.should.filter((concept) =>
+          searchable.includes(concept.toLowerCase()),
+        );
+        const excludedConcepts = plan.concepts.exclude.filter((concept) =>
+          searchable.includes(concept.toLowerCase()),
+        );
+        const providerRrfScore =
+          evidence.reduce(
+            (sum, entry) => sum + providerWeight(entry.providerId) / (60 + entry.providerRank),
+            0,
+          ) * (evidence.length > 1 ? 1.1 : 1);
+        const mustCoverageScore =
+          plan.concepts.must.length === 0 ? 1 : matchedConcepts.length / plan.concepts.must.length;
+        const shouldCoverageScore =
+          plan.concepts.should.length === 0 ? 0 : matchedShouldConcepts.length / plan.concepts.should.length;
+        const freshnessScore = scoreFreshness(item.publishedAt);
+        const metadataQualityScore = scoreMetadata(item);
+        const queryIntentScore = scoreQueryIntent(request.query, item, plan.concepts.must);
+        const citationImpactScore = scoreCitationImpact(item);
+        const sourceQualityTier = sourceQualityTierFor(item);
+        const sourceQualityScore = sourceQualityScoreForTier(sourceQualityTier);
+        const conceptCoverageScore = Math.min(1, mustCoverageScore * 0.85 + shouldCoverageScore * 0.15);
+        const hardPenalty =
+          excludedConcepts.length > 0
+            ? -2
+            : missingMustConcepts.length === 0
+              ? 0.15
+              : -Math.min(0.6, missingMustConcepts.length * 0.2);
+        const aggregateScore =
+          providerRrfScore * 3 +
+          conceptCoverageScore * 1.5 +
+          shouldCoverageScore * 0.4 +
+          queryIntentScore * 3 +
+          freshnessScore * 0.75 +
+          citationImpactScore * 1.25 +
+          sourceQualityScore +
+          metadataQualityScore +
+          hardPenalty;
+        const sortExplanation = [
+          `source:${sourceQualityTier}`,
+          `must:${matchedConcepts.length}/${Math.max(1, plan.concepts.must.length)}`,
+          `should:${matchedShouldConcepts.length}/${Math.max(1, plan.concepts.should.length)}`,
+          excludedConcepts.length > 0 ? `excluded:${excludedConcepts.join(", ")}` : undefined,
+          missingMustConcepts.length > 0 ? `degraded:${missingMustConcepts.join(", ")}` : undefined,
+        ].filter((item): item is string => Boolean(item));
+        return {
+          id: createResultId(sessionId, item),
+          sessionId,
+          title: item.title,
+          url: item.url,
+          canonicalUrl: item.canonicalUrl,
+          authors: item.authors,
+          publishedAt: item.publishedAt,
+          language: item.language,
+          contentType: item.contentType,
+          abstract: item.abstract,
+          snippet: item.snippet,
+          metadata: item.metadata,
+          identifiers: item.identifiers,
+          origin: item.origin,
+          providerEvidence: evidence,
+          ranking: {
+            aggregateScore,
+            providerRrfScore,
+            conceptCoverageScore,
+            freshnessScore,
+            sourceQualityScore,
+            metadataQualityScore,
+            queryIntentScore,
+            citationImpactScore,
+            shouldCoverageScore,
+            sourceQualityTier,
+            sortExplanation,
+          },
+          match: {
+            matchedConcepts,
+            matchedShouldConcepts,
+            matchedFields: matchedConcepts.length > 0 ? ["title_or_abstract"] : [],
+            missingMustConcepts,
+            excludedConcepts,
+          },
+          localState: { status: "not_saved" as const },
+          createdAt: now,
+          expiresAt,
+        };
+      })
+      .filter((result) => {
+        if ((result.match.excludedConcepts?.length ?? 0) > 0) return false;
+        if (request.concepts?.requireMustMatch === true && result.match.missingMustConcepts.length > 0) {
+          return false;
+        }
+        return true;
+      }),
+  );
   return sortAggregatedResults(results, request.sort, request.scope);
 }
 
@@ -765,7 +721,10 @@ function scoreRepositoryPaperAssociation(
     score += 0.35;
     matchedBy.add("title_phrase");
   }
-  if (/\b(implementation|code|repository|paper)\b/i.test(rawRepositoryText) && repositoryTokenCoverage >= 0.35) {
+  if (
+    /\b(implementation|code|repository|paper)\b/i.test(rawRepositoryText) &&
+    repositoryTokenCoverage >= 0.35
+  ) {
     score += 0.15;
     matchedBy.add("implementation_context");
   }
@@ -773,10 +732,7 @@ function scoreRepositoryPaperAssociation(
   return { score: Math.min(1, score), matchedBy: [...matchedBy] };
 }
 
-function compareAssociationScore(
-  a: Record<string, unknown>,
-  b: Record<string, unknown>,
-): number {
+function compareAssociationScore(a: Record<string, unknown>, b: Record<string, unknown>): number {
   return Number(b.score ?? 0) - Number(a.score ?? 0);
 }
 
@@ -791,9 +747,7 @@ function sortAggregatedResults(
       if (groupDelta !== 0) return groupDelta;
     }
     if (sort === "recent") {
-      const dateDelta =
-        new Date(b.publishedAt ?? 0).getTime() -
-        new Date(a.publishedAt ?? 0).getTime();
+      const dateDelta = new Date(b.publishedAt ?? 0).getTime() - new Date(a.publishedAt ?? 0).getTime();
       if (dateDelta !== 0) return dateDelta;
     }
     return b.ranking.aggregateScore - a.ranking.aggregateScore;
@@ -831,10 +785,7 @@ function retainedResultResponses(
   }));
 }
 
-function webResultToProviderItem(
-  result: WebSearchResult,
-  providerId: string,
-): ProviderSearchItem {
+function webResultToProviderItem(result: WebSearchResult, providerId: string): ProviderSearchItem {
   const evidence = result.providerEvidence.find((entry) => entry.providerId === providerId);
   return {
     providerResultId: evidence?.providerResultId,
@@ -976,16 +927,19 @@ function sourceQualityTierFor(item: ProviderSearchItem): "official" | "trusted" 
   ) {
     return "official";
   }
-  if (domain === "github.com" || domain === "docs.github.com" || item.identifiers.doi || item.identifiers.openAlexId) {
+  if (
+    domain === "github.com" ||
+    domain === "docs.github.com" ||
+    item.identifiers.doi ||
+    item.identifiers.openAlexId
+  ) {
     return "trusted";
   }
   if (domain.includes("blog") || domain.includes("docs") || domain.includes("developer")) return "standard";
   return "low";
 }
 
-function sourceQualityScoreForTier(
-  tier: "official" | "trusted" | "standard" | "low",
-): number {
+function sourceQualityScoreForTier(tier: "official" | "trusted" | "standard" | "low"): number {
   switch (tier) {
     case "official":
       return 1;
@@ -998,11 +952,7 @@ function sourceQualityScoreForTier(
   }
 }
 
-function scoreQueryIntent(
-  query: string,
-  item: ProviderSearchItem,
-  concepts: string[],
-): number {
+function scoreQueryIntent(query: string, item: ProviderSearchItem, concepts: string[]): number {
   const title = normalizeText(item.title);
   const body = normalizeText(`${item.abstract ?? ""} ${item.snippet ?? ""}`);
   const normalizedConcepts = concepts.map(normalizeText).filter(Boolean);
@@ -1012,8 +962,7 @@ function scoreQueryIntent(
   const phraseCoverage =
     phrases.length === 0
       ? 0
-      : phrases.filter((phrase) => title.includes(phrase) || body.includes(phrase)).length /
-        phrases.length;
+      : phrases.filter((phrase) => title.includes(phrase) || body.includes(phrase)).length / phrases.length;
   const directional = query.match(/(.+?)\s+for\s+(.+)/i);
   let directionScore = 0;
   let directionPenalty = 0;
@@ -1022,20 +971,13 @@ function scoreQueryIntent(
     const right = normalizeText(directional[2]);
     const combined = `${title} ${body}`;
     if (combined.includes(`${left} for ${right}`)) directionScore = 1;
-    if (
-      title.includes(`${right} generated ${left}`) ||
-      title.includes(`${right} based ${left}`)
-    ) {
+    if (title.includes(`${right} generated ${left}`) || title.includes(`${right} based ${left}`)) {
       directionPenalty = 0.25;
     }
   }
   return Math.max(
     0,
-    titleCoverage * 0.5 +
-      bodyCoverage * 0.2 +
-      phraseCoverage * 0.2 +
-      directionScore * 0.1 -
-      directionPenalty,
+    titleCoverage * 0.5 + bodyCoverage * 0.2 + phraseCoverage * 0.2 + directionScore * 0.1 - directionPenalty,
   );
 }
 
@@ -1061,19 +1003,7 @@ function ratioMatched(concepts: string[], text: string): number {
 }
 
 function meaningfulTokens(value: string): string[] {
-  const stopWords = new Set([
-    "a",
-    "an",
-    "and",
-    "for",
-    "in",
-    "of",
-    "on",
-    "paper",
-    "the",
-    "to",
-    "with",
-  ]);
+  const stopWords = new Set(["a", "an", "and", "for", "in", "of", "on", "paper", "the", "to", "with"]);
   return [
     ...new Set(
       normalizeText(value)
@@ -1083,26 +1013,17 @@ function meaningfulTokens(value: string): string[] {
   ];
 }
 
-function stringMetadata(
-  metadata: Record<string, unknown> | undefined,
-  key: string,
-): string | undefined {
+function stringMetadata(metadata: Record<string, unknown> | undefined, key: string): string | undefined {
   const value = metadata?.[key];
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
 
-function numberMetadata(
-  metadata: Record<string, unknown> | undefined,
-  key: string,
-): number | undefined {
+function numberMetadata(metadata: Record<string, unknown> | undefined, key: string): number | undefined {
   const value = metadata?.[key];
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
-function arrayMetadata(
-  metadata: Record<string, unknown> | undefined,
-  key: string,
-): string[] | undefined {
+function arrayMetadata(metadata: Record<string, unknown> | undefined, key: string): string[] | undefined {
   const value = metadata?.[key];
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : undefined;
 }
@@ -1122,10 +1043,7 @@ function createResultId(sessionId: string, item: ProviderSearchItem): string {
     .slice(0, 24)}`;
 }
 
-function createProviderCacheKey(
-  providerId: string,
-  request: ProviderSearchRequest,
-): string {
+function createProviderCacheKey(providerId: string, request: ProviderSearchRequest): string {
   return createHash("sha256")
     .update(
       stableStringify({

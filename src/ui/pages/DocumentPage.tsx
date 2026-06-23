@@ -152,7 +152,11 @@ export function DocumentPage(): JSX.Element {
         <div className="detail-meta-grid">
           <article className="detail-card">
             <h3>{DOCUMENT_UI.authorsLabel[language]}</h3>
-            <p>{document.authors.length > 0 ? document.authors.join(", ") : DOCUMENT_UI.authorsUnknown[language]}</p>
+            <p>
+              {document.authors.length > 0
+                ? document.authors.join(", ")
+                : DOCUMENT_UI.authorsUnknown[language]}
+            </p>
           </article>
           <article className="detail-card">
             <h3>{DOCUMENT_UI.labelsLabel[language]}</h3>

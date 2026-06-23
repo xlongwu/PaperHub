@@ -1,13 +1,5 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
-import {
-  FormEvent,
-  Fragment,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  useTransition,
-} from "react";
+import { FormEvent, Fragment, useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { useSearchParams } from "react-router-dom";
 import { DocumentCard, EmptyBlock, LoadingBlock, PaginationBar, SectionHeader } from "../components";
 import {
@@ -158,23 +150,17 @@ function WebSearchPanel(): JSX.Element {
   const [to, setTo] = useState(initialDraft.to);
   const [includeDomains, setIncludeDomains] = useState(initialDraft.includeDomains);
   const [excludeDomains, setExcludeDomains] = useState(initialDraft.excludeDomains);
-  const [searchBudget, setSearchBudget] = useState<WebSearchBudgetPreset>(
-    initialDraft.searchBudget,
-  );
+  const [searchBudget, setSearchBudget] = useState<WebSearchBudgetPreset>(initialDraft.searchBudget);
   const [maxResults, setMaxResults] = useState(initialDraft.maxResults);
   const [autoSummarize, setAutoSummarize] = useState(initialDraft.autoSummarize);
-  const [contentTypes, setContentTypes] = useState<WebSearchContentType[]>(
-    initialDraft.contentTypes,
-  );
+  const [contentTypes, setContentTypes] = useState<WebSearchContentType[]>(initialDraft.contentTypes);
   const [languages, setLanguages] = useState(initialDraft.languages);
   const [mustConcepts, setMustConcepts] = useState(initialDraft.mustConcepts);
   const [shouldConcepts, setShouldConcepts] = useState(initialDraft.shouldConcepts);
   const [excludeConcepts, setExcludeConcepts] = useState(initialDraft.excludeConcepts);
   const [requireMustMatch, setRequireMustMatch] = useState(initialDraft.requireMustMatch);
   const [sort, setSort] = useState<"relevance" | "recent">(initialDraft.sort);
-  const [allowQueryRewrite, setAllowQueryRewrite] = useState(
-    initialDraft.allowQueryRewrite,
-  );
+  const [allowQueryRewrite, setAllowQueryRewrite] = useState(initialDraft.allowQueryRewrite);
   const [providers, setProviders] = useState<string[]>(initialDraft.providers);
   const [advancedOpen, setAdvancedOpen] = useState(() => hasAdvancedWebSearchCriteria(initialDraft));
   const [sseFailed, setSseFailed] = useState(false);
@@ -263,9 +249,7 @@ function WebSearchPanel(): JSX.Element {
     staleTime: 30_000,
   });
   const providerHealth = useMemo(() => {
-    return new Map(
-      (healthQuery.data?.providers ?? []).map((provider) => [provider.providerId, provider]),
-    );
+    return new Map((healthQuery.data?.providers ?? []).map((provider) => [provider.providerId, provider]));
   }, [healthQuery.data]);
   const advancedSummary = buildAdvancedWebSearchSummary({
     contentTypes,
@@ -366,11 +350,7 @@ function WebSearchPanel(): JSX.Element {
       groups.set(label, [...(groups.get(label) ?? []), result]);
     }
     const order = ["Papers", "Official blogs", "Documentation & repositories", "Technical articles"];
-    return new Map(
-      [...groups.entries()].sort(
-        ([a], [b]) => groupOrder(order, a) - groupOrder(order, b),
-      ),
-    );
+    return new Map([...groups.entries()].sort(([a], [b]) => groupOrder(order, a) - groupOrder(order, b)));
   }, [session]);
 
   return (
@@ -557,9 +537,7 @@ function WebSearchPanel(): JSX.Element {
                   <label className="checkbox-row compact" key={option.value}>
                     <input
                       checked={contentTypes.includes(option.value)}
-                      onChange={() =>
-                        setContentTypes((current) => toggleValue(current, option.value))
-                      }
+                      onChange={() => setContentTypes((current) => toggleValue(current, option.value))}
                       type="checkbox"
                     />
                     <span>{option.label}</span>
@@ -676,7 +654,10 @@ function WebSearchPanel(): JSX.Element {
             />
           ) : null}
           {session?.status === "failed" ? (
-            <EmptyBlock description={session.error ?? "All providers failed."} title={SEARCH_UI.searchFailedTitle[language]} />
+            <EmptyBlock
+              description={session.error ?? "All providers failed."}
+              title={SEARCH_UI.searchFailedTitle[language]}
+            />
           ) : null}
           {session && !["completed", "partial", "failed", "cancelled"].includes(session.status) ? (
             <LoadingBlock />
@@ -700,7 +681,9 @@ function WebSearchPanel(): JSX.Element {
                 onClick={() => synthesisMutation.mutate()}
                 type="button"
               >
-                {synthesisMutation.isPending ? SEARCH_UI.generatingOverview[language] : SEARCH_UI.generateOverview[language]}
+                {synthesisMutation.isPending
+                  ? SEARCH_UI.generatingOverview[language]
+                  : SEARCH_UI.generateOverview[language]}
               </button>
             </section>
           ) : null}
@@ -715,25 +698,19 @@ function WebSearchPanel(): JSX.Element {
                     result={result}
                     resultSummary={resultSummaries[result.id]}
                     resultSummaryError={
-                      resultSummaryMutation.isError &&
-                      resultSummaryMutation.variables === result.id
+                      resultSummaryMutation.isError && resultSummaryMutation.variables === result.id
                         ? resultSummaryMutation.error
                         : undefined
                     }
                     resultSummaryPending={
-                      resultSummaryMutation.isPending &&
-                      resultSummaryMutation.variables === result.id
+                      resultSummaryMutation.isPending && resultSummaryMutation.variables === result.id
                     }
                     saveError={
-                      saveMutation.isError &&
-                      saveMutation.variables?.resultId === result.id
+                      saveMutation.isError && saveMutation.variables?.resultId === result.id
                         ? saveMutation.error
                         : undefined
                     }
-                    savePending={
-                      saveMutation.isPending &&
-                      saveMutation.variables?.resultId === result.id
-                    }
+                    savePending={saveMutation.isPending && saveMutation.variables?.resultId === result.id}
                     onSave={(input) =>
                       saveMutation.mutate({
                         resultId: result.id,
@@ -827,9 +804,7 @@ function readWebSearchDraft(): WebSearchDraft {
     return {
       ...fallback,
       ...stored,
-      scope: ["academic", "technical", "mixed"].includes(stored.scope ?? "")
-        ? stored.scope!
-        : fallback.scope,
+      scope: ["academic", "technical", "mixed"].includes(stored.scope ?? "") ? stored.scope! : fallback.scope,
       searchBudget: ["low_cost", "balanced", "broad"].includes(stored.searchBudget ?? "")
         ? stored.searchBudget!
         : fallback.searchBudget,
@@ -874,12 +849,26 @@ function buildWebSearchRestoreParams(draft: WebSearchDraft): URLSearchParams {
 }
 
 function parseDomainList(value: string): string[] | undefined {
-  const domains = [...new Set(value.split(/[\s,;]+/).map((item) => item.trim()).filter(Boolean))];
+  const domains = [
+    ...new Set(
+      value
+        .split(/[\s,;]+/)
+        .map((item) => item.trim())
+        .filter(Boolean),
+    ),
+  ];
   return domains.length > 0 ? domains : undefined;
 }
 
 function parseStringList(value: string): string[] | undefined {
-  const items = [...new Set(value.split(/[\s,;]+/).map((item) => item.trim()).filter(Boolean))];
+  const items = [
+    ...new Set(
+      value
+        .split(/[\s,;]+/)
+        .map((item) => item.trim())
+        .filter(Boolean),
+    ),
+  ];
   return items.length > 0 ? items : undefined;
 }
 
@@ -937,12 +926,7 @@ function buildWebConceptInput(input: {
   const must = parseStringList(input.mustConcepts);
   const should = parseStringList(input.shouldConcepts);
   const exclude = parseStringList(input.excludeConcepts);
-  if (
-    !must?.length &&
-    !should?.length &&
-    !exclude?.length &&
-    !input.requireMustMatch
-  ) {
+  if (!must?.length && !should?.length && !exclude?.length && !input.requireMustMatch) {
     return undefined;
   }
   return {
@@ -1027,14 +1011,11 @@ function LocalSearchPanel(): JSX.Element {
   const effectiveQuery = appliedState.query || localDraft.query;
   const effectiveMode = appliedState.mode || localDraft.mode;
   const effectiveSources = appliedState.sources.length > 0 ? appliedState.sources : localDraft.sources;
-  const effectiveAllTags =
-    appliedState.allTags.length > 0 ? appliedState.allTags : localDraft.allTags;
-  const effectiveAnyTags =
-    appliedState.anyTags.length > 0 ? appliedState.anyTags : localDraft.anyTags;
+  const effectiveAllTags = appliedState.allTags.length > 0 ? appliedState.allTags : localDraft.allTags;
+  const effectiveAnyTags = appliedState.anyTags.length > 0 ? appliedState.anyTags : localDraft.anyTags;
   const effectiveExcludeTags =
     appliedState.excludeTags.length > 0 ? appliedState.excludeTags : localDraft.excludeTags;
-  const effectiveTimeRange =
-    appliedState.timeRange !== "all" ? appliedState.timeRange : localDraft.timeRange;
+  const effectiveTimeRange = appliedState.timeRange !== "all" ? appliedState.timeRange : localDraft.timeRange;
 
   const [query, setQuery] = useState(effectiveQuery);
   const [mode, setMode] = useState(effectiveMode);
@@ -1049,18 +1030,12 @@ function LocalSearchPanel(): JSX.Element {
     setQuery(appliedState.query || localDraft.query);
     setMode(appliedState.mode || localDraft.mode);
     setSources(appliedState.sources.length > 0 ? appliedState.sources : localDraft.sources);
-    setAllTagDraft(
-      (appliedState.allTags.length > 0 ? appliedState.allTags : localDraft.allTags).join(", "),
-    );
-    setAnyTagDraft(
-      (appliedState.anyTags.length > 0 ? appliedState.anyTags : localDraft.anyTags).join(", "),
-    );
+    setAllTagDraft((appliedState.allTags.length > 0 ? appliedState.allTags : localDraft.allTags).join(", "));
+    setAnyTagDraft((appliedState.anyTags.length > 0 ? appliedState.anyTags : localDraft.anyTags).join(", "));
     setExcludeTagDraft(
       (appliedState.excludeTags.length > 0 ? appliedState.excludeTags : localDraft.excludeTags).join(", "),
     );
-    setTimeRange(
-      appliedState.timeRange !== "all" ? appliedState.timeRange : localDraft.timeRange,
-    );
+    setTimeRange(appliedState.timeRange !== "all" ? appliedState.timeRange : localDraft.timeRange);
   }, [appliedState]);
 
   // Persist local search state to localStorage so it survives navigation.
@@ -1268,9 +1243,7 @@ function LocalSearchPanel(): JSX.Element {
                 ))
               : null}
           </datalist>
-          <p className="empty-description">
-            {SEARCH_UI.tagHint[language]}
-          </p>
+          <p className="empty-description">{SEARCH_UI.tagHint[language]}</p>
 
           <button className="primary-button" type="submit">
             {SEARCH_UI.runSearch[language]}
@@ -1281,7 +1254,12 @@ function LocalSearchPanel(): JSX.Element {
       <div className="search-layout">
         <section className="content-panel">
           <SectionHeader
-            description={SEARCH_UI.matchedDescription(searchQuery.data?.candidateTotal ?? searchQuery.data?.total ?? 0, searchQuery.data?.modeUsed ?? appliedState.mode)[language]}
+            description={
+              SEARCH_UI.matchedDescription(
+                searchQuery.data?.candidateTotal ?? searchQuery.data?.total ?? 0,
+                searchQuery.data?.modeUsed ?? appliedState.mode,
+              )[language]
+            }
             kicker={SEARCH_UI.resultsKicker[language]}
             title={SEARCH_UI.resultsTitle[language]}
           />
@@ -1313,7 +1291,10 @@ function LocalSearchPanel(): JSX.Element {
             </div>
           ) : null}
           {!searchQuery.isLoading && appliedState.query.trim().length === 0 ? (
-            <EmptyBlock description={SEARCH_UI.noSearchDescription[language]} title={SEARCH_UI.noSearchTitle[language]} />
+            <EmptyBlock
+              description={SEARCH_UI.noSearchDescription[language]}
+              title={SEARCH_UI.noSearchTitle[language]}
+            />
           ) : null}
           {!searchQuery.isLoading &&
           appliedState.query.trim().length > 0 &&
@@ -1387,9 +1368,7 @@ function LocalSearchPanel(): JSX.Element {
             title={SEARCH_UI.synthesisTitle[language]}
           />
           {reportQuery.isLoading ? <LoadingBlock /> : null}
-          {reportQuery.data ? (
-            <pre className="report-copy">{reportQuery.data}</pre>
-          ) : null}
+          {reportQuery.data ? <pre className="report-copy">{reportQuery.data}</pre> : null}
           <div className="empty-block">
             <label className="field">
               <span>{SEARCH_UI.papersInReport[language]}</span>
@@ -1397,19 +1376,14 @@ function LocalSearchPanel(): JSX.Element {
                 className="field-input"
                 max={Math.min(100, searchQuery.data?.total ?? 10)}
                 min={1}
-                onChange={(event) =>
-                  setReportCount(Math.max(1, Number(event.target.value) || 10))
-                }
+                onChange={(event) => setReportCount(Math.max(1, Number(event.target.value) || 10))}
                 type="number"
                 value={reportCount}
               />
             </label>
             <button
               className="primary-button"
-              disabled={
-                reportQuery.isFetching ||
-                (searchQuery.data?.results.length ?? 0) === 0
-              }
+              disabled={reportQuery.isFetching || (searchQuery.data?.results.length ?? 0) === 0}
               onClick={() => reportQuery.refetch()}
               style={{ marginTop: "0.75rem" }}
               type="button"

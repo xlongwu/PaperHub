@@ -264,9 +264,7 @@ describe("search quality regression coverage", () => {
     });
 
     expect(result.queryPlan?.filters.anyTags).toEqual([]);
-    expect(result.results.map((entry) => entry.document.id)).toEqual([
-      "llm-synthetic-intersection",
-    ]);
+    expect(result.results.map((entry) => entry.document.id)).toEqual(["llm-synthetic-intersection"]);
   });
 
   it("defaults legacy multi-tag filters to intersection semantics", async () => {

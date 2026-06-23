@@ -11,11 +11,7 @@ import { claudeBlogCollector } from "@/collectors/claude-blog";
 import { ingestDocuments } from "@/services/document-ingestion";
 import { getPendingSummaryDocuments } from "@/db/documents";
 import { withRetry, logError } from "@/utils/retry";
-import {
-  getConfiguredSummaryLanguage,
-  getConfiguredSummaryLevel,
-  summarizeBatch,
-} from "@/summarizer";
+import { getConfiguredSummaryLanguage, getConfiguredSummaryLevel, summarizeBatch } from "@/summarizer";
 import fs from "node:fs";
 import path from "node:path";
 import { rebuildUserMemoryFromDigests, refreshHotRecommendations } from "@/recommendation";

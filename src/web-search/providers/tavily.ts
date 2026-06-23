@@ -38,7 +38,11 @@ export class TavilyWebSearchProvider implements WebSearchProvider {
   async healthCheck(): Promise<ProviderHealth> {
     const connection = this.resolveConnection();
     if (!connection?.apiKey) {
-      return { status: "unavailable", message: "Tavily is not configured", checkedAt: new Date().toISOString() };
+      return {
+        status: "unavailable",
+        message: "Tavily is not configured",
+        checkedAt: new Date().toISOString(),
+      };
     }
     const response = await this.search(
       { query: "PaperHub connection test", intent: "topic_discovery", limit: 1 },
@@ -46,7 +50,9 @@ export class TavilyWebSearchProvider implements WebSearchProvider {
     );
     return {
       status: response.status === "success" ? "healthy" : "unavailable",
-      message: response.warning ?? (response.status === "success" ? "Tavily connection succeeded" : "Tavily connection failed"),
+      message:
+        response.warning ??
+        (response.status === "success" ? "Tavily connection succeeded" : "Tavily connection failed"),
       checkedAt: new Date().toISOString(),
     };
   }
@@ -156,7 +162,11 @@ export function parseTavilyResponse(payload: unknown): ProviderSearchItem[] {
 function resolveTavilyConnection(): WebSearchConnectionConfig | null {
   const environmentKey = process.env["TAVILY_API_KEY"]?.trim();
   if (environmentKey) {
-    return environmentConnection("tavily", environmentKey, process.env["TAVILY_BASE_URL"] || DEFAULT_BASE_URL);
+    return environmentConnection(
+      "tavily",
+      environmentKey,
+      process.env["TAVILY_BASE_URL"] || DEFAULT_BASE_URL,
+    );
   }
   return getActiveWebSearchConnection("tavily");
 }
@@ -201,7 +211,9 @@ function domainOf(value: string): string {
 }
 
 function objectValue(value: unknown): Record<string, unknown> {
-  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
 }
 
 function objectArray(value: unknown, key: string): unknown[] {

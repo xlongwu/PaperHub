@@ -21,9 +21,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await new Promise<void>((resolve, reject) =>
-    server.close((error) => (error ? reject(error) : resolve())),
-  );
+  await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
   closeDb();
   clearDbPath();
   safeUnlink(TEST_DB_PATH);
@@ -68,10 +66,7 @@ describe("LLM connection API", () => {
     expect(active.id).toBe(created.id);
     expect(active.isActive).toBe(true);
 
-    const deleteResponse = await fetch(
-      `${apiBase}/api/llm/connections/${created.id}`,
-      { method: "DELETE" },
-    );
+    const deleteResponse = await fetch(`${apiBase}/api/llm/connections/${created.id}`, { method: "DELETE" });
     expect(deleteResponse.status).toBe(409);
   });
 });

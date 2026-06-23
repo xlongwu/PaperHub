@@ -111,9 +111,7 @@ describe("SearchPage", () => {
                 id: "ws_ui",
                 request: { query: "agent memory", scope: "academic" },
                 status: "completed",
-                providerRuns: [
-                  { providerId: "arxiv", status: "success", resultCount: 1, latencyMs: 12 },
-                ],
+                providerRuns: [{ providerId: "arxiv", status: "success", resultCount: 1, latencyMs: 12 }],
                 results: [
                   {
                     id: "wr_ui",

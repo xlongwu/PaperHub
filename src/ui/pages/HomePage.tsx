@@ -63,10 +63,7 @@ export function HomePage(): JSX.Element {
         />
         {hotQuery.isLoading ? <LoadingBlock /> : null}
         {!hotQuery.isLoading && (hotQuery.data?.length ?? 0) === 0 ? (
-          <EmptyBlock
-            description={HOME_UI.noHotDescription[language]}
-            title={HOME_UI.noHotTitle[language]}
-          />
+          <EmptyBlock description={HOME_UI.noHotDescription[language]} title={HOME_UI.noHotTitle[language]} />
         ) : null}
         <div className="feature-grid">
           {hotQuery.data?.map((entry) => (

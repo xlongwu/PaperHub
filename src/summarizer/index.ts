@@ -4,19 +4,11 @@
  */
 
 import { callLlm } from "@/report";
-import {
-  buildChunkExtractionPrompt,
-  buildEvidenceMergePrompt,
-  buildSummaryPrompt,
-} from "./prompt";
+import { buildChunkExtractionPrompt, buildEvidenceMergePrompt, buildSummaryPrompt } from "./prompt";
 import { chunkPaperContent, packEvidenceNotes } from "./chunking";
 import { updateDocument } from "@/db/documents";
 import { getUserPreference } from "@/db/user";
-import type {
-  Document,
-  DocumentLanguage,
-  SummaryLevel,
-} from "@/types";
+import type { Document, DocumentLanguage, SummaryLevel } from "@/types";
 
 const DIRECT_CONTENT_CHAR_LIMIT = 32_000;
 const EVIDENCE_MERGE_CHAR_LIMIT = 24_000;
@@ -35,9 +27,7 @@ export interface SummarizeOptions {
 
 export function getConfiguredSummaryLevel(): SummaryLevel {
   try {
-    return getUserPreference("summary_length") === "detailed"
-      ? "detailed"
-      : "short";
+    return getUserPreference("summary_length") === "detailed" ? "detailed" : "short";
   } catch {
     return "short";
   }
@@ -56,22 +46,15 @@ export function getConfiguredFocusTopics(): string[] {
     const raw = getUserPreference("interest_tags");
     if (!raw) return [];
     const parsed = JSON.parse(raw) as unknown;
-    return Array.isArray(parsed)
-      ? parsed.filter((value): value is string => typeof value === "string")
-      : [];
+    return Array.isArray(parsed) ? parsed.filter((value): value is string => typeof value === "string") : [];
   } catch {
     return [];
   }
 }
 
-export function needsSummary(
-  doc: Document,
-  lang: DocumentLanguage,
-  summaryLevel: SummaryLevel,
-): boolean {
+export function needsSummary(doc: Document, lang: DocumentLanguage, summaryLevel: SummaryLevel): boolean {
   const summary = lang === "zh" ? doc.summaryZh : doc.summaryEn;
-  const storedLevel =
-    lang === "zh" ? doc.summaryZhLevel : doc.summaryEnLevel;
+  const storedLevel = lang === "zh" ? doc.summaryZhLevel : doc.summaryEnLevel;
   return !summary || storedLevel !== summaryLevel;
 }
 
@@ -90,21 +73,13 @@ export async function summarizeDocument(
   const content = fullText || doc.abstract || "";
   const inputScope = fullText ? "full_text" : "abstract_only";
   const focusTopics = options.focusTopics ?? getConfiguredFocusTopics();
-  const maxTokens =
-    summaryLevel === "detailed"
-      ? DETAILED_OUTPUT_TOKENS
-      : SHORT_OUTPUT_TOKENS;
+  const maxTokens = summaryLevel === "detailed" ? DETAILED_OUTPUT_TOKENS : SHORT_OUTPUT_TOKENS;
 
   let finalContent = content;
   let processingNote: string | undefined;
 
   if (fullText && fullText.length > DIRECT_CONTENT_CHAR_LIMIT) {
-    finalContent = await extractLongDocumentEvidence(
-      doc,
-      fullText,
-      lang,
-      summaryLevel,
-    );
+    finalContent = await extractLongDocumentEvidence(doc, fullText, lang, summaryLevel);
     processingNote =
       lang === "zh"
         ? "PaperHub 处理说明：以下内容是覆盖完整正文全部分块后形成的结构化证据笔记。原文未被直接截断；最终总结应视为基于全文，但具体表述必须受证据笔记约束。"
@@ -151,16 +126,11 @@ export async function summarizeBatch(
     return;
   }
 
-  console.log(
-    `[summarizer] Summarizing ${total} documents at ${summaryLevel} level...`,
-  );
+  console.log(`[summarizer] Summarizing ${total} documents at ${summaryLevel} level...`);
   let done = 0;
   const concurrency = 3;
   const queue = [...pending];
-  const timeoutMs =
-    summaryLevel === "detailed"
-      ? DETAILED_DOCUMENT_TIMEOUT_MS
-      : SHORT_DOCUMENT_TIMEOUT_MS;
+  const timeoutMs = summaryLevel === "detailed" ? DETAILED_DOCUMENT_TIMEOUT_MS : SHORT_DOCUMENT_TIMEOUT_MS;
 
   async function worker(): Promise<void> {
     while (queue.length > 0) {
@@ -173,10 +143,7 @@ export async function summarizeBatch(
             focusTopics,
           }),
           new Promise<never>((_, reject) =>
-            setTimeout(
-              () => reject(new Error(`Timeout: ${doc.id}`)),
-              timeoutMs,
-            ),
+            setTimeout(() => reject(new Error(`Timeout: ${doc.id}`)), timeoutMs),
           ),
         ]);
         done++;
@@ -198,10 +165,7 @@ async function extractLongDocumentEvidence(
   summaryLevel: SummaryLevel,
 ): Promise<string> {
   const chunks = chunkPaperContent(content);
-  const extractionTokens =
-    summaryLevel === "detailed"
-      ? DETAILED_EXTRACTION_TOKENS
-      : SHORT_EXTRACTION_TOKENS;
+  const extractionTokens = summaryLevel === "detailed" ? DETAILED_EXTRACTION_TOKENS : SHORT_EXTRACTION_TOKENS;
   let notes = await mapWithConcurrency(chunks, 3, (chunk, index) =>
     callLlm(
       buildChunkExtractionPrompt({
@@ -221,9 +185,7 @@ async function extractLongDocumentEvidence(
   while (notes.join("\n\n").length > EVIDENCE_MERGE_CHAR_LIMIT) {
     mergeRounds++;
     if (mergeRounds > 6) {
-      throw new Error(
-        `Long-document evidence could not be compressed safely for ${doc.id}`,
-      );
+      throw new Error(`Long-document evidence could not be compressed safely for ${doc.id}`);
     }
     const groups = packEvidenceNotes(notes, EVIDENCE_MERGE_CHAR_LIMIT);
     notes = await mapWithConcurrency(groups, 3, (group, index) =>
@@ -259,11 +221,6 @@ async function mapWithConcurrency<T, R>(
     }
   }
 
-  await Promise.all(
-    Array.from(
-      { length: Math.min(concurrency, items.length) },
-      () => worker(),
-    ),
-  );
+  await Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, () => worker()));
   return results;
 }

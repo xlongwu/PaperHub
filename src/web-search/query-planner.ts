@@ -97,10 +97,7 @@ export function createWebSearchPlan(request: WebSearchRequest): WebSearchPlan {
     });
   }
   const requestedConcepts = normalizeRequestedConcepts(request.concepts);
-  const originalConcepts = mergeConceptInputs(
-    extractConcepts(originalNormalizedQuery),
-    requestedConcepts,
-  );
+  const originalConcepts = mergeConceptInputs(extractConcepts(originalNormalizedQuery), requestedConcepts);
   const rewrittenConcepts = rewrite.applied ? extractConcepts(normalizedQuery) : originalConcepts;
   const concepts = {
     must: originalConcepts.must,
@@ -112,10 +109,7 @@ export function createWebSearchPlan(request: WebSearchRequest): WebSearchPlan {
   const budgetPreset = request.searchBudget ?? "balanced";
   const baseBudget = {
     ...BUDGETS[budgetPreset],
-    maxTotalResults: Math.min(
-      request.maxResults ?? BUDGETS[budgetPreset].maxTotalResults,
-      100,
-    ),
+    maxTotalResults: Math.min(request.maxResults ?? BUDGETS[budgetPreset].maxTotalResults, 100),
   };
   const selectedCalls =
     request.scope === "mixed" && budgetPreset === "low_cost"
@@ -126,10 +120,7 @@ export function createWebSearchPlan(request: WebSearchRequest): WebSearchPlan {
     : baseBudget.maxResultsPerProvider;
   const budget = {
     ...baseBudget,
-    maxResultsPerProvider: Math.min(
-      100,
-      Math.max(baseBudget.maxResultsPerProvider, requestedPerProvider),
-    ),
+    maxResultsPerProvider: Math.min(100, Math.max(baseBudget.maxResultsPerProvider, requestedPerProvider)),
   };
 
   return {
@@ -155,9 +146,7 @@ function mergeConceptInputs(
   };
 }
 
-function normalizeRequestedConcepts(
-  concepts: WebSearchRequest["concepts"],
-): WebSearchPlan["concepts"] {
+function normalizeRequestedConcepts(concepts: WebSearchRequest["concepts"]): WebSearchPlan["concepts"] {
   return {
     must: normalizeConceptList(concepts?.must),
     should: normalizeConceptList(concepts?.should),
@@ -170,17 +159,12 @@ function normalizeConceptList(values: string[] | undefined): string[] {
   return [...new Set(values.map(normalizeQuery).filter((value) => value.length > 0))];
 }
 
-function rewriteQuerySafely(
-  query: string,
-  request: WebSearchRequest,
-): NonNullable<WebSearchPlan["rewrite"]> {
+function rewriteQuerySafely(query: string, request: WebSearchRequest): NonNullable<WebSearchPlan["rewrite"]> {
   if (!request.allowQueryRewrite) return { applied: false };
   if (detectIntent(query) === "exact_identifier") return { applied: false };
 
   const expansions = acronymExpansions(query);
-  const chineseExpansions = query.match(/[\u4e00-\u9fff]/u)
-    ? chineseResearchExpansions(query)
-    : [];
+  const chineseExpansions = query.match(/[\u4e00-\u9fff]/u) ? chineseResearchExpansions(query) : [];
   const added = [...new Set([...expansions, ...chineseExpansions])]
     .filter((term) => !query.toLowerCase().includes(term.toLowerCase()))
     .slice(0, 6);
@@ -189,8 +173,7 @@ function rewriteQuerySafely(
   return {
     applied: true,
     rewrittenQuery: normalizeQuery(`${query} ${added.join(" ")}`),
-    reason:
-      "Expanded common research abbreviations while preserving the original query and date filters.",
+    reason: "Expanded common research abbreviations while preserving the original query and date filters.",
   };
 }
 
@@ -204,9 +187,7 @@ function acronymExpansions(query: string): string[] {
     [/\beval(s|uation)?\b/i, "benchmark evaluation"],
     [/\bagent(s|ic)?\b/i, "AI agents"],
   ];
-  return patterns
-    .filter(([pattern]) => pattern.test(query))
-    .map(([, expansion]) => expansion);
+  return patterns.filter(([pattern]) => pattern.test(query)).map(([, expansion]) => expansion);
 }
 
 function chineseResearchExpansions(query: string): string[] {
@@ -218,14 +199,10 @@ function chineseResearchExpansions(query: string): string[] {
     [/代码|仓库|实现/u, "GitHub implementation repository"],
     [/论文|文献/u, "academic papers"],
   ];
-  return patterns
-    .filter(([pattern]) => pattern.test(query))
-    .map(([, expansion]) => expansion);
+  return patterns.filter(([pattern]) => pattern.test(query)).map(([, expansion]) => expansion);
 }
 
-function selectLowCostMixedCalls(
-  calls: WebSearchPlan["providerCalls"],
-): WebSearchPlan["providerCalls"] {
+function selectLowCostMixedCalls(calls: WebSearchPlan["providerCalls"]): WebSearchPlan["providerCalls"] {
   const academic =
     calls.find((call) => call.providerId === "openalex" && call.reason.includes("Exact")) ??
     calls.find((call) => call.providerId === "arxiv") ??
@@ -234,10 +211,7 @@ function selectLowCostMixedCalls(
     ...(academic ? [academic] : []),
     ...calls.filter((call) => call.providerId === "tavily"),
     ...calls.filter((call) => call.providerId === "github"),
-    ...calls.filter(
-      (call) =>
-        call.providerId === "brave",
-    ),
+    ...calls.filter((call) => call.providerId === "brave"),
   ];
 }
 

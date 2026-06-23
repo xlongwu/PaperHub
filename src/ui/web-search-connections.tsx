@@ -30,17 +30,13 @@ export function WebSearchConnectionsPanel(): JSX.Element {
           <ConnectionEditor
             connection={connectionsQuery.data?.find((entry) => entry.provider === provider.id)}
             key={provider.id}
-            onRefresh={() =>
-              queryClient.invalidateQueries({ queryKey: ["web-search", "connections"] })
-            }
+            onRefresh={() => queryClient.invalidateQueries({ queryKey: ["web-search", "connections"] })}
             provider={provider}
           />
         ))}
         <McpConnectionEditor
           connection={connectionsQuery.data?.find((entry) => entry.provider === "mcp")}
-          onRefresh={() =>
-            queryClient.invalidateQueries({ queryKey: ["web-search", "connections"] })
-          }
+          onRefresh={() => queryClient.invalidateQueries({ queryKey: ["web-search", "connections"] })}
         />
       </div>
     </section>
@@ -125,8 +121,7 @@ function McpConnectionEditor({
       await onRefresh();
     },
   });
-  const diagnostic =
-    testMutation.data?.diagnostic ?? readConnectionDiagnostic(testMutation.error);
+  const diagnostic = testMutation.data?.diagnostic ?? readConnectionDiagnostic(testMutation.error);
 
   return (
     <div className="settings-grid empty-block">
@@ -280,8 +275,12 @@ function parseMcpAdapterSettings(
   outputAdapterJson: string,
 ): Pick<WebSearchConnection["settings"], "mcpInputAdapter" | "mcpOutputAdapter"> {
   return {
-    mcpInputAdapter: parseOptionalJsonObject(inputAdapterJson) as WebSearchConnection["settings"]["mcpInputAdapter"],
-    mcpOutputAdapter: parseOptionalJsonObject(outputAdapterJson) as WebSearchConnection["settings"]["mcpOutputAdapter"],
+    mcpInputAdapter: parseOptionalJsonObject(
+      inputAdapterJson,
+    ) as WebSearchConnection["settings"]["mcpInputAdapter"],
+    mcpOutputAdapter: parseOptionalJsonObject(
+      outputAdapterJson,
+    ) as WebSearchConnection["settings"]["mcpOutputAdapter"],
   };
 }
 
@@ -361,62 +360,62 @@ function ConnectionEditor({
   return (
     <div className="settings-grid empty-block">
       <p className="empty-title">{provider.name}</p>
-        <label className="field">
-          <span>{`${provider.name} ${text.name}`}</span>
-          <input className="field-input" onChange={(event) => setName(event.target.value)} value={name} />
-        </label>
-        <label className="field">
-          <span>{`${provider.name} ${text.baseUrl}`}</span>
-          <input
-            className="field-input"
-            onChange={(event) => setBaseUrl(event.target.value)}
-            type="url"
-            value={baseUrl}
-          />
-        </label>
-        <label className="field">
-          <span>{`${provider.name} ${text.apiKey}`}</span>
-          <input
-            autoComplete="off"
-            className="field-input"
-            onChange={(event) => setApiKey(event.target.value)}
-            placeholder={connection?.hasApiKey ? text.keepKey : ""}
-            type="password"
-            value={apiKey}
-          />
-        </label>
-        <p className="settings-note">
-          {connection
-            ? `${connection.isPrimary ? text.active : connection.enabled ? "Enabled" : "Disabled"}${
-                connection.lastTestStatus ? ` · ${connection.lastTestStatus}` : ""
-              }${connection.lastTestMessage ? ` · ${connection.lastTestMessage}` : ""}`
-            : text.notConfigured}
+      <label className="field">
+        <span>{`${provider.name} ${text.name}`}</span>
+        <input className="field-input" onChange={(event) => setName(event.target.value)} value={name} />
+      </label>
+      <label className="field">
+        <span>{`${provider.name} ${text.baseUrl}`}</span>
+        <input
+          className="field-input"
+          onChange={(event) => setBaseUrl(event.target.value)}
+          type="url"
+          value={baseUrl}
+        />
+      </label>
+      <label className="field">
+        <span>{`${provider.name} ${text.apiKey}`}</span>
+        <input
+          autoComplete="off"
+          className="field-input"
+          onChange={(event) => setApiKey(event.target.value)}
+          placeholder={connection?.hasApiKey ? text.keepKey : ""}
+          type="password"
+          value={apiKey}
+        />
+      </label>
+      <p className="settings-note">
+        {connection
+          ? `${connection.isPrimary ? text.active : connection.enabled ? "Enabled" : "Disabled"}${
+              connection.lastTestStatus ? ` · ${connection.lastTestStatus}` : ""
+            }${connection.lastTestMessage ? ` · ${connection.lastTestMessage}` : ""}`
+          : text.notConfigured}
+      </p>
+      {saveMutation.error || activateMutation.error || testMutation.error ? (
+        <p className="settings-error">
+          {(saveMutation.error || activateMutation.error || testMutation.error)?.message}
         </p>
-        {saveMutation.error || activateMutation.error || testMutation.error ? (
-          <p className="settings-error">
-            {(saveMutation.error || activateMutation.error || testMutation.error)?.message}
-          </p>
-        ) : null}
-        <div className="toolbar-inline">
-          <button className="primary-button" onClick={() => saveMutation.mutate(false)} type="button">
-            {text.save}
+      ) : null}
+      <div className="toolbar-inline">
+        <button className="primary-button" onClick={() => saveMutation.mutate(false)} type="button">
+          {text.save}
+        </button>
+        {connection && !connection.isPrimary ? (
+          <button className="secondary-button" onClick={() => activateMutation.mutate()} type="button">
+            {text.activate}
           </button>
-          {connection && !connection.isPrimary ? (
-            <button className="secondary-button" onClick={() => activateMutation.mutate()} type="button">
-              {text.activate}
-            </button>
-          ) : null}
-          {connection ? (
-            <button className="secondary-button" onClick={() => testMutation.mutate()} type="button">
-              {text.test}
-            </button>
-          ) : null}
-          {connection?.hasApiKey ? (
-            <button className="secondary-button" onClick={() => saveMutation.mutate(true)} type="button">
-              {text.removeKey}
-            </button>
-          ) : null}
-        </div>
+        ) : null}
+        {connection ? (
+          <button className="secondary-button" onClick={() => testMutation.mutate()} type="button">
+            {text.test}
+          </button>
+        ) : null}
+        {connection?.hasApiKey ? (
+          <button className="secondary-button" onClick={() => saveMutation.mutate(true)} type="button">
+            {text.removeKey}
+          </button>
+        ) : null}
+      </div>
     </div>
   );
 }

@@ -9,10 +9,7 @@ export interface TemplateVariables {
   maxTokens: number;
 }
 
-export function renderJsonTemplate(
-  template: JsonTemplate,
-  variables: TemplateVariables,
-): JsonTemplate {
+export function renderJsonTemplate(template: JsonTemplate, variables: TemplateVariables): JsonTemplate {
   if (typeof template === "string") {
     const exact = EXACT_PLACEHOLDER_RE.exec(template);
     if (exact) {
@@ -34,13 +31,8 @@ export function renderJsonTemplate(
   return template;
 }
 
-export function renderTemplateString(
-  value: string,
-  variables: TemplateVariables,
-): string {
-  return value.replace(PLACEHOLDER_RE, (_match, key: keyof TemplateVariables) =>
-    String(variables[key]),
-  );
+export function renderTemplateString(value: string, variables: TemplateVariables): string {
+  return value.replace(PLACEHOLDER_RE, (_match, key: keyof TemplateVariables) => String(variables[key]));
 }
 
 export function extractJsonPath(value: unknown, path: string): unknown {

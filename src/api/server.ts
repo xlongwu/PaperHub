@@ -84,11 +84,7 @@ import {
   refreshHotRecommendations,
 } from "@/recommendation";
 import type { MemoryTerm, RecommendationEntry } from "@/types";
-import {
-  corsMiddleware,
-  createRateLimiter,
-  securityHeadersMiddleware,
-} from "./security";
+import { corsMiddleware, createRateLimiter, securityHeadersMiddleware } from "./security";
 import { startWebSearchCleanup, webSearchRouter } from "./routes/web-search";
 
 // ---------------------------------------------------------------------------
@@ -323,10 +319,7 @@ export async function searchResponse(options: {
     shouldConcepts: options.shouldConcepts,
     excludeConcepts: options.excludeConcepts,
     fallbackPolicy: options.fallbackPolicy,
-    dateRange:
-      options.from || options.to
-        ? { start: options.from ?? "", end: options.to ?? "" }
-        : undefined,
+    dateRange: options.from || options.to ? { start: options.from ?? "", end: options.to ?? "" } : undefined,
   });
 }
 

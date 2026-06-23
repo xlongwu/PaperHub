@@ -51,11 +51,7 @@ import { OpenRouterProvider } from "./openrouter";
 import { DeepSeekProvider } from "./deepseek";
 import { getStoredLlmProviderSettings, saveStoredLlmProviderSettings } from "@/db/llm-settings";
 import { getUserPreference, setUserPreference } from "@/db/user";
-import {
-  activateLlmConnection,
-  getLlmConnection,
-  saveLlmConnection,
-} from "@/db/llm-connections";
+import { activateLlmConnection, getLlmConnection, saveLlmConnection } from "@/db/llm-connections";
 import { getLlmProviderPreset } from "./catalog";
 import { DeclarativeLlmProvider, resolveLegacyProvider, resolveLlmRuntime } from "./runtime";
 
@@ -287,7 +283,5 @@ function safeReadConnection(id: string) {
 
 function toLegacyProviderName(presetId: string | null): ProviderName {
   const candidate = presetId === "github-models" ? "github-copilot" : presetId;
-  return VALID_PROVIDER_NAMES.includes(candidate as ProviderName)
-    ? (candidate as ProviderName)
-    : "deepseek";
+  return VALID_PROVIDER_NAMES.includes(candidate as ProviderName) ? (candidate as ProviderName) : "deepseek";
 }

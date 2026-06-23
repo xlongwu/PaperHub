@@ -70,8 +70,6 @@ function decodePdfLiteral(value: string): string {
       };
       return map[escaped] ?? escaped;
     })
-    .replace(/\\([0-7]{1,3})/g, (_match, octal: string) =>
-      String.fromCharCode(Number.parseInt(octal, 8)),
-    )
+    .replace(/\\([0-7]{1,3})/g, (_match, octal: string) => String.fromCharCode(Number.parseInt(octal, 8)))
     .replace(/\\\r?\n/g, "");
 }

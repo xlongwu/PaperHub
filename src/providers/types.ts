@@ -21,17 +21,19 @@ export interface ProviderOptions {
 
 export type ProviderFactory = (options?: ProviderOptions) => LlmProvider;
 
-export type LlmProtocol =
-  | "openai_chat"
-  | "anthropic_messages"
-  | "gemini_generate_content"
-  | "custom_json";
+export type LlmProtocol = "openai_chat" | "anthropic_messages" | "gemini_generate_content" | "custom_json";
 
 export type LlmAuthType = "bearer" | "header" | "query" | "none";
 export type LlmRequestMethod = "GET" | "POST" | "PUT";
-export type JsonTemplate = null | boolean | number | string | JsonTemplate[] | {
-  [key: string]: JsonTemplate;
-};
+export type JsonTemplate =
+  | null
+  | boolean
+  | number
+  | string
+  | JsonTemplate[]
+  | {
+      [key: string]: JsonTemplate;
+    };
 
 export interface LlmAuthConfig {
   type: LlmAuthType;

@@ -68,10 +68,7 @@ function extractYear(isoDate: string): number {
   }
 }
 
-function inferTypeTag(
-  source: DocumentSource,
-  metadata?: Record<string, unknown>,
-): DocumentType {
+function inferTypeTag(source: DocumentSource, metadata?: Record<string, unknown>): DocumentType {
   const contentType = stringValue(metadata?.contentType);
   if (contentType === "paper") return "paper";
   if (contentType === "documentation" || contentType === "repository") return "tutorial";

@@ -95,14 +95,9 @@ export class CrossrefWebSearchProvider implements WebSearchProvider {
 
 export const crossrefWebSearchProvider = new CrossrefWebSearchProvider();
 
-export function buildCrossrefUrl(
-  request: ProviderSearchRequest,
-  baseUrl = DEFAULT_BASE_URL,
-): string {
+export function buildCrossrefUrl(request: ProviderSearchRequest, baseUrl = DEFAULT_BASE_URL): string {
   const doi = extractDoi(request.query);
-  const url = new URL(
-    `${baseUrl.replace(/\/+$/, "")}/works${doi ? `/${encodeURIComponent(doi)}` : ""}`,
-  );
+  const url = new URL(`${baseUrl.replace(/\/+$/, "")}/works${doi ? `/${encodeURIComponent(doi)}` : ""}`);
   if (!doi) {
     url.searchParams.set("query.bibliographic", request.query);
     url.searchParams.set("rows", String(Math.min(Math.max(request.limit, 1), 100)));
@@ -182,7 +177,10 @@ function datePartsToIso(value: unknown): string | undefined {
 }
 
 function stripTags(value: string): string {
-  return value.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+  return value
+    .replace(/<[^>]*>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function domainOf(value: string): string {

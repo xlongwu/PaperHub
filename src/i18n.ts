@@ -342,9 +342,15 @@ export const HOME_UI = {
   ),
   recentActionLabel: t("浏览标签", "Browse tags"),
   noHotTitle: t("暂无热门推荐", "No hot recommendations yet"),
-  noHotDescription: t("请执行内容采集或重建议推荐缓存以填充看板。", "Run collection or rebuild recommendations to populate the board."),
+  noHotDescription: t(
+    "请执行内容采集或重建议推荐缓存以填充看板。",
+    "Run collection or rebuild recommendations to populate the board.",
+  ),
   noPersonalTitle: t("个人资料信号不足", "Profile needs more signal"),
-  noPersonalDescription: t("添加兴趣标签或重建用户记忆以解锁个性化推荐。", "Add interest tags or rebuild user memory to unlock personalized picks."),
+  noPersonalDescription: t(
+    "添加兴趣标签或重建用户记忆以解锁个性化推荐。",
+    "Add interest tags or rebuild user memory to unlock personalized picks.",
+  ),
 } as const;
 
 // ---------------------------------------------------------------------------
@@ -382,18 +388,32 @@ export const SEARCH_UI = {
   webResultsKicker: t("Web 结果", "Web results"),
   webResultsTitle: t("新发现", "New discoveries"),
   noSessionTitle: t("暂无 Web 搜索会话", "No Web Search session"),
-  noSessionDescription: t("无需商业搜索密钥即可使用 arXiv 搜索。", "arXiv search works without a commercial Web Search key."),
+  noSessionDescription: t(
+    "无需商业搜索密钥即可使用 arXiv 搜索。",
+    "arXiv search works without a commercial Web Search key.",
+  ),
   searchFailedTitle: t("搜索失败", "Search failed"),
   synthesisKicker: t("综合报告", "Synthesis"),
   synthesisTitle: t("研究报告", "Research report"),
-  synthesisDescription: t("从搜索结果生成深度方法论分类综述。", "Generate a deep method-taxonomy review from the search results above."),
+  synthesisDescription: t(
+    "从搜索结果生成深度方法论分类综述。",
+    "Generate a deep method-taxonomy review from the search results above.",
+  ),
   noSynthesis: t("尚未生成综合报告。", "No synthesis has been generated for this session."),
   generateOverview: t("生成引用综述", "Generate cited overview"),
   generatingOverview: t("正在生成综述…", "Generating overview…"),
   reportError: t("报告生成失败。", "Report generation failed."),
   papersInReport: t("报告涉及论文数", "Papers in report"),
-  reportInfo: (count: number) => t(`从最多 ${count} 篇论文生成。调整数量以修改。`, `Generated from up to ${count} papers. Edit count to adjust.`),
-  reportWaiting: (count: number) => t(`报告可使用最多 ${count} 篇匹配论文作为证据。`, `A report can use up to ${count} matched papers as evidence.`),
+  reportInfo: (count: number) =>
+    t(
+      `从最多 ${count} 篇论文生成。调整数量以修改。`,
+      `Generated from up to ${count} papers. Edit count to adjust.`,
+    ),
+  reportWaiting: (count: number) =>
+    t(
+      `报告可使用最多 ${count} 篇匹配论文作为证据。`,
+      `A report can use up to ${count} matched papers as evidence.`,
+    ),
   localKicker: t("研究模式", "Research mode"),
   localTitle: t("搜索", "Search"),
   localDescription: t(
@@ -427,11 +447,20 @@ export const SEARCH_UI = {
       `Matched ${candidateCount} candidates with mode ${modeUsed}.`,
     ),
   noSearchTitle: t("尚未搜索", "No search yet"),
-  noSearchDescription: t("输入主题、模型或工作流模式开始搜索。", "Start with a topic, model, or workflow pattern."),
+  noSearchDescription: t(
+    "输入主题、模型或工作流模式开始搜索。",
+    "Start with a topic, model, or workflow pattern.",
+  ),
   noMatchesTitle: t("未找到匹配", "No matches found"),
-  noMatchesDescription: t("尝试扩大查询范围、切换搜索模式或减少过滤条件。", "Try widening the query, changing the mode, or removing some filters."),
+  noMatchesDescription: t(
+    "尝试扩大查询范围、切换搜索模式或减少过滤条件。",
+    "Try widening the query, changing the mode, or removing some filters.",
+  ),
   keywordFallbackTitle: t("语义搜索暂时不可用", "Semantic search is temporarily unavailable"),
-  keywordFallbackDescription: t("当前由关键词搜索提供结果。", "Results are currently provided by keyword search."),
+  keywordFallbackDescription: t(
+    "当前由关键词搜索提供结果。",
+    "Results are currently provided by keyword search.",
+  ),
   queryPlanTitle: t("有效查询计划", "Effective query plan"),
   coverageTitle: t("本地知识库概况", "Local corpus coverage"),
   searchErrorTitle: t("搜索条件需要调整", "Search filters need attention"),
@@ -457,7 +486,10 @@ export const SEARCH_UI = {
 export const DOCUMENT_UI = {
   readingKicker: t("阅读室", "Reading room"),
   noDocumentTitle: t("文档不存在", "Document missing"),
-  noDocumentDescription: t("在本地档案中未找到该文档。", "The requested document could not be found in the local archive."),
+  noDocumentDescription: t(
+    "在本地档案中未找到该文档。",
+    "The requested document could not be found in the local archive.",
+  ),
   saveFavorite: t("收藏", "Save to favorites"),
   removeFavorite: t("取消收藏", "Remove favorite"),
   markRead: t("标记已读", "Mark as read"),
@@ -536,12 +568,30 @@ export const USER_CENTER_UI = {
   embeddingKeyPlaceholder: t("粘贴 Embedding API 密钥", "Paste your embedding API key"),
   embeddingDimensionsLabel: t("检测维度", "Detected dimensions"),
   embeddingNotProbed: t("未探测", "Not probed"),
-  embeddingStatusUnsaved: t("保存以启用此 Embedding 配置。", "Save to activate this embedding configuration."),
-  embeddingStatusEnv: t("配置由环境变量设定，此处不可覆盖。", "Configuration is set via environment variables and cannot be overridden here."),
-  embeddingStatusNoKey: t("已保存 — 但未存储 API 密钥。在保存密钥前语义搜索将失败。", "Saved — but no API key stored. Semantic search will fail until a key is saved."),
-  embeddingStatusSaved: t("Embedding 设置已保存。如切换模型请重建向量索引。", "Embedding settings saved. Rebuild the vector index if you changed the model."),
-  embeddingStatusDefaultOllama: t("使用内置默认值。保存以应用您的 Ollama 配置。", "Using built-in defaults. Save to apply your Ollama configuration."),
-  embeddingStatusDefault: t("使用内置默认值。保存以持久化您的配置。", "Using built-in defaults. Save to persist your configuration."),
+  embeddingStatusUnsaved: t(
+    "保存以启用此 Embedding 配置。",
+    "Save to activate this embedding configuration.",
+  ),
+  embeddingStatusEnv: t(
+    "配置由环境变量设定，此处不可覆盖。",
+    "Configuration is set via environment variables and cannot be overridden here.",
+  ),
+  embeddingStatusNoKey: t(
+    "已保存 — 但未存储 API 密钥。在保存密钥前语义搜索将失败。",
+    "Saved — but no API key stored. Semantic search will fail until a key is saved.",
+  ),
+  embeddingStatusSaved: t(
+    "Embedding 设置已保存。如切换模型请重建向量索引。",
+    "Embedding settings saved. Rebuild the vector index if you changed the model.",
+  ),
+  embeddingStatusDefaultOllama: t(
+    "使用内置默认值。保存以应用您的 Ollama 配置。",
+    "Using built-in defaults. Save to apply your Ollama configuration.",
+  ),
+  embeddingStatusDefault: t(
+    "使用内置默认值。保存以持久化您的配置。",
+    "Using built-in defaults. Save to persist your configuration.",
+  ),
   saveEmbedding: t("保存 Embedding 设置", "Save embedding settings"),
   saving: t("保存中…", "Saving..."),
   removeKey: t("删除已保存密钥", "Remove saved key"),
@@ -593,7 +643,10 @@ export const USER_CENTER_UI = {
     "Recent reading activity is fed back into profile construction and read exclusion.",
   ),
   noHistoryTitle: t("暂无阅读历史", "No history yet"),
-  noHistoryDescription: t("在详情页将论文标记为已读即可记录。", "Mark a document as read from the detail page to register a reading event."),
+  noHistoryDescription: t(
+    "在详情页将论文标记为已读即可记录。",
+    "Mark a document as read from the detail page to register a reading event.",
+  ),
   // Favorites
   favoritesKicker: t("收藏", "Pinned"),
   favoritesTitle: t("收藏夹", "Favorites"),
@@ -602,6 +655,9 @@ export const USER_CENTER_UI = {
     "Favorites are pinned research artifacts and are excluded from the default personalized queue.",
   ),
   noFavoritesTitle: t("暂无收藏", "No favorites yet"),
-  noFavoritesDescription: t("在详情页收藏论文即可在此处固定。", "Save a paper from the detail page to pin it here."),
+  noFavoritesDescription: t(
+    "在详情页收藏论文即可在此处固定。",
+    "Save a paper from the detail page to pin it here.",
+  ),
   removeFavorite: t("移除", "Remove"),
 } as const;

@@ -16,9 +16,9 @@ import {
   type LlmProviderPreset,
 } from "./lib/api";
 
-const text = Object.fromEntries(
-  Object.entries(LLM_CONNECTION_UI).map(([key, value]) => [key, value.zh]),
-) as { [K in keyof typeof LLM_CONNECTION_UI]: string };
+const text = Object.fromEntries(Object.entries(LLM_CONNECTION_UI).map(([key, value]) => [key, value.zh])) as {
+  [K in keyof typeof LLM_CONNECTION_UI]: string;
+};
 
 interface DraftState {
   connection: LlmConnectionPayload;
@@ -76,12 +76,9 @@ export function LlmConnectionsPanel(): JSX.Element {
     onSuccess: async (_deleted, deletedId) => {
       await refresh();
       const remaining =
-        queryClient.getQueryData<{ connections: LlmConnection[] }>([
-          "llm",
-          "connections",
-        ])?.connections ?? connections.filter((connection) => connection.id !== deletedId);
-      const next =
-        remaining.find((connection) => connection.isActive) ?? remaining[0] ?? null;
+        queryClient.getQueryData<{ connections: LlmConnection[] }>(["llm", "connections"])?.connections ??
+        connections.filter((connection) => connection.id !== deletedId);
+      const next = remaining.find((connection) => connection.isActive) ?? remaining[0] ?? null;
       setDraft(next ? toDraft(next) : null);
     },
   });
@@ -131,7 +128,9 @@ export function LlmConnectionsPanel(): JSX.Element {
       <SectionHeader description={text.description} kicker={text.kicker} title={text.title} />
       {catalogQuery.isLoading || connectionsQuery.isLoading ? <LoadingBlock /> : null}
       {connectionsQuery.data?.environmentOverride ? (
-        <p className="settings-warning" role="status">{text.environmentOverride}</p>
+        <p className="settings-warning" role="status">
+          {text.environmentOverride}
+        </p>
       ) : null}
       <div className="connection-manager">
         <aside className="connection-sidebar">
@@ -149,7 +148,9 @@ export function LlmConnectionsPanel(): JSX.Element {
             >
               <option value="">{text.newConnection}</option>
               {catalogQuery.data?.map((preset) => (
-                <option key={preset.id} value={preset.id}>{preset.label}</option>
+                <option key={preset.id} value={preset.id}>
+                  {preset.label}
+                </option>
               ))}
             </select>
           </div>
@@ -162,7 +163,10 @@ export function LlmConnectionsPanel(): JSX.Element {
                 onClick={() => selectConnection(connection)}
                 type="button"
               >
-                <span><strong>{connection.name}</strong><small>{connection.model}</small></span>
+                <span>
+                  <strong>{connection.name}</strong>
+                  <small>{connection.model}</small>
+                </span>
                 {connection.isActive ? <em>{text.active}</em> : null}
               </button>
             ))}
@@ -178,7 +182,11 @@ export function LlmConnectionsPanel(): JSX.Element {
               <div className="form-grid">
                 <label className="field">
                   <span>{text.connectionName}</span>
-                  <input className="field-input" onChange={(e) => patchConnection({ name: e.target.value })} value={draft.connection.name} />
+                  <input
+                    className="field-input"
+                    onChange={(e) => patchConnection({ name: e.target.value })}
+                    value={draft.connection.name}
+                  />
                 </label>
                 <label className="field">
                   <span>{text.providerPreset}</span>
@@ -191,7 +199,9 @@ export function LlmConnectionsPanel(): JSX.Element {
                     value={draft.connection.presetId ?? "custom"}
                   >
                     {catalogQuery.data?.map((preset) => (
-                      <option key={preset.id} value={preset.id}>{preset.label}</option>
+                      <option key={preset.id} value={preset.id}>
+                        {preset.label}
+                      </option>
                     ))}
                   </select>
                 </label>
@@ -203,7 +213,9 @@ export function LlmConnectionsPanel(): JSX.Element {
                   autoComplete="off"
                   className="field-input"
                   onChange={(e) => patchConnection({ apiKey: e.target.value, clearApiKey: false })}
-                  placeholder={selected?.hasApiKey && !draft.connection.clearApiKey ? text.keepKey : text.pasteKey}
+                  placeholder={
+                    selected?.hasApiKey && !draft.connection.clearApiKey ? text.keepKey : text.pasteKey
+                  }
                   type="password"
                   value={draft.connection.apiKey ?? ""}
                 />
@@ -212,13 +224,25 @@ export function LlmConnectionsPanel(): JSX.Element {
               <div className="form-grid">
                 <label className="field">
                   <span>{text.baseUrl}</span>
-                  <input className="field-input" onChange={(e) => patchConnection({ baseUrl: e.target.value })} type="url" value={draft.connection.baseUrl} />
+                  <input
+                    className="field-input"
+                    onChange={(e) => patchConnection({ baseUrl: e.target.value })}
+                    type="url"
+                    value={draft.connection.baseUrl}
+                  />
                 </label>
                 <label className="field">
                   <span>{text.model}</span>
-                  <input className="field-input" list="llm-discovered-models" onChange={(e) => patchConnection({ model: e.target.value })} value={draft.connection.model} />
+                  <input
+                    className="field-input"
+                    list="llm-discovered-models"
+                    onChange={(e) => patchConnection({ model: e.target.value })}
+                    value={draft.connection.model}
+                  />
                   <datalist id="llm-discovered-models">
-                    {discoveredModels.map((model) => <option key={model} value={model} />)}
+                    {discoveredModels.map((model) => (
+                      <option key={model} value={model} />
+                    ))}
                   </datalist>
                 </label>
               </div>
@@ -232,7 +256,13 @@ export function LlmConnectionsPanel(): JSX.Element {
                   <div className="form-grid">
                     <label className="field">
                       <span>{text.protocol}</span>
-                      <select className="field-input" onChange={(e) => patchConnection({ protocol: e.target.value as LlmConnectionPayload["protocol"] })} value={draft.connection.protocol}>
+                      <select
+                        className="field-input"
+                        onChange={(e) =>
+                          patchConnection({ protocol: e.target.value as LlmConnectionPayload["protocol"] })
+                        }
+                        value={draft.connection.protocol}
+                      >
                         <option value="openai_chat">OpenAI Chat</option>
                         <option value="anthropic_messages">Anthropic Messages</option>
                         <option value="gemini_generate_content">Gemini GenerateContent</option>
@@ -241,75 +271,224 @@ export function LlmConnectionsPanel(): JSX.Element {
                     </label>
                     <label className="field">
                       <span>{text.authType}</span>
-                      <select className="field-input" onChange={(e) => patchConnection({ auth: { type: e.target.value as LlmConnectionPayload["auth"]["type"] } })} value={draft.connection.auth.type}>
-                        <option value="bearer">Bearer</option><option value="header">Header</option>
-                        <option value="query">Query</option><option value="none">None</option>
+                      <select
+                        className="field-input"
+                        onChange={(e) =>
+                          patchConnection({
+                            auth: { type: e.target.value as LlmConnectionPayload["auth"]["type"] },
+                          })
+                        }
+                        value={draft.connection.auth.type}
+                      >
+                        <option value="bearer">Bearer</option>
+                        <option value="header">Header</option>
+                        <option value="query">Query</option>
+                        <option value="none">None</option>
                       </select>
                     </label>
                   </div>
                   {draft.connection.auth.type === "header" ? (
                     <label className="field">
                       <span>{text.authHeader}</span>
-                      <input className="field-input" onChange={(e) => patchConnection({ auth: { ...draft.connection.auth, headerName: e.target.value } })} value={draft.connection.auth.headerName ?? ""} />
+                      <input
+                        className="field-input"
+                        onChange={(e) =>
+                          patchConnection({ auth: { ...draft.connection.auth, headerName: e.target.value } })
+                        }
+                        value={draft.connection.auth.headerName ?? ""}
+                      />
                     </label>
                   ) : null}
                   {draft.connection.auth.type === "query" ? (
                     <label className="field">
                       <span>{text.authQuery}</span>
-                      <input className="field-input" onChange={(e) => patchConnection({ auth: { ...draft.connection.auth, queryParam: e.target.value } })} value={draft.connection.auth.queryParam ?? ""} />
+                      <input
+                        className="field-input"
+                        onChange={(e) =>
+                          patchConnection({ auth: { ...draft.connection.auth, queryParam: e.target.value } })
+                        }
+                        value={draft.connection.auth.queryParam ?? ""}
+                      />
                     </label>
                   ) : null}
                   <div className="form-grid">
                     <label className="field">
                       <span>{text.requestMethod}</span>
-                      <select className="field-input" onChange={(e) => patchConnection({ request: { ...draft.connection.request, method: e.target.value as "POST" | "PUT" } })} value={draft.connection.request.method}>
-                        <option value="POST">POST</option><option value="PUT">PUT</option>
+                      <select
+                        className="field-input"
+                        onChange={(e) =>
+                          patchConnection({
+                            request: {
+                              ...draft.connection.request,
+                              method: e.target.value as "POST" | "PUT",
+                            },
+                          })
+                        }
+                        value={draft.connection.request.method}
+                      >
+                        <option value="POST">POST</option>
+                        <option value="PUT">PUT</option>
                       </select>
                     </label>
                     <label className="field">
                       <span>{text.requestPath}</span>
-                      <input className="field-input" onChange={(e) => patchConnection({ request: { ...draft.connection.request, path: e.target.value } })} value={draft.connection.request.path} />
+                      <input
+                        className="field-input"
+                        onChange={(e) =>
+                          patchConnection({ request: { ...draft.connection.request, path: e.target.value } })
+                        }
+                        value={draft.connection.request.path}
+                      />
                     </label>
                   </div>
                   <label className="field">
                     <span>{text.requestHeaders}</span>
-                    <textarea className="field-input field-code" onChange={(e) => setDraft({ ...draft, requestHeadersText: e.target.value })} rows={4} value={draft.requestHeadersText} />
+                    <textarea
+                      className="field-input field-code"
+                      onChange={(e) => setDraft({ ...draft, requestHeadersText: e.target.value })}
+                      rows={4}
+                      value={draft.requestHeadersText}
+                    />
                   </label>
                   <label className="field">
                     <span>{text.requestBody}</span>
-                    <textarea className="field-input field-code" onChange={(e) => setDraft({ ...draft, requestBodyText: e.target.value })} rows={10} value={draft.requestBodyText} />
+                    <textarea
+                      className="field-input field-code"
+                      onChange={(e) => setDraft({ ...draft, requestBodyText: e.target.value })}
+                      rows={10}
+                      value={draft.requestBodyText}
+                    />
                   </label>
                   <label className="field">
                     <span>{text.responsePath}</span>
-                    <input className="field-input" onChange={(e) => patchConnection({ request: { ...draft.connection.request, responsePath: e.target.value } })} value={draft.connection.request.responsePath} />
+                    <input
+                      className="field-input"
+                      onChange={(e) =>
+                        patchConnection({
+                          request: { ...draft.connection.request, responsePath: e.target.value },
+                        })
+                      }
+                      value={draft.connection.request.responsePath}
+                    />
                   </label>
                   <label className="field">
                     <span>{text.modelsTemplate}</span>
-                    <textarea className="field-input field-code" onChange={(e) => setDraft({ ...draft, modelsText: e.target.value })} rows={8} value={draft.modelsText} />
+                    <textarea
+                      className="field-input field-code"
+                      onChange={(e) => setDraft({ ...draft, modelsText: e.target.value })}
+                      rows={8}
+                      value={draft.modelsText}
+                    />
                   </label>
                 </div>
               </details>
 
               {formError ? <p className="settings-error">{formError}</p> : null}
               {testMutation.data ? (
-                <p className="settings-success" role="status">{text.testSuccess} · {testMutation.data.latencyMs} ms · {testMutation.data.responsePreview}</p>
+                <p className="settings-success" role="status">
+                  {text.testSuccess} · {testMutation.data.latencyMs} ms · {testMutation.data.responsePreview}
+                </p>
               ) : null}
-              {selected?.lastTestStatus ? <p className="settings-note">{text.lastTest}: {selected.lastTestStatus} · {selected.lastTestMessage}</p> : null}
+              {selected?.lastTestStatus ? (
+                <p className="settings-note">
+                  {text.lastTest}: {selected.lastTestStatus} · {selected.lastTestMessage}
+                </p>
+              ) : null}
 
               <div className="toolbar-inline">
-                <button className="secondary-button" disabled={!draft.connection.models || modelsMutation.isPending} onClick={() => { setFormError(""); modelsMutation.mutate(); }} type="button">{modelsMutation.isPending ? "..." : text.discoverModels}</button>
-                <button className="secondary-button" disabled={testMutation.isPending} onClick={() => { setFormError(""); testMutation.mutate(); }} type="button">{testMutation.isPending ? "..." : text.test}</button>
-                <button className="secondary-button" disabled={saveMutation.isPending} onClick={() => saveMutation.mutate({ activate: false })} type="button">{text.save}</button>
-                <button className="primary-button" disabled={saveMutation.isPending} onClick={() => saveMutation.mutate({ activate: true })} type="button">{text.saveActivate}</button>
-                {selected && !selected.isActive ? <button className="secondary-button" disabled={activateMutation.isPending} onClick={() => activateMutation.mutate(selected.id)} type="button">{text.activate}</button> : null}
-                {selected?.hasApiKey ? <button className="secondary-button" onClick={() => patchConnection({ apiKey: "", clearApiKey: true })} type="button">{text.removeKey}</button> : null}
-                <button className="secondary-button" onClick={() => { setDraft({ ...draft, connection: { ...draft.connection, id: undefined, name: `${draft.connection.name} Copy`, apiKey: "", clearApiKey: false } }); }} type="button">{text.duplicate}</button>
+                <button
+                  className="secondary-button"
+                  disabled={!draft.connection.models || modelsMutation.isPending}
+                  onClick={() => {
+                    setFormError("");
+                    modelsMutation.mutate();
+                  }}
+                  type="button"
+                >
+                  {modelsMutation.isPending ? "..." : text.discoverModels}
+                </button>
+                <button
+                  className="secondary-button"
+                  disabled={testMutation.isPending}
+                  onClick={() => {
+                    setFormError("");
+                    testMutation.mutate();
+                  }}
+                  type="button"
+                >
+                  {testMutation.isPending ? "..." : text.test}
+                </button>
+                <button
+                  className="secondary-button"
+                  disabled={saveMutation.isPending}
+                  onClick={() => saveMutation.mutate({ activate: false })}
+                  type="button"
+                >
+                  {text.save}
+                </button>
+                <button
+                  className="primary-button"
+                  disabled={saveMutation.isPending}
+                  onClick={() => saveMutation.mutate({ activate: true })}
+                  type="button"
+                >
+                  {text.saveActivate}
+                </button>
                 {selected && !selected.isActive ? (
-                  <button className="inline-action danger-action" disabled={deleteMutation.isPending} onClick={() => { if (window.confirm(`${text.delete}: ${selected.name}?`)) deleteMutation.mutate(selected.id); }} type="button">{text.delete}</button>
+                  <button
+                    className="secondary-button"
+                    disabled={activateMutation.isPending}
+                    onClick={() => activateMutation.mutate(selected.id)}
+                    type="button"
+                  >
+                    {text.activate}
+                  </button>
+                ) : null}
+                {selected?.hasApiKey ? (
+                  <button
+                    className="secondary-button"
+                    onClick={() => patchConnection({ apiKey: "", clearApiKey: true })}
+                    type="button"
+                  >
+                    {text.removeKey}
+                  </button>
+                ) : null}
+                <button
+                  className="secondary-button"
+                  onClick={() => {
+                    setDraft({
+                      ...draft,
+                      connection: {
+                        ...draft.connection,
+                        id: undefined,
+                        name: `${draft.connection.name} Copy`,
+                        apiKey: "",
+                        clearApiKey: false,
+                      },
+                    });
+                  }}
+                  type="button"
+                >
+                  {text.duplicate}
+                </button>
+                {selected && !selected.isActive ? (
+                  <button
+                    className="inline-action danger-action"
+                    disabled={deleteMutation.isPending}
+                    onClick={() => {
+                      if (window.confirm(`${text.delete}: ${selected.name}?`))
+                        deleteMutation.mutate(selected.id);
+                    }}
+                    type="button"
+                  >
+                    {text.delete}
+                  </button>
                 ) : null}
               </div>
             </>
-          ) : <p className="settings-note">{text.newConnection}</p>}
+          ) : (
+            <p className="settings-note">{text.newConnection}</p>
+          )}
         </div>
       </div>
     </section>
@@ -319,9 +498,14 @@ export function LlmConnectionsPanel(): JSX.Element {
 function toDraft(connection: LlmConnection): DraftState {
   return {
     connection: {
-      id: connection.id, name: connection.name, presetId: connection.presetId,
-      protocol: connection.protocol, baseUrl: connection.baseUrl, model: connection.model,
-      auth: structuredClone(connection.auth), request: structuredClone(connection.request),
+      id: connection.id,
+      name: connection.name,
+      presetId: connection.presetId,
+      protocol: connection.protocol,
+      baseUrl: connection.baseUrl,
+      model: connection.model,
+      auth: structuredClone(connection.auth),
+      request: structuredClone(connection.request),
       models: connection.models ? structuredClone(connection.models) : null,
     },
     requestHeadersText: JSON.stringify(connection.request.headers, null, 2),
@@ -333,9 +517,13 @@ function toDraft(connection: LlmConnection): DraftState {
 function toDraftFromPreset(preset: LlmProviderPreset): DraftState {
   return {
     connection: {
-      name: preset.label, presetId: preset.id === "custom" ? null : preset.id,
-      protocol: preset.protocol, baseUrl: preset.baseUrl, model: preset.defaultModel,
-      auth: structuredClone(preset.auth), request: structuredClone(preset.request),
+      name: preset.label,
+      presetId: preset.id === "custom" ? null : preset.id,
+      protocol: preset.protocol,
+      baseUrl: preset.baseUrl,
+      model: preset.defaultModel,
+      auth: structuredClone(preset.auth),
+      request: structuredClone(preset.request),
       models: preset.models ? structuredClone(preset.models) : null,
     },
     requestHeadersText: JSON.stringify(preset.request.headers, null, 2),

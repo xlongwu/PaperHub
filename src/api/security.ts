@@ -33,11 +33,7 @@ export function corsMiddleware(req: Request, res: Response, next: NextFunction):
   next();
 }
 
-export function securityHeadersMiddleware(
-  _req: Request,
-  res: Response,
-  next: NextFunction,
-): void {
+export function securityHeadersMiddleware(_req: Request, res: Response, next: NextFunction): void {
   res.setHeader(
     "Content-Security-Policy",
     [

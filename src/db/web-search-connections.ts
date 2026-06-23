@@ -131,8 +131,7 @@ export function activateWebSearchConnection(id: string): WebSearchConnection {
 }
 
 export function deleteWebSearchConnection(id: string): boolean {
-  const deleted =
-    getDb().prepare("DELETE FROM web_search_connections WHERE id = ?").run(id).changes > 0;
+  const deleted = getDb().prepare("DELETE FROM web_search_connections WHERE id = ?").run(id).changes > 0;
   if (deleted) getSecretStore().delete(`web-search-connection:${id}`);
   return deleted;
 }
@@ -154,10 +153,7 @@ export function updateWebSearchConnectionTest(
 function toPrivateConnection(row: ConnectionRow): WebSearchConnectionConfig {
   return {
     ...toPublicConnection(row),
-    apiKey:
-      (row.secret_ref ? getSecretStore().get(row.secret_ref) : undefined) ??
-      row.api_key ??
-      undefined,
+    apiKey: (row.secret_ref ? getSecretStore().get(row.secret_ref) : undefined) ?? row.api_key ?? undefined,
   };
 }
 
@@ -173,9 +169,7 @@ function toPublicConnection(row: ConnectionRow | WebSearchConnectionConfig): Web
     enabled: row.enabled === 1,
     isPrimary: row.is_primary === 1,
     settings: JSON.parse(row.settings_json) as WebSearchConnection["settings"],
-    hasApiKey: Boolean(
-      (row.secret_ref && getSecretStore().has(row.secret_ref)) || row.api_key,
-    ),
+    hasApiKey: Boolean((row.secret_ref && getSecretStore().has(row.secret_ref)) || row.api_key),
     lastTestStatus: row.last_test_status ?? undefined,
     lastTestMessage: row.last_test_message ?? undefined,
     lastTestedAt: row.last_tested_at ?? undefined,

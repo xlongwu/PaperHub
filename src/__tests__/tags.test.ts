@@ -5,12 +5,7 @@
 import { describe, it, expect, beforeEach, afterAll } from "vitest";
 import { initDatabase, closeDb, setDbPath, clearDbPath } from "@/db/index";
 import { deleteDocument, insertDocument, updateDocument } from "@/db/documents";
-import {
-  getTagCloud,
-  getDocumentsByTag,
-  countDocumentsByTag,
-  refreshTagStats,
-} from "@/db/tags";
+import { getTagCloud, getDocumentsByTag, countDocumentsByTag, refreshTagStats } from "@/db/tags";
 import type { Document } from "@/types";
 import { safeUnlink, testPath } from "./test-utils";
 

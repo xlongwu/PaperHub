@@ -36,10 +36,7 @@ export interface SafeFetchResult {
   redirectCount: number;
 }
 
-export async function safeFetch(
-  input: string,
-  options: SafeFetchOptions = {},
-): Promise<SafeFetchResult> {
+export async function safeFetch(input: string, options: SafeFetchOptions = {}): Promise<SafeFetchResult> {
   const fetchImpl = options.fetchImpl ?? fetch;
   const resolveHostname = options.resolveHostname ?? resolvePublicAddresses;
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
@@ -181,17 +178,21 @@ function robotsAllows(robotsText: string, userAgent: string, path: string): bool
     group.agents.some((agent) => agent === "*" || ua.includes(agent)),
   );
   const rules = applicable.length > 0 ? applicable : groups.filter((group) => group.agents.includes("*"));
-  const longestAllow = longestMatchingRule(rules.flatMap((group) => group.allow), path);
-  const longestDisallow = longestMatchingRule(rules.flatMap((group) => group.disallow), path);
+  const longestAllow = longestMatchingRule(
+    rules.flatMap((group) => group.allow),
+    path,
+  );
+  const longestDisallow = longestMatchingRule(
+    rules.flatMap((group) => group.disallow),
+    path,
+  );
   if (!longestDisallow) return true;
   if (!longestAllow) return false;
   return longestAllow.length >= longestDisallow.length;
 }
 
 function longestMatchingRule(rules: string[], path: string): string | undefined {
-  return rules
-    .filter((rule) => rule && path.startsWith(rule))
-    .sort((a, b) => b.length - a.length)[0];
+  return rules.filter((rule) => rule && path.startsWith(rule)).sort((a, b) => b.length - a.length)[0];
 }
 
 export function isBlockedIpAddress(address: string): boolean {
@@ -318,10 +319,7 @@ async function readWithTimeout(
     return await Promise.race([
       reader.read(),
       new Promise<never>((_, reject) => {
-        timer = setTimeout(
-          () => reject(new Error("Safe Fetch download timed out.")),
-          timeoutMs,
-        );
+        timer = setTimeout(() => reject(new Error("Safe Fetch download timed out.")), timeoutMs);
       }),
     ]);
   } finally {

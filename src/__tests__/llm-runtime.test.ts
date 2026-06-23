@@ -75,18 +75,14 @@ describe("LLM connection runtime", () => {
   it("discovers and normalizes model ids", async () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn(async () =>
-        jsonResponse({ models: [{ name: "models/gemini-b" }, { name: "models/gemini-a" }] }),
-      ),
+      vi.fn(async () => jsonResponse({ models: [{ name: "models/gemini-b" }, { name: "models/gemini-a" }] })),
     );
     const connection = toTestableConnection(createLlmConnectionInputFromPreset("gemini"));
     await expect(discoverLlmModels(connection)).resolves.toEqual(["gemini-a", "gemini-b"]);
   });
 
   it("creates the StepFun preset with its OpenAI-compatible endpoint", () => {
-    const connection = toTestableConnection(
-      createLlmConnectionInputFromPreset("stepfun"),
-    );
+    const connection = toTestableConnection(createLlmConnectionInputFromPreset("stepfun"));
 
     expect(connection).toMatchObject({
       presetId: "stepfun",
@@ -110,9 +106,7 @@ describe("LLM connection runtime", () => {
         messages: Array<{ content: string }>;
       };
       expect(body.max_tokens).toBe(256);
-      expect(body.messages[0]?.content).toBe(
-        "Reply with exactly: PaperHub connection OK",
-      );
+      expect(body.messages[0]?.content).toBe("Reply with exactly: PaperHub connection OK");
       return jsonResponse({
         choices: [
           {
@@ -126,13 +120,9 @@ describe("LLM connection runtime", () => {
       });
     });
     vi.stubGlobal("fetch", fetchMock);
-    const connection = toTestableConnection(
-      createLlmConnectionInputFromPreset("stepfun"),
-    );
+    const connection = toTestableConnection(createLlmConnectionInputFromPreset("stepfun"));
 
-    await expect(probeLlmConnection(connection)).resolves.toBe(
-      "PaperHub connection OK",
-    );
+    await expect(probeLlmConnection(connection)).resolves.toBe("PaperHub connection OK");
   });
 
   it("explains empty final text caused by the output token limit", async () => {
@@ -152,9 +142,7 @@ describe("LLM connection runtime", () => {
         }),
       ),
     );
-    const connection = toTestableConnection(
-      createLlmConnectionInputFromPreset("stepfun"),
-    );
+    const connection = toTestableConnection(createLlmConnectionInputFromPreset("stepfun"));
 
     await expect(callLlmConnection(connection, "hello", 32)).rejects.toThrow(
       "reached its output token limit before producing final text",
@@ -184,9 +172,7 @@ describe("LLM connection runtime", () => {
       cause: new AggregateError([accessError]),
     });
 
-    expect(normalizeLlmRequestError(fetchError).message).toContain(
-      "LLM network request failed (EACCES)",
-    );
+    expect(normalizeLlmRequestError(fetchError).message).toContain("LLM network request failed (EACCES)");
     expect(normalizeLlmRequestError(fetchError).message).toContain("firewall");
   });
 });

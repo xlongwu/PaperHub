@@ -8,11 +8,7 @@ export async function applyDocumentTags(doc: Document, raw: Pick<RawDocument, "m
     doc.domainTags = mapArxivCategories(raw.metadata.categories as string[]);
   }
 
-  if (
-    doc.source === "gpt_blog" ||
-    doc.source === "claude_blog" ||
-    doc.source === "web"
-  ) {
+  if (doc.source === "gpt_blog" || doc.source === "claude_blog" || doc.source === "web") {
     doc.domainTags = await classifyBlogTags(doc.title, doc.abstract);
   }
 

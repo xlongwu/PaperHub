@@ -93,30 +93,25 @@ export function getWebSearchMetrics(from: string, to: string): WebSearchMetricsR
     estimated_credits: number | null;
     request_id: string | null;
   }>;
-  const providers = [...new Set(providerRows.map((row) => row.provider_id))]
-    .sort()
-    .map((providerId) => {
-      const rows = providerRows.filter((row) => row.provider_id === providerId);
-      const latencies = rows
-        .map((row) => row.latency_ms)
-        .filter((value): value is number => value !== null)
-        .sort((a, b) => a - b);
-      return {
-        providerId,
-        calls: rows.length,
-        successRate: ratio(rows, (row) => row.status === "success" || row.status === "partial"),
-        timeoutRate: ratio(rows, (row) => row.status === "timeout"),
-        rateLimitRate: ratio(rows, (row) => row.status === "rate_limited"),
-        p50LatencyMs: percentile(latencies, 0.5),
-        p95LatencyMs: percentile(latencies, 0.95),
-        resultCount: rows.reduce((sum, row) => sum + row.result_count, 0),
-        estimatedCredits: rows.reduce(
-          (sum, row) => sum + (row.estimated_credits ?? 0),
-          0,
-        ),
-        cacheHitRate: ratio(rows, (row) => row.request_id?.startsWith("cache:") === true),
-      };
-    });
+  const providers = [...new Set(providerRows.map((row) => row.provider_id))].sort().map((providerId) => {
+    const rows = providerRows.filter((row) => row.provider_id === providerId);
+    const latencies = rows
+      .map((row) => row.latency_ms)
+      .filter((value): value is number => value !== null)
+      .sort((a, b) => a - b);
+    return {
+      providerId,
+      calls: rows.length,
+      successRate: ratio(rows, (row) => row.status === "success" || row.status === "partial"),
+      timeoutRate: ratio(rows, (row) => row.status === "timeout"),
+      rateLimitRate: ratio(rows, (row) => row.status === "rate_limited"),
+      p50LatencyMs: percentile(latencies, 0.5),
+      p95LatencyMs: percentile(latencies, 0.95),
+      resultCount: rows.reduce((sum, row) => sum + row.result_count, 0),
+      estimatedCredits: rows.reduce((sum, row) => sum + (row.estimated_credits ?? 0), 0),
+      cacheHitRate: ratio(rows, (row) => row.request_id?.startsWith("cache:") === true),
+    };
+  });
 
   const events = getDb()
     .prepare(
@@ -134,8 +129,7 @@ export function getWebSearchMetrics(from: string, to: string): WebSearchMetricsR
   const aggregationEvents = events.filter((event) => event.event_type === "aggregation");
   const aggregationMetadata = aggregationEvents.map(readMetadata);
   const summaryEvents = events.filter(
-    (event) =>
-      event.event_type === "summary_synthesis" || event.event_type === "summary_result",
+    (event) => event.event_type === "summary_synthesis" || event.event_type === "summary_result",
   );
   const summaryDurations = summaryEvents
     .map((event) => event.duration_ms)
@@ -177,10 +171,7 @@ export function getWebSearchMetrics(from: string, to: string): WebSearchMetricsR
       citationMappingAccuracy: safeRatio(citedClaims, citedClaims + uncitedClaims),
       uncitedClaims,
       evidenceInsufficient: sumMetadata(summaryMetadata, "evidenceInsufficient"),
-      estimatedTokens: summaryEvents.reduce(
-        (sum, event) => sum + (event.estimated_tokens ?? 0),
-        0,
-      ),
+      estimatedTokens: summaryEvents.reduce((sum, event) => sum + (event.estimated_tokens ?? 0), 0),
     },
     usage: {
       searches: countEvents(events, "search"),

@@ -116,13 +116,9 @@ export const LLM_PROVIDER_CATALOG: readonly LlmProviderPreset[] = [
     },
   },
   openAiPreset("deepseek", "DeepSeek", "https://api.deepseek.com", "deepseek-chat"),
-  openAiPreset(
-    "stepfun",
-    "阶跃星辰 / StepFun",
-    "https://api.stepfun.com/v1",
-    "step-3.7-flash",
-    { models: null },
-  ),
+  openAiPreset("stepfun", "阶跃星辰 / StepFun", "https://api.stepfun.com/v1", "step-3.7-flash", {
+    models: null,
+  }),
   openAiPreset(
     "qwen",
     "阿里云百炼 / Qwen",
@@ -138,30 +134,14 @@ export const LLM_PROVIDER_CATALOG: readonly LlmProviderPreset[] = [
   }),
   openAiPreset("mistral", "Mistral AI", "https://api.mistral.ai/v1", "mistral-small-latest"),
   openAiPreset("xai", "xAI Grok", "https://api.x.ai/v1", "grok-3-mini"),
-  openAiPreset(
-    "openrouter",
-    "OpenRouter",
-    "https://openrouter.ai/api/v1",
-    "openai/gpt-4o-mini",
-    {
-      request: {
-        ...OPENAI_REQUEST,
-        headers: { "X-OpenRouter-Title": "PaperHub" },
-      },
+  openAiPreset("openrouter", "OpenRouter", "https://openrouter.ai/api/v1", "openai/gpt-4o-mini", {
+    request: {
+      ...OPENAI_REQUEST,
+      headers: { "X-OpenRouter-Title": "PaperHub" },
     },
-  ),
-  openAiPreset(
-    "github-models",
-    "GitHub Models",
-    "https://models.github.ai/inference",
-    "openai/gpt-4o-mini",
-  ),
-  openAiPreset(
-    "siliconflow",
-    "SiliconFlow",
-    "https://api.siliconflow.cn/v1",
-    "deepseek-ai/DeepSeek-V3",
-  ),
+  }),
+  openAiPreset("github-models", "GitHub Models", "https://models.github.ai/inference", "openai/gpt-4o-mini"),
+  openAiPreset("siliconflow", "SiliconFlow", "https://api.siliconflow.cn/v1", "deepseek-ai/DeepSeek-V3"),
   {
     id: "custom",
     label: "自定义 JSON API",

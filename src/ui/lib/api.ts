@@ -465,10 +465,7 @@ export async function saveWebSearchResult(
 }
 
 export function getWebSearchEventsUrl(sessionId: string, afterEventId?: number): string {
-  const query =
-    afterEventId && afterEventId > 0
-      ? `?after=${encodeURIComponent(String(afterEventId))}`
-      : "";
+  const query = afterEventId && afterEventId > 0 ? `?after=${encodeURIComponent(String(afterEventId))}` : "";
   return toApiUrl(`/api/web-search/${encodeURIComponent(sessionId)}/events${query}`);
 }
 
@@ -520,7 +517,9 @@ export interface WebSearchConnectionTestResult {
   selectedTool?: { name: string; description?: string };
 }
 
-export async function testWebSearchConnection(id: string): Promise<WebSearchConnectionTestResult | undefined> {
+export async function testWebSearchConnection(
+  id: string,
+): Promise<WebSearchConnectionTestResult | undefined> {
   const response = await apiPost<WebSearchConnectionTestResult>(
     `/api/web-search/connections/${encodeURIComponent(id)}/test`,
     {},
@@ -540,10 +539,7 @@ export async function getWebSearchMetrics(): Promise<WebSearchMetrics> {
   return response.data;
 }
 
-export async function recordWebSearchResultOpen(
-  sessionId: string,
-  resultId: string,
-): Promise<void> {
+export async function recordWebSearchResultOpen(sessionId: string, resultId: string): Promise<void> {
   await apiPost(
     `/api/web-search/${encodeURIComponent(sessionId)}/results/${encodeURIComponent(resultId)}/open`,
     {},

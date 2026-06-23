@@ -19,12 +19,7 @@ const PROTOCOLS: LlmProtocol[] = [
   "custom_json",
 ];
 const AUTH_TYPES = ["bearer", "header", "query", "none"] as const;
-const SENSITIVE_HEADER_NAMES = new Set([
-  "authorization",
-  "proxy-authorization",
-  "x-api-key",
-  "api-key",
-]);
+const SENSITIVE_HEADER_NAMES = new Set(["authorization", "proxy-authorization", "x-api-key", "api-key"]);
 
 export interface LlmConnectionInput {
   id?: string;
@@ -40,10 +35,7 @@ export interface LlmConnectionInput {
   models: LlmModelDiscoveryTemplate | null;
 }
 
-export function createLlmConnectionInputFromPreset(
-  presetId: string,
-  name?: string,
-): LlmConnectionInput {
+export function createLlmConnectionInputFromPreset(presetId: string, name?: string): LlmConnectionInput {
   const preset = getLlmProviderPreset(presetId);
   if (!preset) throw new Error(`Unknown LLM preset "${presetId}".`);
   const cloned = clonePreset(preset);
@@ -64,16 +56,13 @@ export function parseLlmConnectionInput(body: unknown): LlmConnectionInput {
     throw new Error("LLM connection must be an object.");
   }
   const input = body as Record<string, unknown>;
-  const id =
-    input.id === undefined
-      ? undefined
-      : normalizeString(input.id, "id", 100, true);
+  const id = input.id === undefined ? undefined : normalizeString(input.id, "id", 100, true);
   const existing = id ? safeGetConnection(id) : null;
   const presetId =
     input.presetId === null || input.presetId === ""
       ? null
       : input.presetId === undefined
-        ? existing?.presetId ?? null
+        ? (existing?.presetId ?? null)
         : normalizeString(input.presetId, "presetId", 100, true);
   const preset = presetId ? getLlmProviderPreset(presetId) : undefined;
 
@@ -89,19 +78,12 @@ export function parseLlmConnectionInput(body: unknown): LlmConnectionInput {
     true,
   );
   validateHttpUrl(baseUrl);
-  const model = normalizeString(
-    input.model ?? existing?.model ?? preset?.defaultModel,
-    "model",
-    256,
-    true,
-  );
+  const model = normalizeString(input.model ?? existing?.model ?? preset?.defaultModel, "model", 256, true);
 
   const auth = parseAuth(input.auth ?? existing?.auth ?? preset?.auth);
-  const request = parseRequestTemplate(
-    input.request ?? existing?.request ?? preset?.request,
-  );
+  const request = parseRequestTemplate(input.request ?? existing?.request ?? preset?.request);
   const models = parseModelTemplate(
-    input.models === undefined ? existing?.models ?? preset?.models ?? null : input.models,
+    input.models === undefined ? (existing?.models ?? preset?.models ?? null) : input.models,
   );
 
   const apiKey =
@@ -109,18 +91,11 @@ export function parseLlmConnectionInput(body: unknown): LlmConnectionInput {
       ? undefined
       : normalizeString(input.apiKey, "apiKey", 4096, false) || undefined;
   const clearApiKey =
-    input.clearApiKey === undefined
-      ? undefined
-      : parseBoolean(input.clearApiKey, "clearApiKey");
+    input.clearApiKey === undefined ? undefined : parseBoolean(input.clearApiKey, "clearApiKey");
 
   return {
     id,
-    name: normalizeString(
-      input.name ?? existing?.name ?? preset?.label,
-      "name",
-      100,
-      true,
-    ),
+    name: normalizeString(input.name ?? existing?.name ?? preset?.label, "name", 100, true),
     presetId,
     protocol,
     baseUrl,
@@ -142,7 +117,7 @@ export function toTestableConnection(input: LlmConnectionInput): LlmConnectionCo
     protocol: input.protocol,
     baseUrl: input.baseUrl,
     model: input.model,
-    apiKey: input.clearApiKey ? undefined : input.apiKey ?? existing?.apiKey,
+    apiKey: input.clearApiKey ? undefined : (input.apiKey ?? existing?.apiKey),
     auth: input.auth,
     request: input.request,
     models: input.models,
@@ -185,12 +160,7 @@ function parseRequestTemplate(value: unknown): LlmRequestTemplate {
   const path = parseRelativePath(input.path, "request.path");
   const headers = parseHeaders(input.headers, "request.headers");
   const body = parseJsonTemplate(input.body, "request.body");
-  const responsePath = normalizeString(
-    input.responsePath,
-    "request.responsePath",
-    512,
-    true,
-  );
+  const responsePath = normalizeString(input.responsePath, "request.responsePath", 512, true);
   validateJsonPath(responsePath);
   return { method, path, headers, body, responsePath };
 }
@@ -213,10 +183,7 @@ function parseModelTemplate(value: unknown): LlmModelDiscoveryTemplate | null {
     method: method as LlmRequestMethod,
     path: parseRelativePath(input.path, "models.path"),
     headers: parseHeaders(input.headers, "models.headers"),
-    body:
-      input.body === undefined
-        ? undefined
-        : parseJsonTemplate(input.body, "models.body"),
+    body: input.body === undefined ? undefined : parseJsonTemplate(input.body, "models.body"),
     listPath,
     idPath,
   };
@@ -231,26 +198,15 @@ function parseHeaders(value: unknown, field: string): Record<string, string> {
   for (const [name, headerValue] of Object.entries(value as Record<string, unknown>)) {
     const normalizedName = parseHeaderName(name, `${field}.${name}`);
     if (SENSITIVE_HEADER_NAMES.has(normalizedName.toLowerCase())) {
-      throw new Error(
-        `${field} must not contain credential headers; configure them through auth instead.`,
-      );
+      throw new Error(`${field} must not contain credential headers; configure them through auth instead.`);
     }
-    result[normalizedName] = normalizeString(
-      headerValue,
-      `${field}.${name}`,
-      2048,
-      false,
-    );
+    result[normalizedName] = normalizeString(headerValue, `${field}.${name}`, 2048, false);
   }
   return result;
 }
 
 function parseJsonTemplate(value: unknown, field: string): JsonTemplate {
-  if (
-    value === null ||
-    typeof value === "boolean" ||
-    typeof value === "number"
-  ) {
+  if (value === null || typeof value === "boolean" || typeof value === "number") {
     return value;
   }
   if (typeof value === "string") {
@@ -307,12 +263,7 @@ function normalizeIdentifier(value: unknown, field: string): string {
   return result;
 }
 
-function normalizeString(
-  value: unknown,
-  field: string,
-  maxLength: number,
-  required: boolean,
-): string {
+function normalizeString(value: unknown, field: string, maxLength: number, required: boolean): string {
   if (typeof value !== "string") throw new Error(`${field} must be a string.`);
   const normalized = value.trim();
   if (required && !normalized) throw new Error(`${field} is required.`);

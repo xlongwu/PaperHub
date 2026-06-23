@@ -1,13 +1,6 @@
 import { describe, expect, it } from "vitest";
-import {
-  createLlmConnectionInputFromPreset,
-  parseLlmConnectionInput,
-} from "@/providers/connections";
-import {
-  extractJsonPath,
-  renderJsonTemplate,
-  renderTemplateString,
-} from "@/providers/template";
+import { createLlmConnectionInputFromPreset, parseLlmConnectionInput } from "@/providers/connections";
+import { extractJsonPath, renderJsonTemplate, renderTemplateString } from "@/providers/template";
 
 describe("LLM declarative templates", () => {
   it("renders typed exact placeholders and interpolated strings", () => {

@@ -33,10 +33,7 @@ export class McpStdioClient implements McpClient {
   private child?: ChildProcessWithoutNullStreams;
   private nextId = 1;
   private buffer = "";
-  private readonly pending = new Map<
-    number,
-    { resolve(value: unknown): void; reject(error: Error): void }
-  >();
+  private readonly pending = new Map<number, { resolve(value: unknown): void; reject(error: Error): void }>();
   private stderr = "";
 
   constructor(
@@ -243,11 +240,11 @@ export class McpHttpClient implements McpClient {
       const response = await this.fetchImpl(this.endpoint, {
         method: "POST",
         headers: {
-          "Accept": "application/json, text/event-stream",
-          "Authorization": `Bearer ${this.authToken}`,
+          Accept: "application/json, text/event-stream",
+          Authorization: `Bearer ${this.authToken}`,
           "Content-Type": "application/json",
           "MCP-Protocol-Version": "2024-11-05",
-          "Origin": "http://127.0.0.1",
+          Origin: "http://127.0.0.1",
           ...(this.sessionId ? { "Mcp-Session-Id": this.sessionId } : {}),
         },
         body: JSON.stringify(payload),
@@ -338,12 +335,7 @@ function createStdioClient(
   if (!settings.mcpCommand || !settings.mcpToolName) {
     throw new Error("Search MCP command and tool name are required.");
   }
-  return new McpStdioClient(
-    settings.mcpCommand,
-    settings.mcpArgs ?? [],
-    timeoutMs,
-    signal,
-  );
+  return new McpStdioClient(settings.mcpCommand, settings.mcpArgs ?? [], timeoutMs, signal);
 }
 
 function createHttpClient(
@@ -395,12 +387,7 @@ function trustedMcpHttpHosts(): Set<string> {
 }
 
 function isLoopbackHostname(hostname: string): boolean {
-  return (
-    hostname === "localhost" ||
-    hostname === "127.0.0.1" ||
-    hostname === "::1" ||
-    hostname === "[::1]"
-  );
+  return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1" || hostname === "[::1]";
 }
 
 function normalizeHostname(hostname: string): string {

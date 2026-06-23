@@ -88,9 +88,9 @@ export function getActiveLlmConnection(): LlmConnectionConfig | null {
 }
 
 export function getActiveLlmConnectionId(): string | null {
-  const row = getDb()
-    .prepare("SELECT active_connection_id FROM llm_runtime_settings WHERE id = 1")
-    .get() as { active_connection_id: string | null } | undefined;
+  const row = getDb().prepare("SELECT active_connection_id FROM llm_runtime_settings WHERE id = 1").get() as
+    | { active_connection_id: string | null }
+    | undefined;
   return row?.active_connection_id ?? null;
 }
 
@@ -170,11 +170,7 @@ export function deleteLlmConnection(id: string): boolean {
   return deleted;
 }
 
-export function updateLlmConnectionTest(
-  id: string,
-  status: "success" | "failed",
-  message: string,
-): void {
+export function updateLlmConnectionTest(id: string, status: "success" | "failed", message: string): void {
   getDb()
     .prepare(
       `UPDATE llm_connections
@@ -193,15 +189,10 @@ function toPrivateConnection(row: LlmConnectionRow): LlmConnectionConfig {
     protocol: row.protocol as LlmProtocol,
     baseUrl: row.base_url,
     model: row.model,
-    apiKey:
-      (row.secret_ref ? getSecretStore().get(row.secret_ref) : undefined) ??
-      row.api_key ??
-      undefined,
+    apiKey: (row.secret_ref ? getSecretStore().get(row.secret_ref) : undefined) ?? row.api_key ?? undefined,
     auth: JSON.parse(row.auth_json) as LlmAuthConfig,
     request: JSON.parse(row.request_json) as LlmRequestTemplate,
-    models: row.models_json
-      ? (JSON.parse(row.models_json) as LlmModelDiscoveryTemplate)
-      : null,
+    models: row.models_json ? (JSON.parse(row.models_json) as LlmModelDiscoveryTemplate) : null,
   };
 }
 
@@ -210,9 +201,7 @@ function toPublicConnection(row: LlmConnectionRow): LlmConnectionPublic {
   const { apiKey: _apiKey, ...safe } = connection;
   return {
     ...safe,
-    hasApiKey: Boolean(
-      (row.secret_ref && getSecretStore().has(row.secret_ref)) || row.api_key,
-    ),
+    hasApiKey: Boolean((row.secret_ref && getSecretStore().has(row.secret_ref)) || row.api_key),
     isActive: row.is_active === 1,
     lastTestStatus: row.last_test_status,
     lastTestMessage: row.last_test_message,

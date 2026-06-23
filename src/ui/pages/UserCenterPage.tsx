@@ -312,13 +312,15 @@ export function UserCenterPage(): JSX.Element {
               {embeddingSettingsStatus(embeddingSettingsQuery.data, embeddingProvider, language)}
             </p>
             <p className="settings-note" role="status">
-              {USER_CENTER_UI.indexStatus(
-                embeddingSettingsQuery.data.index.status,
-                embeddingSettingsQuery.data.index.ready,
-                embeddingSettingsQuery.data.index.total,
-                embeddingSettingsQuery.data.index.pending + embeddingSettingsQuery.data.index.running,
-                embeddingSettingsQuery.data.index.failed,
-              )[language]}
+              {
+                USER_CENTER_UI.indexStatus(
+                  embeddingSettingsQuery.data.index.status,
+                  embeddingSettingsQuery.data.index.ready,
+                  embeddingSettingsQuery.data.index.total,
+                  embeddingSettingsQuery.data.index.pending + embeddingSettingsQuery.data.index.running,
+                  embeddingSettingsQuery.data.index.failed,
+                )[language]
+              }
             </p>
             {embeddingSettingsQuery.data.index.lastError ? (
               <p className="settings-error">{embeddingSettingsQuery.data.index.lastError}</p>
@@ -340,7 +342,9 @@ export function UserCenterPage(): JSX.Element {
                 onClick={() => saveEmbeddingSettingsMutation.mutate()}
                 type="button"
               >
-                {saveEmbeddingSettingsMutation.isPending ? USER_CENTER_UI.saving[language] : USER_CENTER_UI.saveEmbedding[language]}
+                {saveEmbeddingSettingsMutation.isPending
+                  ? USER_CENTER_UI.saving[language]
+                  : USER_CENTER_UI.saveEmbedding[language]}
               </button>
               {embeddingSettingsQuery.data.source === "stored" &&
               embeddingSettingsQuery.data.hasApiKey &&
@@ -362,7 +366,9 @@ export function UserCenterPage(): JSX.Element {
                 onClick={() => testEmbeddingMutation.mutate()}
                 type="button"
               >
-                {testEmbeddingMutation.isPending ? USER_CENTER_UI.testing[language] : USER_CENTER_UI.testConnection[language]}
+                {testEmbeddingMutation.isPending
+                  ? USER_CENTER_UI.testing[language]
+                  : USER_CENTER_UI.testConnection[language]}
               </button>
               <button
                 className="primary-button"
@@ -371,7 +377,9 @@ export function UserCenterPage(): JSX.Element {
                 onClick={() => rebuildEmbeddingMutation.mutate()}
                 type="button"
               >
-                {rebuildEmbeddingMutation.isPending ? USER_CENTER_UI.starting[language] : USER_CENTER_UI.rebuildIndex[language]}
+                {rebuildEmbeddingMutation.isPending
+                  ? USER_CENTER_UI.starting[language]
+                  : USER_CENTER_UI.rebuildIndex[language]}
               </button>
             </div>
           </div>
@@ -395,14 +403,22 @@ export function UserCenterPage(): JSX.Element {
                 <p className="memory-category">{USER_CENTER_UI.healthLabel[language]}</p>
                 <h3>{webSearchHealthQuery.data.status}</h3>
                 <p className="memory-weight">
-                  {USER_CENTER_UI.enabledProviders(webSearchHealthQuery.data.providers.filter((provider) => provider.enabled).length)[language]}
+                  {
+                    USER_CENTER_UI.enabledProviders(
+                      webSearchHealthQuery.data.providers.filter((provider) => provider.enabled).length,
+                    )[language]
+                  }
                 </p>
               </article>
               <article className="memory-card">
                 <p className="memory-category">{USER_CENTER_UI.searches7d[language]}</p>
                 <h3>{webSearchHealthQuery.data.lastSevenDays.searches}</h3>
                 <p className="memory-weight">
-                  {USER_CENTER_UI.providerFailures((webSearchHealthQuery.data.lastSevenDays.providerFailureRate * 100).toFixed(1))[language]}
+                  {
+                    USER_CENTER_UI.providerFailures(
+                      (webSearchHealthQuery.data.lastSevenDays.providerFailureRate * 100).toFixed(1),
+                    )[language]
+                  }
                 </p>
               </article>
               <article className="memory-card">
@@ -412,7 +428,9 @@ export function UserCenterPage(): JSX.Element {
               </article>
               <article className="memory-card">
                 <p className="memory-category">{USER_CENTER_UI.tempCache[language]}</p>
-                <h3>{webSearchHealthQuery.data.cache.results} {USER_CENTER_UI.resultsCache[language]}</h3>
+                <h3>
+                  {webSearchHealthQuery.data.cache.results} {USER_CENTER_UI.resultsCache[language]}
+                </h3>
                 <p className="memory-weight">
                   {webSearchHealthQuery.data.cache.content} {USER_CENTER_UI.fetchedPages[language]}
                 </p>
@@ -421,7 +439,9 @@ export function UserCenterPage(): JSX.Element {
             <p className="settings-note">
               {USER_CENTER_UI.lastCleanup[language]}
               {webSearchHealthQuery.data.maintenance.lastCleanupAt
-                ? new Date(webSearchHealthQuery.data.maintenance.lastCleanupAt).toLocaleString(language === "zh" ? "zh-CN" : "en-US")
+                ? new Date(webSearchHealthQuery.data.maintenance.lastCleanupAt).toLocaleString(
+                    language === "zh" ? "zh-CN" : "en-US",
+                  )
                 : USER_CENTER_UI.notRecorded[language]}
             </p>
           </>
@@ -432,7 +452,8 @@ export function UserCenterPage(): JSX.Element {
               <div className="list-row" key={provider.providerId}>
                 <span>{provider.providerId}</span>
                 <strong>
-                  {provider.calls} {USER_CENTER_UI.calls[language]} · {(provider.successRate * 100).toFixed(0)}% {USER_CENTER_UI.success[language]} · P95{" "}
+                  {provider.calls} {USER_CENTER_UI.calls[language]} ·{" "}
+                  {(provider.successRate * 100).toFixed(0)}% {USER_CENTER_UI.success[language]} · P95{" "}
                   {provider.p95LatencyMs} ms
                 </strong>
               </div>
@@ -488,7 +509,9 @@ export function UserCenterPage(): JSX.Element {
             {historyQuery.data?.map((item) => (
               <Link className="list-row" key={item.id} to={`/documents/${item.documentId}`}>
                 <span>{item.documentId}</span>
-                <strong>{new Date(item.viewedAt).toLocaleString(language === "zh" ? "zh-CN" : "en-US")}</strong>
+                <strong>
+                  {new Date(item.viewedAt).toLocaleString(language === "zh" ? "zh-CN" : "en-US")}
+                </strong>
               </Link>
             ))}
           </div>

@@ -101,10 +101,7 @@ export class GitHubRepositorySearchProvider implements WebSearchProvider {
 
 export const githubRepositorySearchProvider = new GitHubRepositorySearchProvider();
 
-export function buildGitHubSearchUrl(
-  request: ProviderSearchRequest,
-  baseUrl = DEFAULT_BASE_URL,
-): string {
+export function buildGitHubSearchUrl(request: ProviderSearchRequest, baseUrl = DEFAULT_BASE_URL): string {
   const url = new URL(`${baseUrl.replace(/\/+$/, "")}/search/repositories`);
   url.searchParams.set("q", buildGitHubQuery(request));
   url.searchParams.set("per_page", String(Math.min(Math.max(request.limit, 1), 100)));

@@ -24,13 +24,7 @@ const TOOLS = [
       query: stringSchema("Research query"),
       scope: enumSchema(["academic", "technical", "mixed"]),
       contentTypes: arraySchema(
-        enumSchema([
-          "paper",
-          "official_blog",
-          "technical_article",
-          "documentation",
-          "repository",
-        ]),
+        enumSchema(["paper", "official_blog", "technical_article", "documentation", "repository"]),
       ),
       dateRange: dateRangeSchema(),
       languages: arraySchema(stringSchema("Language code")),
@@ -118,10 +112,7 @@ const TOOLS = [
   ),
 ];
 
-const TOOL_HANDLERS: Record<
-  string,
-  (args: Record<string, unknown>) => unknown | Promise<unknown>
-> = {
+const TOOL_HANDLERS: Record<string, (args: Record<string, unknown>) => unknown | Promise<unknown>> = {
   search_web: searchWebTool,
   get_web_search_session: getWebSearchSessionTool,
   get_web_result: getWebResultTool,
@@ -132,9 +123,7 @@ const TOOL_HANDLERS: Record<
   get_local_document: getLocalDocumentTool,
 };
 
-export async function handlePaperHubMcpRequest(
-  value: unknown,
-): Promise<Record<string, unknown> | null> {
+export async function handlePaperHubMcpRequest(value: unknown): Promise<Record<string, unknown> | null> {
   const request = value as JsonRpcRequest;
   if (!request || typeof request !== "object" || request.jsonrpc !== "2.0") {
     return rpcError(null, -32600, "Invalid Request");
@@ -161,9 +150,7 @@ export async function handlePaperHubMcpRequest(
   const handler = TOOL_HANDLERS[name];
   if (!handler) return rpcError(id, -32602, `Unknown tool: ${name}`);
   const args =
-    params.arguments &&
-    typeof params.arguments === "object" &&
-    !Array.isArray(params.arguments)
+    params.arguments && typeof params.arguments === "object" && !Array.isArray(params.arguments)
       ? (params.arguments as Record<string, unknown>)
       : {};
   try {

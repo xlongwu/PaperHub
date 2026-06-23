@@ -4,10 +4,7 @@
 
 import { getDb } from "./index";
 import type { Document } from "@/types";
-import {
-  getCanonicalTagAlternatives,
-  getCanonicalTagDisplayName,
-} from "@/canonical-tags";
+import { getCanonicalTagAlternatives, getCanonicalTagDisplayName } from "@/canonical-tags";
 import { resolveKnownSearchTag } from "./search-tags";
 
 // ---------------------------------------------------------------------------

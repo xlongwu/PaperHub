@@ -116,7 +116,10 @@ export function TagsPage(): JSX.Element {
           </div>
           {documentsQuery.isLoading ? <LoadingBlock /> : null}
           {!documentsQuery.isLoading && (documentsQuery.data?.items.length ?? 0) === 0 ? (
-            <EmptyBlock description={TAGS_UI.noHitsDescription[language]} title={TAGS_UI.noHitsTitle[language]} />
+            <EmptyBlock
+              description={TAGS_UI.noHitsDescription[language]}
+              title={TAGS_UI.noHitsTitle[language]}
+            />
           ) : null}
           <div className="stack-grid">
             {documentsQuery.data?.items.map((document) => (

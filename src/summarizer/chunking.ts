@@ -19,10 +19,7 @@ const DEFAULT_SECTION_LABEL = "Unlabelled section";
 const SECTION_HEADING =
   /^(?:#{1,6}\s+.+|(?:\d+(?:\.\d+)*[.)]?\s+)?(?:abstract|introduction|background|related work|method(?:ology)?|approach|model|experiments?|experimental setup|results?|discussion|analysis|ablation(?: study)?|limitations?|conclusion|references|摘要|引言|背景|相关工作|方法|模型|实验|结果|讨论|分析|消融实验|局限性|结论|参考文献)\b.*)$/i;
 
-export function chunkPaperContent(
-  rawContent: string,
-  maxChunkChars = 12_000,
-): ContentChunk[] {
+export function chunkPaperContent(rawContent: string, maxChunkChars = 12_000): ContentChunk[] {
   const content = rawContent.replace(/\r\n?/g, "\n").trim();
   if (!content) return [];
   if (content.length <= maxChunkChars) {
@@ -49,12 +46,8 @@ export function chunkPaperContent(
     for (let index = 0; index < pieces.length; index++) {
       const piece = pieces[index]!;
       const label =
-        pieces.length > 1
-          ? `${section.label} (part ${index + 1}/${pieces.length})`
-          : section.label;
-      const candidate = currentContent
-        ? `${currentContent}\n\n${piece}`
-        : piece;
+        pieces.length > 1 ? `${section.label} (part ${index + 1}/${pieces.length})` : section.label;
+      const candidate = currentContent ? `${currentContent}\n\n${piece}` : piece;
 
       if (candidate.length > maxChunkChars && currentContent) {
         flush();
@@ -74,10 +67,7 @@ export function chunkPaperContent(
   return chunks;
 }
 
-export function packEvidenceNotes(
-  notes: string[],
-  maxChars = 24_000,
-): string[] {
+export function packEvidenceNotes(notes: string[], maxChars = 24_000): string[] {
   const blocks = notes.flatMap((note) => splitOversizedText(note, maxChars));
   const groups: string[] = [];
   let current = "";
@@ -124,9 +114,7 @@ function splitIntoSections(content: string): Section[] {
   }
   flush();
 
-  return sections.length > 0
-    ? sections
-    : [{ label: DEFAULT_SECTION_LABEL, content }];
+  return sections.length > 0 ? sections : [{ label: DEFAULT_SECTION_LABEL, content }];
 }
 
 function splitOversizedText(text: string, maxChars: number): string[] {
@@ -183,10 +171,7 @@ function splitBySentenceOrWidth(text: string, maxChars: number): string[] {
   return pieces;
 }
 
-function splitAtPreferredBoundaries(
-  text: string,
-  maxChars: number,
-): string[] {
+function splitAtPreferredBoundaries(text: string, maxChars: number): string[] {
   const pieces: string[] = [];
   let remaining = text;
 
@@ -198,8 +183,7 @@ function splitAtPreferredBoundaries(
       window.lastIndexOf("\n"),
       window.lastIndexOf("\t"),
     );
-    const splitIndex =
-      whitespaceIndex >= minimumBoundary ? whitespaceIndex : maxChars;
+    const splitIndex = whitespaceIndex >= minimumBoundary ? whitespaceIndex : maxChars;
     pieces.push(remaining.slice(0, splitIndex));
     remaining = remaining.slice(splitIndex).replace(/^\s+/, "");
   }

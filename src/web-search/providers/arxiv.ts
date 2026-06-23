@@ -55,9 +55,7 @@ export class ArxivWebSearchProvider implements WebSearchProvider {
       context.signal?.addEventListener("abort", abort, { once: true });
 
       try {
-        const url = attempt === 0
-          ? buildArxivUrl(request)
-          : buildArxivUrl(request, { relaxDateRange: true });
+        const url = attempt === 0 ? buildArxivUrl(request) : buildArxivUrl(request, { relaxDateRange: true });
         const response = await this.fetchImpl(url, {
           headers: { "User-Agent": USER_AGENT, Accept: "application/atom+xml" },
           signal: controller.signal,
@@ -184,9 +182,7 @@ function parseEntry(xml: string, rank: number): ProviderSearchItem | null {
 }
 
 function quoteArxivQuery(query: string): string {
-  let remaining = query
-    .replace(/[^\p{L}\p{N}\s._-]+/gu, " ")
-    .trim();
+  let remaining = query.replace(/[^\p{L}\p{N}\s._-]+/gu, " ").trim();
   const phrases: string[] = [];
   for (const phrase of [...ARXIV_ACADEMIC_PHRASES].sort((a, b) => b.length - a.length)) {
     if (!remaining.toLowerCase().includes(phrase)) continue;
@@ -197,10 +193,7 @@ function quoteArxivQuery(query: string): string {
     .split(/\s+/u)
     .filter(Boolean)
     .filter((term) => !ARXIV_STOP_WORDS.has(term.toLowerCase()));
-  return [
-    ...phrases.map((phrase) => `all:"${phrase}"`),
-    ...terms.map((term) => `all:${term}`),
-  ].join(" AND ");
+  return [...phrases.map((phrase) => `all:"${phrase}"`), ...terms.map((term) => `all:${term}`)].join(" AND ");
 }
 
 const ARXIV_ACADEMIC_PHRASES = [
@@ -215,19 +208,7 @@ const ARXIV_ACADEMIC_PHRASES = [
   "retrieval augmented generation",
 ];
 
-const ARXIV_STOP_WORDS = new Set([
-  "a",
-  "an",
-  "and",
-  "for",
-  "in",
-  "of",
-  "on",
-  "or",
-  "the",
-  "to",
-  "with",
-]);
+const ARXIV_STOP_WORDS = new Set(["a", "an", "and", "for", "in", "of", "on", "or", "the", "to", "with"]);
 
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -245,14 +226,12 @@ function extractTag(xml: string, tag: string): string {
 }
 
 function extractBlocks(xml: string, tag: string): string[] {
-  return [...xml.matchAll(new RegExp(`<${tag}[^>]*>([\\s\\S]*?)</${tag}>`, "gi"))].map(
-    (match) => match[0],
-  );
+  return [...xml.matchAll(new RegExp(`<${tag}[^>]*>([\\s\\S]*?)</${tag}>`, "gi"))].map((match) => match[0]);
 }
 
 function extractAttributes(xml: string, tag: string, attribute: string): string[] {
-  return [...xml.matchAll(new RegExp(`<${tag}[^>]*${attribute}="([^"]+)"[^>]*/?>`, "gi"))].map(
-    (match) => decodeXml(match[1] ?? ""),
+  return [...xml.matchAll(new RegExp(`<${tag}[^>]*${attribute}="([^"]+)"[^>]*/?>`, "gi"))].map((match) =>
+    decodeXml(match[1] ?? ""),
   );
 }
 

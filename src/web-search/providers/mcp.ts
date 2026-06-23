@@ -75,10 +75,10 @@ export class McpWebSearchProvider implements WebSearchProvider {
     const transport = connection?.settings.mcpTransport ?? "stdio";
     return Boolean(
       connection?.enabled &&
-        connection.settings.mcpToolName &&
-        (transport === "streamable_http"
-          ? connection.settings.mcpEndpoint && connection.apiKey
-          : connection.settings.mcpCommand),
+      connection.settings.mcpToolName &&
+      (transport === "streamable_http"
+        ? connection.settings.mcpEndpoint && connection.apiKey
+        : connection.settings.mcpCommand),
     );
   }
 
@@ -156,7 +156,10 @@ export const mcpWebSearchProvider = new McpWebSearchProvider();
 export async function discoverConfiguredMcpTool(
   connection: WebSearchConnectionConfig,
   timeoutMs = 5_000,
-): Promise<{ tool: { name: string; description?: string }; tools: Array<{ name: string; description?: string }> }> {
+): Promise<{
+  tool: { name: string; description?: string };
+  tools: Array<{ name: string; description?: string }>;
+}> {
   return withMcpClient(connection, timeoutMs, undefined, async (client) => {
     const tools = await client.listTools();
     const toolName = connection.settings.mcpToolName;
@@ -223,7 +226,10 @@ export function adaptMcpSearchOutput(
     const authors = Array.isArray(authorsValue)
       ? authorsValue.filter((value): value is string => typeof value === "string").slice(0, 100)
       : typeof authorsValue === "string"
-        ? authorsValue.split(/[,;]/).map((value) => value.trim()).filter(Boolean)
+        ? authorsValue
+            .split(/[,;]/)
+            .map((value) => value.trim())
+            .filter(Boolean)
         : [];
     return {
       providerResultId: optionalString(raw, fields.id),

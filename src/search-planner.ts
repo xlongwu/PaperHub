@@ -57,9 +57,7 @@ export function buildSearchQueryPlan(input: SearchPlanInput): BuiltSearchPlan {
     );
   }
 
-  const effectiveAnyTags = anyTags.canonicalTags.filter(
-    (tag) => !allTags.canonicalTags.includes(tag),
-  );
+  const effectiveAnyTags = anyTags.canonicalTags.filter((tag) => !allTags.canonicalTags.includes(tag));
   const positiveTags = new Set([...allTags.canonicalTags, ...effectiveAnyTags]);
   const conflicts = excludeTags.canonicalTags.filter((tag) => positiveTags.has(tag));
   if (conflicts.length > 0) {
@@ -127,11 +125,9 @@ function validateDateRange(
   const start = dateRange.start.trim();
   const end = dateRange.end.trim();
   if (!start || !end) {
-    throw new SearchContractError(
-      "INVALID_QUERY",
-      "Date range requires both start and end values.",
-      { dateRange },
-    );
+    throw new SearchContractError("INVALID_QUERY", "Date range requires both start and end values.", {
+      dateRange,
+    });
   }
 
   const startTime = Date.parse(start);
@@ -142,11 +138,9 @@ function validateDateRange(
     });
   }
   if (startTime > endTime) {
-    throw new SearchContractError(
-      "FILTER_CONFLICT",
-      "Date range start must not be later than its end.",
-      { dateRange: { start, end } },
-    );
+    throw new SearchContractError("FILTER_CONFLICT", "Date range start must not be later than its end.", {
+      dateRange: { start, end },
+    });
   }
   return { start, end };
 }

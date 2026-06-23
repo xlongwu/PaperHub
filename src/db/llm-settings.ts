@@ -44,9 +44,7 @@ export function getStoredLlmProviderSettings(provider: string): StoredLlmProvide
 
   return {
     provider: row.provider,
-    apiKey:
-      (row.secret_ref ? getSecretStore().get(row.secret_ref) : undefined) ??
-      row.api_key,
+    apiKey: (row.secret_ref ? getSecretStore().get(row.secret_ref) : undefined) ?? row.api_key,
     model: row.model,
     baseUrl: row.base_url,
   };

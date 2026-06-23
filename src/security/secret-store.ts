@@ -1,9 +1,4 @@
-import {
-  createCipheriv,
-  createDecipheriv,
-  createHash,
-  randomBytes,
-} from "node:crypto";
+import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { getDataDir } from "@/config";
@@ -58,11 +53,7 @@ class EncryptedFileSecretStore implements SecretStore {
   get(reference: string): string | undefined {
     const value = this.values[reference];
     if (!value) return undefined;
-    const decipher = createDecipheriv(
-      "aes-256-gcm",
-      this.key,
-      Buffer.from(value.iv, "base64"),
-    );
+    const decipher = createDecipheriv("aes-256-gcm", this.key, Buffer.from(value.iv, "base64"));
     decipher.setAuthTag(Buffer.from(value.tag, "base64"));
     return Buffer.concat([
       decipher.update(Buffer.from(value.ciphertext, "base64")),
@@ -127,15 +118,9 @@ export function getSecretStore(): SecretStore {
   }
 
   store = new MemorySecretStore();
-  if (
-    !warnedAboutMemoryStore &&
-    process.env["NODE_ENV"] !== "test" &&
-    process.env["VITEST"] !== "true"
-  ) {
+  if (!warnedAboutMemoryStore && process.env["NODE_ENV"] !== "test" && process.env["VITEST"] !== "true") {
     warnedAboutMemoryStore = true;
-    console.warn(
-      "[security] Persistent SecretStore is unavailable; credentials will remain in memory only.",
-    );
+    console.warn("[security] Persistent SecretStore is unavailable; credentials will remain in memory only.");
   }
   return store;
 }

@@ -3,11 +3,7 @@
  * All methods use better-sqlite3 synchronous API for simplicity and performance.
  */
 
-import type {
-  Document,
-  DocumentExternalIds,
-  DocumentSource,
-} from "@/types";
+import type { Document, DocumentExternalIds, DocumentSource } from "@/types";
 import { getDb } from "./index.ts";
 import { replaceDocumentSearchTags } from "./search-tags";
 
@@ -79,9 +75,7 @@ function fromDb(row: Record<string, unknown>): Document {
       ? safeJsonParse<Document["externalIds"]>(row.external_ids, undefined)
       : undefined,
     canonicalUrl: row.canonical_url ? String(row.canonical_url) : undefined,
-    origin: row.origin_json
-      ? safeJsonParse<Document["origin"]>(row.origin_json, undefined)
-      : undefined,
+    origin: row.origin_json ? safeJsonParse<Document["origin"]>(row.origin_json, undefined) : undefined,
     discovery: row.discovery_json
       ? safeJsonParse<Document["discovery"]>(row.discovery_json, undefined)
       : undefined,
@@ -168,9 +162,7 @@ export function getDocumentByUrl(url: string): Document | null {
   return row ? fromDb(row) : null;
 }
 
-export function findDocumentByExternalIds(
-  ids: DocumentExternalIds,
-): Document | null {
+export function findDocumentByExternalIds(ids: DocumentExternalIds): Document | null {
   const checks: Array<[keyof DocumentExternalIds, string | undefined]> = [
     ["doi", normalizeDoi(ids.doi)],
     ["arxivId", normalizeIdentifier(ids.arxivId)],
@@ -219,10 +211,7 @@ export function findDocumentByTitleAuthorYear(input: {
   for (const row of candidates) {
     const document = fromDb(row);
     if (normalizeComparable(document.title) !== normalizedTitle) continue;
-    if (
-      normalizedAuthor &&
-      normalizeComparable(document.authors[0] ?? "") !== normalizedAuthor
-    ) {
+    if (normalizedAuthor && normalizeComparable(document.authors[0] ?? "") !== normalizedAuthor) {
       continue;
     }
     return document;

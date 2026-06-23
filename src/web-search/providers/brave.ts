@@ -38,7 +38,11 @@ export class BraveWebSearchProvider implements WebSearchProvider {
   async healthCheck(): Promise<ProviderHealth> {
     const connection = this.resolveConnection();
     if (!connection?.apiKey) {
-      return { status: "unavailable", message: "Brave Search is not configured", checkedAt: new Date().toISOString() };
+      return {
+        status: "unavailable",
+        message: "Brave Search is not configured",
+        checkedAt: new Date().toISOString(),
+      };
     }
     const response = await this.search(
       { query: "PaperHub connection test", intent: "topic_discovery", limit: 1 },
@@ -46,7 +50,11 @@ export class BraveWebSearchProvider implements WebSearchProvider {
     );
     return {
       status: response.status === "success" ? "healthy" : "unavailable",
-      message: response.warning ?? (response.status === "success" ? "Brave Search connection succeeded" : "Brave Search connection failed"),
+      message:
+        response.warning ??
+        (response.status === "success"
+          ? "Brave Search connection succeeded"
+          : "Brave Search connection failed"),
       checkedAt: new Date().toISOString(),
     };
   }
@@ -58,7 +66,13 @@ export class BraveWebSearchProvider implements WebSearchProvider {
     const startedAt = Date.now();
     const connection = this.resolveConnection();
     if (!connection?.apiKey) {
-      return { providerId: this.id, items: [], status: "not_configured", latencyMs: 0, warning: "Brave Search is not configured" };
+      return {
+        providerId: this.id,
+        items: [],
+        status: "not_configured",
+        latencyMs: 0,
+        warning: "Brave Search is not configured",
+      };
     }
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), context.timeoutMs);
@@ -190,7 +204,9 @@ function buildBraveQuery(request: ProviderSearchRequest): string {
 function buildFreshness(dateRange: ProviderSearchRequest["dateRange"]): string | undefined {
   if (!dateRange?.start && !dateRange?.end) return undefined;
   const start = dateRange.start ? new Date(dateRange.start).toISOString().slice(0, 10) : "1970-01-01";
-  const end = dateRange.end ? new Date(dateRange.end).toISOString().slice(0, 10) : new Date().toISOString().slice(0, 10);
+  const end = dateRange.end
+    ? new Date(dateRange.end).toISOString().slice(0, 10)
+    : new Date().toISOString().slice(0, 10);
   return `${start}to${end}`;
 }
 
@@ -203,7 +219,9 @@ function domainOf(value: string): string {
 }
 
 function objectValue(value: unknown): Record<string, unknown> {
-  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
 }
 
 function stringValue(value: unknown): string {

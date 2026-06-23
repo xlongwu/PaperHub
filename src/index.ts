@@ -121,9 +121,7 @@ function validateLlmProvider(): void {
         "Set one in Profile > LLM connection or through an environment variable.",
     );
   } else {
-    console.log(
-      `[app] LLM connection "${runtime.connection.name}" validated (${runtime.source}).`,
-    );
+    console.log(`[app] LLM connection "${runtime.connection.name}" validated (${runtime.source}).`);
   }
 
   // Embeddings initialize in the background so an unavailable local model
@@ -189,14 +187,16 @@ async function main(): Promise<void> {
         "[app] Database initialization failed: native module ABI mismatch.\n" +
           "  The 'better-sqlite3' module was compiled for a different Node.js version.\n" +
           "  Fix: run 'pnpm rebuild better-sqlite3' and rebuild the app.\n" +
-          "  Error detail:", e,
+          "  Error detail:",
+        e,
       );
     } else if (msg.includes("SQLITE_BUSY") || msg.includes("database is locked")) {
       console.error(
         "[app] Database initialization failed: database is locked.\n" +
           "  Another PaperHub instance may still be running.\n" +
           "  Fix: close all other PaperHub windows, then restart.\n" +
-          "  Error detail:", e,
+          "  Error detail:",
+        e,
       );
     } else {
       console.error("[app] Database initialization failed:", e);

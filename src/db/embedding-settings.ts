@@ -57,9 +57,7 @@ export function getStoredEmbeddingSettings(): StoredEmbeddingSettings | null {
     provider: row.provider as EmbeddingProviderSetting,
     model: row.model,
     baseUrl: row.base_url,
-    apiKey:
-      (row.secret_ref ? getSecretStore().get(row.secret_ref) : undefined) ??
-      row.api_key,
+    apiKey: (row.secret_ref ? getSecretStore().get(row.secret_ref) : undefined) ?? row.api_key,
   };
 }
 
@@ -68,14 +66,11 @@ export function getStoredEmbeddingSettings(): StoredEmbeddingSettings | null {
  * Returns the saved settings (apiKey is included internally but
  * callers should NOT forward it to frontend responses).
  */
-export function saveStoredEmbeddingSettings(
-  update: EmbeddingSettingsUpdate,
-): StoredEmbeddingSettings {
+export function saveStoredEmbeddingSettings(update: EmbeddingSettingsUpdate): StoredEmbeddingSettings {
   const existing = getStoredEmbeddingSettings();
 
   const model = update.model === undefined ? (existing?.model ?? null) : normalize(update.model);
-  const baseUrl =
-    update.baseUrl === undefined ? (existing?.baseUrl ?? null) : normalize(update.baseUrl);
+  const baseUrl = update.baseUrl === undefined ? (existing?.baseUrl ?? null) : normalize(update.baseUrl);
 
   const secretStore = getSecretStore();
   const secretReference = `embedding-provider:${update.provider}`;
@@ -106,12 +101,7 @@ export function saveStoredEmbeddingSettings(
          secret_ref = excluded.secret_ref,
          updated_at = CURRENT_TIMESTAMP`,
     )
-    .run(
-      update.provider,
-      model,
-      baseUrl,
-      storedApiKey ? secretReference : null,
-    );
+    .run(update.provider, model, baseUrl, storedApiKey ? secretReference : null);
 
   return { provider: update.provider, model, baseUrl, apiKey: storedApiKey };
 }

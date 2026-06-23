@@ -345,12 +345,7 @@ export function getCanonicalTagAlternatives(value: string): string[] {
 }
 
 export function extractCanonicalContentTags(document: Document): CanonicalDocumentTag[] {
-  const text = [
-    document.title,
-    document.abstract,
-    document.summaryZh ?? "",
-    document.summaryEn ?? "",
-  ]
+  const text = [document.title, document.abstract, document.summaryZh ?? "", document.summaryEn ?? ""]
     .filter(Boolean)
     .join("\n");
   const tags: CanonicalDocumentTag[] = [];
@@ -421,9 +416,7 @@ function containsCanonicalAlias(text: string, alias: string): boolean {
     .split(/[-_\s]+/u)
     .map(escapeRegExp)
     .join("[-_\\s]+");
-  return new RegExp(`(?<![\\p{L}\\p{N}])${pattern}(?![\\p{L}\\p{N}])`, "iu").test(
-    normalizedText,
-  );
+  return new RegExp(`(?<![\\p{L}\\p{N}])${pattern}(?![\\p{L}\\p{N}])`, "iu").test(normalizedText);
 }
 
 function escapeRegExp(value: string): string {

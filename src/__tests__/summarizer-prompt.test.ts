@@ -45,10 +45,10 @@ describe("summary prompt template", () => {
   });
 
   it("marks abstract-only inputs explicitly", () => {
-    const prompt = buildSummaryPrompt(
-      makeDoc({ fullText: undefined }),
-      { lang: "en", summaryLevel: "short" },
-    );
+    const prompt = buildSummaryPrompt(makeDoc({ fullText: undefined }), {
+      lang: "en",
+      summaryLevel: "short",
+    });
 
     expect(prompt).toContain("English");
     expect(prompt).toContain("short");
@@ -77,16 +77,11 @@ describe("long-paper chunking", () => {
     expect(combined).toContain("METHOD_START");
     expect(combined).toContain("RESULT_START");
     expect(combined).toContain("FINAL_MARKER");
-    expect(chunks.some((chunk) => chunk.sectionLabel.includes("Methods"))).toBe(
-      true,
-    );
+    expect(chunks.some((chunk) => chunk.sectionLabel.includes("Methods"))).toBe(true);
   });
 
   it("packs evidence notes under the requested size", () => {
-    const groups = packEvidenceNotes(
-      ["A".repeat(120), "B".repeat(120), "C".repeat(120)],
-      180,
-    );
+    const groups = packEvidenceNotes(["A".repeat(120), "B".repeat(120), "C".repeat(120)], 180);
     expect(groups).toHaveLength(3);
     expect(groups.every((group) => group.length <= 180)).toBe(true);
   });

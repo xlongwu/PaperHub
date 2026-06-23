@@ -14,9 +14,7 @@ export function extractHtmlContent(html: string, sourceUrl: string): ExtractedWe
     findMeta(html, "name", "twitter:title") ||
     decodeEntities(html.match(/<title\b[^>]*>([\s\S]*?)<\/title>/i)?.[1] ?? "").trim();
   const author =
-    findMeta(html, "name", "author") ||
-    findMeta(html, "property", "article:author") ||
-    undefined;
+    findMeta(html, "name", "author") || findMeta(html, "property", "article:author") || undefined;
   const publishedAt =
     findMeta(html, "property", "article:published_time") ||
     findMeta(html, "name", "date") ||
@@ -24,9 +22,7 @@ export function extractHtmlContent(html: string, sourceUrl: string): ExtractedWe
   const canonicalHref =
     html.match(/<link\b(?=[^>]*rel=["']canonical["'])[^>]*href=["']([^"']+)["'][^>]*>/i)?.[1] ??
     html.match(/<link\b(?=[^>]*href=["']([^"']+)["'])[^>]*rel=["']canonical["'][^>]*>/i)?.[1];
-  const canonicalUrl = canonicalHref
-    ? safeAbsoluteUrl(decodeEntities(canonicalHref), sourceUrl)
-    : undefined;
+  const canonicalUrl = canonicalHref ? safeAbsoluteUrl(decodeEntities(canonicalHref), sourceUrl) : undefined;
   const main =
     html.match(/<article\b[^>]*>([\s\S]*?)<\/article>/i)?.[1] ??
     html.match(/<main\b[^>]*>([\s\S]*?)<\/main>/i)?.[1] ??
@@ -59,14 +55,8 @@ export function extractHtmlContent(html: string, sourceUrl: string): ExtractedWe
 function findMeta(html: string, key: "name" | "property", value: string): string | undefined {
   const escaped = value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const patterns = [
-    new RegExp(
-      `<meta\\b(?=[^>]*${key}=["']${escaped}["'])[^>]*content=["']([^"']*)["'][^>]*>`,
-      "i",
-    ),
-    new RegExp(
-      `<meta\\b(?=[^>]*content=["']([^"']*)["'])[^>]*${key}=["']${escaped}["'][^>]*>`,
-      "i",
-    ),
+    new RegExp(`<meta\\b(?=[^>]*${key}=["']${escaped}["'])[^>]*content=["']([^"']*)["'][^>]*>`, "i"),
+    new RegExp(`<meta\\b(?=[^>]*content=["']([^"']*)["'])[^>]*${key}=["']${escaped}["'][^>]*>`, "i"),
   ];
   for (const pattern of patterns) {
     const value = pattern.exec(html)?.[1];

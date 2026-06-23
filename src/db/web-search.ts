@@ -11,10 +11,7 @@ import type {
   WebSearchSession,
   WebSearchSessionStatus,
 } from "@/web-search/types";
-import {
-  cleanupExpiredWebSearchContent,
-  getWebSearchSummary,
-} from "./web-search-content";
+import { cleanupExpiredWebSearchContent, getWebSearchSummary } from "./web-search-content";
 
 const TERMINAL_STATUSES = new Set<WebSearchSessionStatus>([
   "completed",
@@ -164,10 +161,7 @@ export function insertWebSearchResults(results: WebSearchResult[]): void {
   })();
 }
 
-export function replaceWebSearchResults(
-  sessionId: string,
-  results: WebSearchResult[],
-): void {
+export function replaceWebSearchResults(sessionId: string, results: WebSearchResult[]): void {
   getDb().prepare("DELETE FROM web_search_results WHERE session_id = ?").run(sessionId);
   insertWebSearchResults(results);
 }
@@ -183,10 +177,7 @@ export function listWebSearchResults(sessionId: string): WebSearchResult[] {
   ).map((row) => parseJson<WebSearchResult>(row.result_json));
 }
 
-export function getWebSearchResult(
-  sessionId: string,
-  resultId: string,
-): WebSearchResult | null {
+export function getWebSearchResult(sessionId: string, resultId: string): WebSearchResult | null {
   const row = getDb()
     .prepare(
       `SELECT result_json FROM web_search_results
@@ -210,12 +201,7 @@ export function updateWebSearchResultLocalState(
        SET result_json = ?, updated_at = ?
        WHERE session_id = ? AND id = ?`,
     )
-    .run(
-      JSON.stringify(updated),
-      new Date().toISOString(),
-      sessionId,
-      resultId,
-    );
+    .run(JSON.stringify(updated), new Date().toISOString(), sessionId, resultId);
   return updated;
 }
 
@@ -524,9 +510,7 @@ export function getCachedWebSearchProviderResponse(
        FROM web_search_provider_cache
        WHERE cache_key = ? AND expires_at > ?`,
     )
-    .get(cacheKey, now.toISOString()) as
-    | { response_json: string; created_at: string }
-    | undefined;
+    .get(cacheKey, now.toISOString()) as { response_json: string; created_at: string } | undefined;
   if (!row) return null;
   return {
     response: parseJson<ProviderSearchResponse>(row.response_json),

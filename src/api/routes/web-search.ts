@@ -33,24 +33,12 @@ import type {
 import { OpenAlexWebSearchProvider } from "@/web-search/providers/openalex";
 import { BraveWebSearchProvider } from "@/web-search/providers/brave";
 import { TavilyWebSearchProvider } from "@/web-search/providers/tavily";
-import {
-  discoverConfiguredMcpTool,
-} from "@/web-search/providers/mcp";
-import {
-  generateWebResultSummary,
-  generateWebSearchSynthesis,
-} from "@/services/web-search-summary";
-import {
-  cleanupTemporaryPdfFiles,
-  saveWebSearchResult,
-  WebSaveError,
-} from "@/services/web-save-service";
+import { discoverConfiguredMcpTool } from "@/web-search/providers/mcp";
+import { generateWebResultSummary, generateWebSearchSynthesis } from "@/services/web-search-summary";
+import { cleanupTemporaryPdfFiles, saveWebSearchResult, WebSaveError } from "@/services/web-save-service";
 import type { WebSaveMode } from "@/web-search/types";
 import { createRateLimiter } from "@/api/security";
-import {
-  getWebSearchHealth,
-  getWebSearchMetricsForRange,
-} from "@/services/web-search-observability";
+import { getWebSearchHealth, getWebSearchMetricsForRange } from "@/services/web-search-observability";
 import { redactSensitiveText } from "@/security/redaction";
 
 export const webSearchRouter = Router();
@@ -372,38 +360,25 @@ webSearchRouter.post("/:sessionId/results/:resultId/open", (req, res) => {
   res.json({ success: true, data: { recorded: true } });
 });
 
-webSearchRouter.post(
-  "/:sessionId/results/:resultId/save",
-  saveLimiter,
-  async (req, res) => {
-    try {
-      const input = parseWebSaveRequest(req.body);
-      const saved = await saveWebSearchResult(
-        String(req.params.sessionId),
-        String(req.params.resultId),
-        input,
-      );
-      res.status(saved.status === "inserted" ? 201 : 200).json({
-        success: true,
-        data: saved,
-      });
-    } catch (error) {
-      const status =
-        error instanceof WebSaveError &&
-        (error.stage === "session" || error.stage === "result")
-          ? 404
-          : 422;
-      res.status(status).json({
-        success: false,
-        error:
-          error instanceof Error ? error.message : "Web result save failed.",
-        errorCode: "WEB_RESULT_SAVE_FAILED",
-        details:
-          error instanceof WebSaveError ? { stage: error.stage } : undefined,
-      });
-    }
-  },
-);
+webSearchRouter.post("/:sessionId/results/:resultId/save", saveLimiter, async (req, res) => {
+  try {
+    const input = parseWebSaveRequest(req.body);
+    const saved = await saveWebSearchResult(String(req.params.sessionId), String(req.params.resultId), input);
+    res.status(saved.status === "inserted" ? 201 : 200).json({
+      success: true,
+      data: saved,
+    });
+  } catch (error) {
+    const status =
+      error instanceof WebSaveError && (error.stage === "session" || error.stage === "result") ? 404 : 422;
+    res.status(status).json({
+      success: false,
+      error: error instanceof Error ? error.message : "Web result save failed.",
+      errorCode: "WEB_RESULT_SAVE_FAILED",
+      details: error instanceof WebSaveError ? { stage: error.stage } : undefined,
+    });
+  }
+});
 
 webSearchRouter.get("/:sessionId", (req, res) => {
   const session = getWebSearchSession(req.params.sessionId);
@@ -509,13 +484,16 @@ export function startWebSearchCleanup(): () => void {
   } catch (error) {
     console.error("[web-search] Startup maintenance failed:", error);
   }
-  const timer = setInterval(() => {
-    try {
-      cleanupExpiredWebSearchData();
-    } catch (error) {
-      console.error("[web-search] Scheduled cleanup failed:", error);
-    }
-  }, 60 * 60 * 1000);
+  const timer = setInterval(
+    () => {
+      try {
+        cleanupExpiredWebSearchData();
+      } catch (error) {
+        console.error("[web-search] Scheduled cleanup failed:", error);
+      }
+    },
+    60 * 60 * 1000,
+  );
   timer.unref();
   return () => clearInterval(timer);
 }
@@ -640,14 +618,8 @@ function parseWebSaveRequest(value: unknown): {
   }
   const input = value as Record<string, unknown>;
   const mode = input.mode ?? "metadata_only";
-  if (
-    mode !== "metadata_only" &&
-    mode !== "save_content" &&
-    mode !== "download_pdf"
-  ) {
-    throw new Error(
-      "mode must be metadata_only, save_content, or download_pdf.",
-    );
+  if (mode !== "metadata_only" && mode !== "save_content" && mode !== "download_pdf") {
+    throw new Error("mode must be metadata_only, save_content, or download_pdf.");
   }
   return {
     mode,
@@ -662,10 +634,9 @@ function parseRetryProviderIds(value: unknown): string[] | undefined {
     throw new Error("Retry request must be an object.");
   }
   const input = value as Record<string, unknown>;
-  const providerIds = parseStringArray(
-    input.providerIds ?? input.providers,
-    10,
-  ).map((providerId) => providerId.toLowerCase());
+  const providerIds = parseStringArray(input.providerIds ?? input.providers, 10).map((providerId) =>
+    providerId.toLowerCase(),
+  );
   const allowed = new Set(["arxiv", "openalex", "crossref", "tavily", "brave", "github", "mcp"]);
   if (providerIds.some((providerId) => !allowed.has(providerId))) {
     throw new Error("Retry providers contain an unsupported value.");
@@ -690,12 +661,7 @@ function parseConnectionInput(value: unknown, id?: string): WebSearchConnectionW
   const input = value as Record<string, unknown>;
   const existing = id ? getWebSearchConnection(id) : null;
   const provider = input.provider ?? existing?.provider;
-  if (
-    provider !== "openalex" &&
-    provider !== "tavily" &&
-    provider !== "brave" &&
-    provider !== "mcp"
-  ) {
+  if (provider !== "openalex" && provider !== "tavily" && provider !== "brave" && provider !== "mcp") {
     throw new Error("provider must be openalex, tavily, brave, or mcp.");
   }
   const name = typeof input.name === "string" ? input.name.trim() : (existing?.name ?? "");
@@ -734,8 +700,7 @@ function parseConnectionInput(value: unknown, id?: string): WebSearchConnectionW
         provider,
         name,
         enabled: input.enabled === undefined ? (existing?.enabled ?? true) : input.enabled === true,
-        isPrimary:
-          input.isPrimary === undefined ? (existing?.isPrimary ?? false) : input.isPrimary === true,
+        isPrimary: input.isPrimary === undefined ? (existing?.isPrimary ?? false) : input.isPrimary === true,
         settings: {
           mcpTransport: "streamable_http",
           mcpEndpoint: endpoint,
@@ -769,8 +734,7 @@ function parseConnectionInput(value: unknown, id?: string): WebSearchConnectionW
       provider,
       name,
       enabled: input.enabled === undefined ? (existing?.enabled ?? true) : input.enabled === true,
-      isPrimary:
-        input.isPrimary === undefined ? (existing?.isPrimary ?? false) : input.isPrimary === true,
+      isPrimary: input.isPrimary === undefined ? (existing?.isPrimary ?? false) : input.isPrimary === true,
       settings: {
         mcpTransport: "stdio",
         mcpCommand: command,
@@ -828,11 +792,7 @@ function toDiscoveryConnection(input: WebSearchConnectionWrite) {
   };
 }
 
-function readBoundedString(
-  value: unknown,
-  field: string,
-  maxLength: number,
-): string {
+function readBoundedString(value: unknown, field: string, maxLength: number): string {
   if (typeof value !== "string" || !value.trim() || value.trim().length > maxLength) {
     throw new Error(`${field} must contain 1 to ${maxLength} characters.`);
   }
@@ -848,12 +808,7 @@ function parseBoundedStringArray(
   if (
     !Array.isArray(value) ||
     value.length > maxItems ||
-    value.some(
-      (item) =>
-        typeof item !== "string" ||
-        item.length > maxItemLength ||
-        item.includes("\0"),
-    )
+    value.some((item) => typeof item !== "string" || item.length > maxItemLength || item.includes("\0"))
   ) {
     throw new Error(`${field} must be a bounded array of strings.`);
   }
@@ -873,11 +828,7 @@ function parseStringMap(
   if (
     entries.length > maxEntries ||
     entries.some(
-      ([key, item]) =>
-        key.length > 100 ||
-        typeof item !== "string" ||
-        !item.trim() ||
-        item.length > 200,
+      ([key, item]) => key.length > 100 || typeof item !== "string" || !item.trim() || item.length > 200,
     )
   ) {
     throw new Error(`${field} contains an invalid mapping.`);
@@ -885,9 +836,7 @@ function parseStringMap(
   return Object.fromEntries(entries) as Record<string, string>;
 }
 
-function parseOutputAdapter(
-  value: unknown,
-): McpSearchOutputAdapter | undefined {
+function parseOutputAdapter(value: unknown): McpSearchOutputAdapter | undefined {
   if (value === undefined) return undefined;
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new Error("settings.mcpOutputAdapter must be an object.");
@@ -897,11 +846,7 @@ function parseOutputAdapter(
     input.itemsPath === undefined
       ? undefined
       : readBoundedString(input.itemsPath, "settings.mcpOutputAdapter.itemsPath", 200);
-  const fields = parseStringMap(
-    input.fields,
-    "settings.mcpOutputAdapter.fields",
-    24,
-  );
+  const fields = parseStringMap(input.fields, "settings.mcpOutputAdapter.fields", 24);
   return { itemsPath, fields };
 }
 
@@ -911,7 +856,11 @@ function redactConnectionMessage(message: string, apiKey: string | undefined): s
 
 function buildConnectionDiagnostic(
   error: unknown,
-  connection: { provider: WebSearchConnectionProvider; settings: { mcpTransport?: "stdio" | "streamable_http" }; apiKey?: string },
+  connection: {
+    provider: WebSearchConnectionProvider;
+    settings: { mcpTransport?: "stdio" | "streamable_http" };
+    apiKey?: string;
+  },
 ): WebSearchConnectionTestDiagnostic {
   const message = error instanceof Error ? error.message : "Web Search connection test failed.";
   const normalized = message.toLowerCase();
@@ -928,7 +877,8 @@ function buildConnectionDiagnostic(
       normalized,
     )
   ) {
-    diagnostic.stage = normalized.includes("trusted") || normalized.includes("loopback") ? "security" : "configuration";
+    diagnostic.stage =
+      normalized.includes("trusted") || normalized.includes("loopback") ? "security" : "configuration";
     diagnostic.code = "INVALID_CONFIGURATION";
     diagnostic.retryable = false;
     return diagnostic;
@@ -939,7 +889,11 @@ function buildConnectionDiagnostic(
     diagnostic.retryable = false;
     return diagnostic;
   }
-  if (/timeout|timed out|fetch failed|network|dns|econn|enotfound|econnrefused|socket|connection closed/.test(normalized)) {
+  if (
+    /timeout|timed out|fetch failed|network|dns|econn|enotfound|econnrefused|socket|connection closed/.test(
+      normalized,
+    )
+  ) {
     diagnostic.stage = "network";
     diagnostic.code = "NETWORK_UNAVAILABLE";
     diagnostic.retryable = true;
