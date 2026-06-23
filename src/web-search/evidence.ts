@@ -72,7 +72,7 @@ function selectPageExcerpts(text: string): string[] {
   return text
     .split(/\n{2,}|(?<=[.!?。！？])\s+(?=[A-Z\u4e00-\u9fff])/)
     .map((part) => part.replace(/\s+/g, " ").trim())
-    .filter((part) => part.length >= 40)
+    .filter(Boolean)
     .reduce<string[]>((groups, part) => {
       const last = groups.at(-1);
       if (last && last.length + part.length < MAX_CHUNK_CHARS) {
@@ -81,5 +81,6 @@ function selectPageExcerpts(text: string): string[] {
         groups.push(part.slice(0, MAX_CHUNK_CHARS));
       }
       return groups;
-    }, []);
+    }, [])
+    .filter((part) => part.length >= 40);
 }

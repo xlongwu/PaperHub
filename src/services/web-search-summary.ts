@@ -11,10 +11,12 @@ import { recordWebSearchUsageEvent } from "@/db/web-search-metrics";
 import { callLlm } from "@/report";
 import { redactSensitiveText } from "@/security/redaction";
 import { extractHtmlContent } from "@/web-search/content-extractor";
+import { assessWebContent, WEB_CONTENT_CACHE_TTL_MS } from "@/web-search/content-policy";
 import { buildEvidenceChunks } from "@/web-search/evidence";
 import { safeFetch, type SafeFetchOptions } from "@/web-search/safe-fetch";
 import type {
   EvidenceChunk,
+  WebEvidenceDiagnostic,
   WebSearchCitation,
   WebSearchResult,
   WebSearchSummary,
@@ -23,7 +25,6 @@ import type {
 
 const SUMMARY_TOKENS = 4_096;
 const SUMMARY_RETRY_TOKENS = 16_384;
-const CONTENT_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 const MAX_SYNTHESIS_RESULTS = 20;
 
 interface SummaryDependencies {
@@ -44,27 +45,30 @@ export async function generateWebSearchSynthesis(
   appendWebSearchEvent(sessionId, "summary.started", { kind: "synthesis" });
   const startedAt = Date.now();
   const selected = session.results.slice(0, MAX_SYNTHESIS_RESULTS);
+  let collectedEvidence: EvidenceChunk[] = [];
+  let evidenceDiagnostics: WebEvidenceDiagnostic[] = [];
   try {
-    const evidence = (
-      await Promise.all(
-        selected.map((result) =>
-          collectResultEvidence(result, {
-            allowFetch: evidenceTextLength(result) < 240,
-            safeFetchOptions: dependencies.safeFetchOptions,
-          }),
-        ),
-      )
-    ).flat();
+    const collected = await Promise.all(
+      selected.map((result) =>
+        collectResultEvidence(result, {
+          allowFetch: evidenceTextLength(result) < 240,
+          safeFetchOptions: dependencies.safeFetchOptions,
+        }),
+      ),
+    );
+    collectedEvidence = collected.flatMap((item) => item.chunks);
+    evidenceDiagnostics = collected.map((item) => item.diagnostic);
     const raw = await callSummaryLlm(
       dependencies.llm ?? callLlm,
-      buildSummaryPrompt(session.request.query, selected, evidence, false),
+      buildSummaryPrompt(session.request.query, selected, collectedEvidence, false),
     );
     const synthesis = validateCitations(parseSynthesis(raw), selected);
     const summary = saveSummary({
       sessionId,
       kind: "synthesis",
       synthesis,
-      evidenceCount: evidence.length,
+      evidenceCount: collectedEvidence.length,
+      evidenceDiagnostics,
       expiresAt: session.expiresAt,
       results: selected,
       latencyMs: Date.now() - startedAt,
@@ -73,7 +77,7 @@ export async function generateWebSearchSynthesis(
     recordSummaryMetric(summary);
     appendWebSearchEvent(sessionId, "summary.completed", {
       kind: "synthesis",
-      evidenceCount: evidence.length,
+      evidenceCount: collectedEvidence.length,
       findingCount: synthesis.keyFindings.length,
     });
     return summary;
@@ -82,7 +86,8 @@ export async function generateWebSearchSynthesis(
       sessionId,
       kind: "synthesis",
       synthesis: buildExtractiveFallback(selected, error),
-      evidenceCount: selected.length,
+      evidenceCount: collectedEvidence.length || selected.length,
+      evidenceDiagnostics,
       expiresAt: session.expiresAt,
       results: selected,
       latencyMs: Date.now() - startedAt,
@@ -113,14 +118,18 @@ export async function generateWebResultSummary(
 
   appendWebSearchEvent(sessionId, "summary.started", { kind: "result", resultId });
   const startedAt = Date.now();
+  let collectedEvidence: EvidenceChunk[] = [];
+  let evidenceDiagnostics: WebEvidenceDiagnostic[] = [];
   try {
-    const evidence = await collectResultEvidence(result, {
+    const collected = await collectResultEvidence(result, {
       allowFetch: true,
       safeFetchOptions: dependencies.safeFetchOptions,
     });
+    collectedEvidence = collected.chunks;
+    evidenceDiagnostics = [collected.diagnostic];
     const raw = await callSummaryLlm(
       dependencies.llm ?? callLlm,
-      buildSummaryPrompt(session.request.query, [result], evidence, true),
+      buildSummaryPrompt(session.request.query, [result], collectedEvidence, true),
     );
     const synthesis = validateCitations(parseSynthesis(raw), [result]);
     const summary = saveSummary({
@@ -128,7 +137,8 @@ export async function generateWebResultSummary(
       resultId,
       kind: "result",
       synthesis,
-      evidenceCount: evidence.length,
+      evidenceCount: collectedEvidence.length,
+      evidenceDiagnostics,
       expiresAt: session.expiresAt,
       results: [result],
       latencyMs: Date.now() - startedAt,
@@ -138,7 +148,7 @@ export async function generateWebResultSummary(
     appendWebSearchEvent(sessionId, "summary.completed", {
       kind: "result",
       resultId,
-      evidenceCount: evidence.length,
+      evidenceCount: collectedEvidence.length,
     });
     return summary;
   } catch (error) {
@@ -147,7 +157,8 @@ export async function generateWebResultSummary(
       resultId,
       kind: "result",
       synthesis: buildExtractiveFallback([result], error),
-      evidenceCount: 1,
+      evidenceCount: collectedEvidence.length || 1,
+      evidenceDiagnostics,
       expiresAt: session.expiresAt,
       results: [result],
       latencyMs: Date.now() - startedAt,
@@ -310,14 +321,29 @@ async function collectResultEvidence(
     allowFetch: boolean;
     safeFetchOptions?: SafeFetchOptions;
   },
-): Promise<EvidenceChunk[]> {
+): Promise<{ chunks: EvidenceChunk[]; diagnostic: WebEvidenceDiagnostic }> {
   let pageText: string | undefined;
   let fetchedAt = new Date().toISOString();
+  let diagnostic: WebEvidenceDiagnostic = {
+    resultId: result.id,
+    url: result.url,
+    status: options.allowFetch ? "metadata_only" : "not_attempted",
+    message: options.allowFetch
+      ? "No page text was retained; provider metadata and snippets were used."
+      : "Page fetch was unnecessary because provider evidence was sufficient.",
+  };
   if (options.allowFetch) {
     const cached = getCachedWebContent(contentCacheKey(result.url));
     if (cached) {
       pageText = cached.textContent;
       fetchedAt = cached.fetchedAt;
+      diagnostic = {
+        resultId: result.id,
+        url: result.url,
+        status: "cache_hit",
+        message: "Used the transient Web content cache.",
+        fetchedAt,
+      };
     } else {
       try {
         const fetched = await safeFetch(result.url, {
@@ -325,56 +351,66 @@ async function collectResultEvidence(
           ...options.safeFetchOptions,
         });
         fetchedAt = fetched.fetchedAt;
-        if (fetched.contentType !== "application/pdf") {
+        if (fetched.contentType === "application/pdf") {
+          diagnostic = {
+            resultId: result.id,
+            url: result.url,
+            status: "pdf_metadata_only",
+            message: "PDF text is not retained during summary discovery; download requires a user action.",
+            fetchedAt,
+          };
+        } else {
           const html = new TextDecoder().decode(fetched.body);
           const extracted = extractHtmlContent(html, fetched.finalUrl);
-          if (extracted.text) {
-            if (looksPaywalled(html, extracted.text)) {
-              console.warn(`[web-search-summary] paywalled content downgraded for ${result.id}`);
-            } else {
-              pageText = extracted.text;
-              upsertCachedWebContent({
-                cacheKey: contentCacheKey(result.url),
-                url: result.url,
-                canonicalUrl: extracted.canonicalUrl ?? fetched.finalUrl,
-                contentType: fetched.contentType,
-                title: extracted.title,
-                author: extracted.author,
-                publishedAt: extracted.publishedAt,
-                textContent: extracted.text,
-                contentHash: fetched.contentHash,
-                fetchedAt,
-                expiresAt: new Date(Date.now() + CONTENT_CACHE_TTL_MS).toISOString(),
-              });
-            }
+          const policy = assessWebContent(html, extracted.text);
+          if (policy.allowFullText) {
+            pageText = extracted.text;
+            upsertCachedWebContent({
+              cacheKey: contentCacheKey(result.url),
+              url: result.url,
+              canonicalUrl: extracted.canonicalUrl ?? fetched.finalUrl,
+              contentType: fetched.contentType,
+              title: extracted.title,
+              author: extracted.author,
+              publishedAt: extracted.publishedAt,
+              textContent: extracted.text,
+              contentHash: fetched.contentHash,
+              fetchedAt,
+              expiresAt: new Date(Date.now() + WEB_CONTENT_CACHE_TTL_MS).toISOString(),
+            });
+            diagnostic = {
+              resultId: result.id,
+              url: result.url,
+              status: "fetched",
+              message: "Fetched and retained temporarily for evidence extraction.",
+              fetchedAt,
+            };
+          } else if (policy.reason === "paywall_detected") {
+            diagnostic = {
+              resultId: result.id,
+              url: result.url,
+              status: "paywall_detected",
+              message: "A paywall was detected; only provider metadata and snippets were used.",
+              fetchedAt,
+            };
+            console.warn(`[web-search-summary] paywalled content downgraded for ${result.id}`);
           }
         }
       } catch (error) {
-        console.warn(
-          `[web-search-summary] content fetch skipped for ${result.id}: ${
-            error instanceof Error ? error.message : "fetch failed"
-          }`,
-        );
+        const message = safeSummaryError(error);
+        diagnostic = {
+          resultId: result.id,
+          url: result.url,
+          status: /robots\.txt/i.test(message) ? "robots_blocked" : "fetch_failed",
+          message,
+        };
+        console.warn(`[web-search-summary] content fetch skipped for ${result.id}: ${message}`);
       }
     }
   }
   const chunks = buildEvidenceChunks(result, pageText, fetchedAt);
   replaceEvidenceChunks(result.sessionId, result.id, chunks, result.expiresAt);
-  return chunks;
-}
-
-function looksPaywalled(html: string, text: string): boolean {
-  const combined = `${html.slice(0, 20_000)} ${text.slice(0, 20_000)}`.toLowerCase();
-  return [
-    "subscribe to continue",
-    "purchase access",
-    "institutional access",
-    "log in to access",
-    "login to access",
-    "paywall",
-    "article access",
-    "rent this article",
-  ].some((needle) => combined.includes(needle));
+  return { chunks, diagnostic };
 }
 
 function buildSummaryPrompt(
@@ -435,6 +471,7 @@ function saveSummary(input: {
   kind: WebSearchSummary["kind"];
   synthesis: WebSearchSynthesis;
   evidenceCount: number;
+  evidenceDiagnostics?: WebEvidenceDiagnostic[];
   expiresAt: string;
   results: WebSearchResult[];
   latencyMs: number;
@@ -452,6 +489,7 @@ function saveSummary(input: {
     synthesis: input.synthesis,
     citations: buildCitationCatalog(input.results),
     evidenceCount: input.evidenceCount,
+    evidenceDiagnostics: input.evidenceDiagnostics,
     latencyMs: input.latencyMs,
     estimatedTokens: input.estimatedTokens,
     citedClaims,

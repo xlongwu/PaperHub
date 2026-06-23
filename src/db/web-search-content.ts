@@ -1,6 +1,8 @@
 import { getDb } from "./index";
+import { evidencePreview } from "@/web-search/content-policy";
 import type {
   EvidenceChunk,
+  WebEvidenceDiagnostic,
   WebSearchCitation,
   WebSearchSummary,
   WebSearchSynthesis,
@@ -84,9 +86,10 @@ export function replaceEvidenceChunks(
      ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
   );
   db.transaction(() => {
-    db.prepare(
-      "DELETE FROM web_search_result_evidence WHERE session_id = ? AND result_id = ?",
-    ).run(sessionId, resultId);
+    db.prepare("DELETE FROM web_search_result_evidence WHERE session_id = ? AND result_id = ?").run(
+      sessionId,
+      resultId,
+    );
     for (const chunk of chunks) {
       insert.run(chunk.id, sessionId, resultId, JSON.stringify(chunk), now, now, expiresAt);
     }
@@ -121,7 +124,8 @@ export function getWebSearchSummary(
     .prepare(
       `SELECT id, session_id, result_id, kind, status, summary_json, citations_json,
               evidence_count, latency_ms, estimated_tokens, cited_claims, uncited_claims,
-              evidence_insufficient, error, created_at, updated_at, expires_at
+              evidence_insufficient, evidence_diagnostics_json, error,
+              created_at, updated_at, expires_at
        FROM web_search_summaries
        WHERE session_id = ? AND kind = ? AND COALESCE(result_id, '') = ?
          AND expires_at > ?`,
@@ -136,8 +140,8 @@ export function upsertWebSearchSummary(summary: WebSearchSummary): WebSearchSumm
       `INSERT INTO web_search_summaries(
          id, session_id, result_id, kind, status, summary_json, citations_json,
          evidence_count, latency_ms, estimated_tokens, cited_claims, uncited_claims,
-         evidence_insufficient, error, created_at, updated_at, expires_at
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         evidence_insufficient, evidence_diagnostics_json, error, created_at, updated_at, expires_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT DO UPDATE SET
          id = excluded.id,
          status = excluded.status,
@@ -149,6 +153,7 @@ export function upsertWebSearchSummary(summary: WebSearchSummary): WebSearchSumm
          cited_claims = excluded.cited_claims,
          uncited_claims = excluded.uncited_claims,
          evidence_insufficient = excluded.evidence_insufficient,
+         evidence_diagnostics_json = excluded.evidence_diagnostics_json,
          error = excluded.error,
          updated_at = excluded.updated_at,
          expires_at = excluded.expires_at`,
@@ -167,6 +172,7 @@ export function upsertWebSearchSummary(summary: WebSearchSummary): WebSearchSumm
       summary.citedClaims ?? 0,
       summary.uncitedClaims ?? 0,
       summary.evidenceInsufficient ?? 0,
+      JSON.stringify(summary.evidenceDiagnostics ?? []),
       summary.error ?? null,
       summary.createdAt,
       summary.updatedAt,
@@ -182,14 +188,10 @@ export function cleanupExpiredWebSearchContent(now = new Date()): {
 } {
   const iso = now.toISOString();
   return getDb().transaction(() => ({
-    evidence: getDb()
-      .prepare("DELETE FROM web_search_result_evidence WHERE expires_at <= ?")
-      .run(iso).changes,
-    summaries: getDb()
-      .prepare("DELETE FROM web_search_summaries WHERE expires_at <= ?")
-      .run(iso).changes,
-    content: getDb().prepare("DELETE FROM web_content_cache WHERE expires_at <= ?").run(iso)
+    evidence: getDb().prepare("DELETE FROM web_search_result_evidence WHERE expires_at <= ?").run(iso)
       .changes,
+    summaries: getDb().prepare("DELETE FROM web_search_summaries WHERE expires_at <= ?").run(iso).changes,
+    content: getDb().prepare("DELETE FROM web_content_cache WHERE expires_at <= ?").run(iso).changes,
   }))();
 }
 
@@ -210,17 +212,21 @@ function mapContent(row: ContentRow): CachedWebContent {
 }
 
 function mapSummary(row: SummaryRow): WebSearchSummary {
+  const evidence = listEvidenceChunks(row.session_id, row.result_id ?? undefined).map((chunk) => ({
+    ...chunk,
+    text: evidencePreview(chunk.text),
+  }));
   return {
     id: row.id,
     sessionId: row.session_id,
     resultId: row.result_id ?? undefined,
     kind: row.kind,
     status: row.status,
-    synthesis: row.summary_json
-      ? (JSON.parse(row.summary_json) as WebSearchSynthesis)
-      : undefined,
+    synthesis: row.summary_json ? (JSON.parse(row.summary_json) as WebSearchSynthesis) : undefined,
     citations: JSON.parse(row.citations_json) as WebSearchCitation[],
     evidenceCount: row.evidence_count,
+    evidence,
+    evidenceDiagnostics: JSON.parse(row.evidence_diagnostics_json) as WebEvidenceDiagnostic[],
     latencyMs: row.latency_ms ?? undefined,
     estimatedTokens: row.estimated_tokens ?? undefined,
     citedClaims: row.cited_claims,
@@ -261,6 +267,7 @@ interface SummaryRow {
   cited_claims: number;
   uncited_claims: number;
   evidence_insufficient: number;
+  evidence_diagnostics_json: string;
   error: string | null;
   created_at: string;
   updated_at: string;

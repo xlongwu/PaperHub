@@ -16,7 +16,7 @@ import { rebuildDocumentSearchTags } from "./search-tags";
 // Migration tracking
 // ---------------------------------------------------------------------------
 
-export const CURRENT_SCHEMA_VERSION = 25;
+export const CURRENT_SCHEMA_VERSION = 26;
 
 interface Migration {
   version: number;
@@ -40,16 +40,14 @@ function rebuildCanonicalTagStats(db: Database.Database): void {
 
 function ensureWebSaveDocumentSchema(db: Database.Database): void {
   const documentsTable = db
-    .prepare(
-      "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'documents'",
-    )
+    .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'documents'")
     .get();
   if (!documentsTable) return;
 
   const columns = new Set(
-    (
-      db.prepare("PRAGMA table_info(documents)").all() as Array<{ name: string }>
-    ).map((column) => column.name),
+    (db.prepare("PRAGMA table_info(documents)").all() as Array<{ name: string }>).map(
+      (column) => column.name,
+    ),
   );
   const additions = [
     ["external_ids", "TEXT"],
@@ -172,6 +170,21 @@ function ensureW7Schema(db: Database.Database): void {
     }
   }
   migrateSecretsToStore(db);
+}
+
+function ensureWebSearchSummaryDiagnosticsSchema(db: Database.Database): void {
+  const tableExists = db
+    .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'web_search_summaries'")
+    .get();
+  if (!tableExists) return;
+  const columns = db.prepare("PRAGMA table_info(web_search_summaries)").all() as Array<{
+    name: string;
+  }>;
+  if (!columns.some((column) => column.name === "evidence_diagnostics_json")) {
+    db.exec(
+      "ALTER TABLE web_search_summaries ADD COLUMN evidence_diagnostics_json TEXT NOT NULL DEFAULT '[]'",
+    );
+  }
 }
 
 const MIGRATIONS: Migration[] = [
@@ -1004,6 +1017,12 @@ const MIGRATIONS: Migration[] = [
         ON web_search_provider_cache(expires_at);
     `,
   },
+  {
+    version: 26,
+    name: "web-search-summary-evidence-diagnostics",
+    sql: "",
+    postMigrate: ensureWebSearchSummaryDiagnosticsSchema,
+  },
 ];
 
 // ---------------------------------------------------------------------------
@@ -1186,9 +1205,7 @@ export function runMigrations(): void {
   } catch (error) {
     const backupMessage = backupPath ? ` Backup retained at ${backupPath}.` : "";
     throw new Error(
-      `Database migration failed.${backupMessage} ${
-        error instanceof Error ? error.message : String(error)
-      }`,
+      `Database migration failed.${backupMessage} ${error instanceof Error ? error.message : String(error)}`,
     );
   }
 }

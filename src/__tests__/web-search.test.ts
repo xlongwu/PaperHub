@@ -17,7 +17,12 @@ import {
   executeWebSearchSession,
   retryWebSearchProviders,
 } from "@/services/web-search-service";
-import { generateWebSearchSynthesis, parseSynthesis, validateCitations } from "@/services/web-search-summary";
+import {
+  generateWebResultSummary,
+  generateWebSearchSynthesis,
+  parseSynthesis,
+  validateCitations,
+} from "@/services/web-search-summary";
 import { saveWebSearchResult } from "@/services/web-save-service";
 import { createWebSearchPlan } from "@/web-search/query-planner";
 import { adaptMcpSearchOutput, buildMcpToolArguments } from "@/web-search/providers/mcp";
@@ -27,6 +32,7 @@ import { parseMcpWebSearchRequest } from "@/mcp/tool-service";
 import { extractHtmlContent } from "@/web-search/content-extractor";
 import { buildEvidenceChunks } from "@/web-search/evidence";
 import { safeFetch } from "@/web-search/safe-fetch";
+import { assertWebExportAllowed, EVIDENCE_PREVIEW_MAX_CHARS } from "@/web-search/content-policy";
 import { ArxivWebSearchProvider, buildArxivUrl, parseArxivFeed } from "@/web-search/providers/arxiv";
 import {
   OpenAlexWebSearchProvider,
@@ -533,6 +539,55 @@ describe("Web Search save workflow", () => {
     );
 
     expect(getDocumentById(saved.documentId)?.fullText).toContain("Saved body text.");
+  });
+
+  it("respects robots.txt and refuses to persist paywalled full text", async () => {
+    seedSaveSession();
+    const resolveHostname = async () => ["93.184.216.34"];
+
+    await expect(
+      saveWebSearchResult(
+        "ws_sample",
+        "wr_sample",
+        { mode: "save_content" },
+        {
+          safeFetchOptions: {
+            resolveHostname,
+            fetchImpl: async (input) =>
+              String(input).endsWith("/robots.txt")
+                ? new Response("User-agent: *\nDisallow: /article", {
+                    headers: { "content-type": "text/plain" },
+                  })
+                : new Response("<article>blocked</article>", {
+                    headers: { "content-type": "text/html" },
+                  }),
+          },
+        },
+      ),
+    ).rejects.toThrow(/robots\.txt/);
+
+    await expect(
+      saveWebSearchResult(
+        "ws_sample",
+        "wr_sample",
+        { mode: "save_content" },
+        {
+          safeFetchOptions: {
+            resolveHostname,
+            fetchImpl: async (input) =>
+              String(input).endsWith("/robots.txt")
+                ? new Response("User-agent: *\nAllow: /", {
+                    headers: { "content-type": "text/plain" },
+                  })
+                : new Response(
+                    "<article><p>Subscribe to continue</p><p>Premium article access</p></article>",
+                    { headers: { "content-type": "text/html" } },
+                  ),
+          },
+        },
+      ),
+    ).rejects.toThrow(/paywalled/);
+    expect(countDocuments()).toBe(0);
   });
 
   it("downloads a user-requested PDF and keeps metadata when text is sparse", async () => {
@@ -1409,6 +1464,47 @@ describe("Web Search W4 evidence and summary security", () => {
       expect.arrayContaining(["abstract", "metadata", "page_excerpt"]),
     );
     expect(chunks.every((chunk) => chunk.text.length <= 2_400)).toBe(true);
+  });
+
+  it("returns bounded evidence previews and structured fetch diagnostics for a deep summary", async () => {
+    const session = createWebSearchSession({ query: "agent memory", scope: "academic" });
+    const completed = await executeWebSearchSession(
+      session.id,
+      new Map<string, WebSearchProvider>([["arxiv", fakeArxivProvider()]]),
+    );
+    const resultId = completed.results[0]!.id;
+    const summary = await generateWebResultSummary(session.id, resultId, {
+      safeFetchOptions: {
+        resolveHostname: async () => ["151.101.1.42"],
+        fetchImpl: async (input) =>
+          String(input).endsWith("/robots.txt")
+            ? new Response("User-agent: *\nAllow: /", {
+                headers: { "content-type": "text/plain" },
+              })
+            : new Response(`<article><p>${"Detailed agent memory evidence. ".repeat(100)}</p></article>`, {
+                headers: { "content-type": "text/html" },
+              }),
+      },
+      llm: async () =>
+        JSON.stringify({
+          overview: "Deep summary.",
+          keyFindings: [{ claim: "Grounded claim.", citations: [resultId] }],
+          resultGroups: [{ title: "Paper", resultIds: [resultId], summary: "Evidence." }],
+          limitations: [],
+        }),
+    });
+
+    expect(summary.evidenceDiagnostics).toEqual([expect.objectContaining({ resultId, status: "fetched" })]);
+    expect(summary.evidence?.some((chunk) => chunk.evidenceType === "page_excerpt")).toBe(true);
+    expect(summary.evidence?.every((chunk) => chunk.text.length <= EVIDENCE_PREVIEW_MAX_CHARS)).toBe(true);
+  });
+
+  it("limits exports to metadata and bounded batch sizes", () => {
+    expect(() => assertWebExportAllowed({ itemCount: 20 })).not.toThrow();
+    expect(() => assertWebExportAllowed({ itemCount: 20, includeFullText: true })).toThrow(
+      /full text is not allowed/,
+    );
+    expect(() => assertWebExportAllowed({ itemCount: 501 })).toThrow(/limited to 500/);
   });
 
   it("removes nonexistent and uncited findings while keeping stable real citations", () => {

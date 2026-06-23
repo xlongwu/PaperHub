@@ -62,19 +62,16 @@ export function WebResultCard({
         <summary>Evidence and ranking</summary>
         <div className="empty-block compact-block">
           <p className="empty-title">
-            Providers: {providerNames || "unknown"} · score{" "}
-            {result.ranking.aggregateScore.toFixed(2)}
+            Providers: {providerNames || "unknown"} · score {result.ranking.aggregateScore.toFixed(2)}
           </p>
           <p className="empty-description">
             Concept coverage {Math.round(result.ranking.conceptCoverageScore * 100)}% · freshness{" "}
             {Math.round(result.ranking.freshnessScore * 100)}% · source quality{" "}
-            {Math.round(result.ranking.sourceQualityScore * 100)}
-            %{result.ranking.sourceQualityTier ? ` · tier ${result.ranking.sourceQualityTier}` : ""}
+            {Math.round(result.ranking.sourceQualityScore * 100)}%
+            {result.ranking.sourceQualityTier ? ` · tier ${result.ranking.sourceQualityTier}` : ""}
           </p>
           {result.ranking.sortExplanation?.length ? (
-            <p className="empty-description">
-              Sort: {result.ranking.sortExplanation.join(" · ")}
-            </p>
+            <p className="empty-description">Sort: {result.ranking.sortExplanation.join(" · ")}</p>
           ) : null}
           {result.match.matchedConcepts.length > 0 ? (
             <p className="empty-description">Matched: {result.match.matchedConcepts.join(", ")}</p>
@@ -175,12 +172,14 @@ export function WebResultCard({
       ) : null}
       {resultSummaryError ? (
         <p className="empty-description">
-          {resultSummaryError instanceof Error ? resultSummaryError.message : "Deep summary failed."} Retry is safe and does not change the result list.
+          {resultSummaryError instanceof Error ? resultSummaryError.message : "Deep summary failed."} Retry is
+          safe and does not change the result list.
         </p>
       ) : null}
       {resultSummary?.status === "failed" ? (
         <p className="empty-description">
-          Deep summary failed: {resultSummary.error ?? "unknown error"}. Retry is safe and does not change the result list.
+          Deep summary failed: {resultSummary.error ?? "unknown error"}. Retry is safe and does not change the
+          result list.
         </p>
       ) : null}
       {resultSummary?.status === "completed" ? (
@@ -202,6 +201,36 @@ export function WebResultCard({
               No citation was available; the summary fell back to returned metadata/snippets.
             </p>
           )}
+          {(resultSummary.evidenceDiagnostics?.length ?? 0) > 0 ? (
+            <details className="web-result-details">
+              <summary>Content fetch diagnostics</summary>
+              <ul className="evidence-list">
+                {resultSummary.evidenceDiagnostics?.map((diagnostic) => (
+                  <li key={`${diagnostic.resultId}:${diagnostic.status}`}>
+                    <strong>{diagnostic.status}</strong>
+                    {diagnostic.message ? ` · ${diagnostic.message}` : ""}
+                  </li>
+                ))}
+              </ul>
+            </details>
+          ) : null}
+          {(resultSummary.evidence?.length ?? 0) > 0 ? (
+            <details className="web-result-details">
+              <summary>Evidence excerpts</summary>
+              <ul className="evidence-list">
+                {resultSummary.evidence?.map((chunk) => (
+                  <li key={chunk.id}>
+                    <strong>{chunk.evidenceType}</strong>
+                    {` · ${chunk.text}`}
+                  </li>
+                ))}
+              </ul>
+              <p className="empty-description">
+                Excerpts are length-limited. Full fetched text remains transient and is not included in
+                exports.
+              </p>
+            </details>
+          ) : null}
           <WebSummaryView summary={resultSummary} />
         </div>
       ) : null}
@@ -211,9 +240,7 @@ export function WebResultCard({
 
 export function WebSummaryView({ summary }: { summary: WebSearchSummary }): JSX.Element {
   const synthesis = summary.synthesis;
-  const citationByResult = new Map(
-    summary.citations.map((citation) => [citation.resultId, citation]),
-  );
+  const citationByResult = new Map(summary.citations.map((citation) => [citation.resultId, citation]));
   if (!synthesis) return <></>;
   return (
     <div className="web-summary-content">
@@ -233,10 +260,7 @@ export function WebSummaryView({ summary }: { summary: WebSearchSummary }): JSX.
             {synthesis.keyFindings.map((finding) => (
               <li key={`${finding.claim}:${finding.citations.join(",")}`}>
                 {finding.claim}{" "}
-                <CitationLinks
-                  citationByResult={citationByResult}
-                  resultIds={finding.citations}
-                />
+                <CitationLinks citationByResult={citationByResult} resultIds={finding.citations} />
               </li>
             ))}
           </ul>

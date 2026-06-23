@@ -237,6 +237,8 @@ function verifyPackagedUi() {
     !bundle.includes("/api/llm/connections") ||
     !bundle.includes("/api/web-search/health") ||
     !bundle.includes("/api/web-search/metrics") ||
+    !bundle.includes("Evidence excerpts") ||
+    !bundle.includes("Content fetch diagnostics") ||
     !bundle.includes("LLM 连接管理") ||
     !bundle.includes("保存并启用")
   ) {
@@ -249,6 +251,13 @@ function verifyPackagedUi() {
     "skills/web-literature-search/SKILL.md",
     "skills/web-research-synthesis/SKILL.md",
     "skills/save-to-library/SKILL.md",
+    "skills/citation-verification/SKILL.md",
+    "skills/daily-web-research-digest/SKILL.md",
+    "skills/paper-to-code/SKILL.md",
+    "skills/research-gap-analysis/SKILL.md",
+    "skills/systematic-review-lite/SKILL.md",
+    "skills/zotero-sync/SKILL.md",
+    "docs/web-content-policy.md",
   ];
   for (const requiredFile of requiredFiles) {
     readPackagedFile(requiredFile);

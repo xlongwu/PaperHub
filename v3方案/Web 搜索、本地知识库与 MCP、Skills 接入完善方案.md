@@ -4078,3 +4078,45 @@ W7 baseline Test Files 2 passed, Tests 53 passed
 ```
 
 说明：普通沙箱下监听 `127.0.0.1` 的测试会因权限限制失败；提升权限后同一组测试全部通过。
+
+## H.5 2026-06-23 完善记录
+
+本轮已完成 H.2 中可由代码和自动化测试闭环的功能：
+
+* Mixed 模式固定分组顺序、来源质量 Tier 和排序解释；
+* Must / Should / Exclude 完整 API 与 UI、Must 硬过滤及缺失概念展示；
+* 单条深度总结按钮、缓存状态、引用、受限长度 Evidence Excerpt 和抓取诊断；
+* robots.txt 执行、付费墙识别与元数据降级；
+* Web 正文 24 小时瞬时缓存、PDF 必须由用户动作触发；
+* 批量导出限制为元数据和来源链接，禁止批量导出抓取正文；
+* schema v26 持久化 Summary Evidence Diagnostics；
+* v23 至当前 schema 的 SecretStore 迁移、失败回滚和备份测试；
+* 全部 9 个 Skills 的桌面打包资源校验；
+* 真实 Provider 可重复验收命令 `pnpm verify:web-providers`。
+
+自动验证结果：
+
+```text
+typecheck     passed
+lint          passed
+unit/integration tests: 47 files passed, 477 tests passed
+UI production build passed
+Windows NSIS and Portable build passed
+release privacy scan: 4903 packaged files passed
+real Provider health: arXiv / Crossref / GitHub passed
+```
+
+最新 Windows 产物：
+
+```text
+dist-desktop/PaperHub-0.1.2-setup-x64.exe
+dist-desktop/PaperHub-0.1.2-portable-x64.exe
+```
+
+仍需外部环境或人工完成的发布签收：
+
+* 使用真实 OpenAlex、Tavily、Brave 和带 Token 的 GitHub 限流场景执行全链路验证；
+* 使用真实 stdio / HTTP Search MCP Server 验证 Tool 发现和搜索；
+* 在干净 Windows x64 环境人工执行安装、Portable、重启和卸载测试；
+* 人工确认安装/卸载不会删除用户数据目录；
+* 采集真实网络延迟样本，签收 Web Search P95 性能目标。

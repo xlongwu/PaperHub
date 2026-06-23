@@ -20,21 +20,12 @@ import { addFavorite, isFavorite } from "@/db/user";
 import { recordWebSearchUsageEvent } from "@/db/web-search-metrics";
 import { ingestSingleDocument } from "@/services/document-ingestion";
 import { summarizeDocument } from "@/summarizer";
+import { assessWebContent } from "@/web-search/content-policy";
 import { extractHtmlContent } from "@/web-search/content-extractor";
 import { extractPdfText } from "@/web-search/pdf-text";
 import { safeFetch, type SafeFetchOptions } from "@/web-search/safe-fetch";
-import type {
-  WebSaveMode,
-  WebSaveRequest,
-  WebSaveResponse,
-  WebSearchResult,
-} from "@/web-search/types";
-import type {
-  Document,
-  DocumentOrigin,
-  DocumentSource,
-  RawDocument,
-} from "@/types";
+import type { WebSaveMode, WebSaveRequest, WebSaveResponse, WebSearchResult } from "@/web-search/types";
+import type { Document, DocumentOrigin, DocumentSource, RawDocument } from "@/types";
 
 const PDF_MAX_BYTES = 30 * 1024 * 1024;
 
@@ -91,7 +82,7 @@ export async function saveWebSearchResult(
 
     if (duplicate) {
       documentId = duplicate.id;
-      status = await enrichExistingDocument(duplicate, raw, prepared) ? "updated" : "duplicate";
+      status = (await enrichExistingDocument(duplicate, raw, prepared)) ? "updated" : "duplicate";
     } else {
       const ingestion = await ingestSingleDocument(raw);
       if (ingestion.status === "error" || !ingestion.documentId) {
@@ -103,11 +94,7 @@ export async function saveWebSearchResult(
 
     let hasDownloadedFile = Boolean(getDocumentById(documentId)?.fullTextPath);
     if (prepared.pdfBody) {
-      const fullTextPath = persistPdf(
-        documentId,
-        prepared.pdfBody,
-        dependencies.dataDir ?? getDataDir(),
-      );
+      const fullTextPath = persistPdf(documentId, prepared.pdfBody, dependencies.dataDir ?? getDataDir());
       updateDocument(documentId, {
         fullTextPath,
         fullText: prepared.text || getDocumentById(documentId)?.fullText,
@@ -217,23 +204,14 @@ export async function saveWebSearchResult(
 
 export class WebSaveError extends Error {
   constructor(
-    public readonly stage:
-      | "session"
-      | "result"
-      | "content_fetch"
-      | "pdf_download"
-      | "ingestion"
-      | "favorite",
+    public readonly stage: "session" | "result" | "content_fetch" | "pdf_download" | "ingestion" | "favorite",
     message: string,
   ) {
     super(message);
   }
 }
 
-export function cleanupTemporaryPdfFiles(
-  dataDir = getDataDir(),
-  now = Date.now(),
-): number {
+export function cleanupTemporaryPdfFiles(dataDir = getDataDir(), now = Date.now()): number {
   const directory = path.join(dataDir, "pdfs");
   if (!fs.existsSync(directory)) return 0;
   let removed = 0;
@@ -255,11 +233,10 @@ async function prepareContent(
   const url = mode === "download_pdf" ? resolvePdfUrl(result) : result.url;
   const fetched = await safeFetch(url, {
     ...safeFetchOptions,
+    respectRobotsTxt: mode === "save_content" ? (safeFetchOptions?.respectRobotsTxt ?? true) : false,
     maxBytes: mode === "download_pdf" ? PDF_MAX_BYTES : safeFetchOptions?.maxBytes,
     allowedContentTypes:
-      mode === "download_pdf"
-        ? new Set(["application/pdf"])
-        : safeFetchOptions?.allowedContentTypes,
+      mode === "download_pdf" ? new Set(["application/pdf"]) : safeFetchOptions?.allowedContentTypes,
   });
   if (mode === "download_pdf") {
     if (fetched.contentType !== "application/pdf") {
@@ -274,12 +251,17 @@ async function prepareContent(
   if (fetched.contentType === "application/pdf") {
     return { text: extractPdfText(fetched.body) || undefined };
   }
-  const extracted = extractHtmlContent(
-    new TextDecoder().decode(fetched.body),
-    fetched.finalUrl,
-  );
+  const html = new TextDecoder().decode(fetched.body);
+  const extracted = extractHtmlContent(html, fetched.finalUrl);
+  const policy = assessWebContent(html, extracted.text);
+  if (policy.reason === "paywall_detected") {
+    throw new WebSaveError(
+      "content_fetch",
+      "Full text was not saved because the page appears to be paywalled. Save metadata instead.",
+    );
+  }
   return {
-    text: extracted.text || undefined,
+    text: policy.allowFullText ? extracted.text : undefined,
     canonicalUrl: extracted.canonicalUrl ?? fetched.finalUrl,
     title: extracted.title,
     author: extracted.author,
@@ -287,10 +269,7 @@ async function prepareContent(
   };
 }
 
-function findExistingDocument(
-  result: WebSearchResult,
-  fetchedCanonicalUrl?: string,
-): Document | null {
+function findExistingDocument(result: WebSearchResult, fetchedCanonicalUrl?: string): Document | null {
   return (
     findDocumentByExternalIds(result.identifiers) ??
     findDocumentByCanonicalUrl(
@@ -304,29 +283,15 @@ function findExistingDocument(
   );
 }
 
-function toRawDocument(
-  result: WebSearchResult,
-  prepared: PreparedContent,
-  sessionId: string,
-): RawDocument {
+function toRawDocument(result: WebSearchResult, prepared: PreparedContent, sessionId: string): RawDocument {
   const source = inferDocumentSource(result);
-  const canonicalUrl = normalizeCanonicalUrl(
-    prepared.canonicalUrl ?? result.canonicalUrl ?? result.url,
-  );
+  const canonicalUrl = normalizeCanonicalUrl(prepared.canonicalUrl ?? result.canonicalUrl ?? result.url);
   return {
     title: prepared.title ?? result.title,
     source,
     url: canonicalUrl,
-    publishedAt:
-      prepared.publishedAt ??
-      result.publishedAt ??
-      new Date().toISOString(),
-    authors:
-      result.authors.length > 0
-        ? result.authors
-        : prepared.author
-          ? [prepared.author]
-          : [],
+    publishedAt: prepared.publishedAt ?? result.publishedAt ?? new Date().toISOString(),
+    authors: result.authors.length > 0 ? result.authors : prepared.author ? [prepared.author] : [],
     abstract: result.abstract ?? result.snippet ?? "",
     content: prepared.text,
     language: result.language === "zh" ? "zh" : "en",
@@ -409,13 +374,9 @@ function toDocumentOrigin(result: WebSearchResult): DocumentOrigin {
   };
 }
 
-function normalizeExternalIds(
-  ids: WebSearchResult["identifiers"],
-): WebSearchResult["identifiers"] {
+function normalizeExternalIds(ids: WebSearchResult["identifiers"]): WebSearchResult["identifiers"] {
   return {
-    doi: ids.doi
-      ?.replace(/^https?:\/\/(?:dx\.)?doi\.org\//i, "")
-      .toLowerCase(),
+    doi: ids.doi?.replace(/^https?:\/\/(?:dx\.)?doi\.org\//i, "").toLowerCase(),
     arxivId: ids.arxivId?.replace(/^arxiv:/i, "").replace(/v\d+$/i, ""),
     openAlexId: ids.openAlexId?.replace(/^https?:\/\/openalex\.org\//i, ""),
     pmid: ids.pmid,
@@ -431,10 +392,7 @@ function normalizeCanonicalUrl(value: string): string {
     }
   }
   url.hostname = url.hostname.toLowerCase();
-  if (
-    (url.protocol === "https:" && url.port === "443") ||
-    (url.protocol === "http:" && url.port === "80")
-  ) {
+  if ((url.protocol === "https:" && url.port === "443") || (url.protocol === "http:" && url.port === "80")) {
     url.port = "";
   }
   if (url.pathname !== "/") url.pathname = url.pathname.replace(/\/+$/, "");
@@ -446,7 +404,5 @@ function stringValue(value: unknown): string | undefined {
 }
 
 function arrayValue(value: unknown): string[] | undefined {
-  return Array.isArray(value)
-    ? value.filter((item): item is string => typeof item === "string")
-    : undefined;
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : undefined;
 }

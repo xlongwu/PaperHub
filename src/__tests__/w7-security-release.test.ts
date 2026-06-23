@@ -92,7 +92,7 @@ describe("W7 SecretStore and migration", () => {
     expect(fs.readFileSync(TEST_DB_PATH).toString("latin1")).not.toContain("secret-value");
   });
 
-  it("migrates v23 plaintext credentials and is idempotent on restart", () => {
+  it("migrates v23 plaintext credentials through the current schema and is idempotent on restart", () => {
     downgradeToV23WithPlaintextSecret();
     initDatabase();
 
@@ -109,13 +109,13 @@ describe("W7 SecretStore and migration", () => {
     expect(currentVersion()).toBe(CURRENT_SCHEMA_VERSION);
   });
 
-  it("rolls back v24 and retains a backup when secret migration fails", () => {
+  it("rolls back the current upgrade and retains a backup when secret migration fails", () => {
     downgradeToV23WithPlaintextSecret();
     setSecretStoreForTests(new ThrowingSecretStore());
 
     expect(() => initDatabase()).toThrow(/Backup retained/);
     expect(currentVersion()).toBe(23);
-    expect(fs.existsSync(`${TEST_DB_PATH}.pre-v24-from-v23.bak`)).toBe(true);
+    expect(fs.existsSync(`${TEST_DB_PATH}.pre-v${CURRENT_SCHEMA_VERSION}-from-v23.bak`)).toBe(true);
   });
 });
 
@@ -325,10 +325,11 @@ function downgradeToV23WithPlaintextSecret(): void {
        )`,
     )
     .run();
-  getDb().prepare("DELETE FROM schema_version WHERE version = 24").run();
+  getDb().prepare("DELETE FROM schema_version WHERE version >= 24").run();
   getDb().exec(`
     DROP TABLE web_search_usage_events;
     DROP TABLE web_search_maintenance_state;
+    DROP TABLE web_search_provider_cache;
   `);
   closeDb();
 }
@@ -342,7 +343,7 @@ function cleanupFiles(): void {
   safeUnlink(TEST_DB_PATH);
   safeUnlink(`${TEST_DB_PATH}-wal`);
   safeUnlink(`${TEST_DB_PATH}-shm`);
-  safeUnlink(`${TEST_DB_PATH}.pre-v24-from-v23.bak`);
+  safeUnlink(`${TEST_DB_PATH}.pre-v${CURRENT_SCHEMA_VERSION}-from-v23.bak`);
 }
 
 class ThrowingSecretStore implements SecretStore {

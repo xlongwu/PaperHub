@@ -351,11 +351,7 @@ export interface WebSearchSession {
   expiresAt: string;
 }
 
-export type EvidenceType =
-  | "abstract"
-  | "provider_snippet"
-  | "page_excerpt"
-  | "metadata";
+export type EvidenceType = "abstract" | "provider_snippet" | "page_excerpt" | "metadata";
 
 export interface EvidenceChunk {
   id: string;
@@ -367,6 +363,24 @@ export interface EvidenceChunk {
   evidenceType: EvidenceType;
   fetchedAt: string;
   contentHash: string;
+}
+
+export type WebEvidenceFetchStatus =
+  | "not_attempted"
+  | "cache_hit"
+  | "fetched"
+  | "metadata_only"
+  | "pdf_metadata_only"
+  | "robots_blocked"
+  | "paywall_detected"
+  | "fetch_failed";
+
+export interface WebEvidenceDiagnostic {
+  resultId: string;
+  url: string;
+  status: WebEvidenceFetchStatus;
+  message?: string;
+  fetchedAt?: string;
 }
 
 export interface WebSearchCitation {
@@ -414,6 +428,8 @@ export interface WebSearchSummary {
   synthesis?: WebSearchSynthesis;
   citations: WebSearchCitation[];
   evidenceCount: number;
+  evidence?: EvidenceChunk[];
+  evidenceDiagnostics?: WebEvidenceDiagnostic[];
   latencyMs?: number;
   estimatedTokens?: number;
   citedClaims?: number;
